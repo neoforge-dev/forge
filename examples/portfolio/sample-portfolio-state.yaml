@@ -1,0 +1,17 @@
+# Copy to config/portfolio/portfolio-state.yaml and customize
+version: "1.0"
+domains:
+  demo-saas:
+    key: demo-saas
+    display_name: "Demo SaaS Application"
+    active: true
+    products:
+      api-starter:
+        key: api-starter
+        name: "API Starter Kit"
+        type: api
+        tier: 3
+        status: development
+        repo_url: "https://github.com/your-org/api-starter"
+nodes: []    # single-node: leave empty, defaults to localhost:8081
+routing: {}

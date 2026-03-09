@@ -1,0 +1,5 @@
+# Agent capability registry — maps agent names to their capabilities
+# agents:
+#   - name: worker-a
+#     node: node-a
+#     capabilities: [code, review]

@@ -1,0 +1,32 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  hostname-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for private hostnames in Go source
+        run: |
+          if grep -r "prya\|sati\|nova\b\|vega\b\|gaea\b\|/home/bogdan\|/home/openclaw\|bogdan-velscu" cmd/forge/*.go cmd/forged/*.go 2>/dev/null | grep -v "_test.go"; then
+            echo "ERROR: Private hostnames found in production Go source"
+            exit 1
+          fi
+          echo "Hostname scan passed."

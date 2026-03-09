@@ -1,0 +1,7 @@
+# Task envelope schema reference
+# version: "1"
+# id: "task-uuid"
+# title: "Task title"
+# description: "What to do"
+# priority: 1  # 1=highest
+# tags: [code, review]

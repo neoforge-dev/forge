@@ -1,0 +1,75 @@
+# Content to Publish Pipeline
+# ===========================
+# Generate content, save to Notion, await approval, publish
+#
+# Usage:
+#   pipeline = orchestrator.load_pipeline_from_yaml("pipelines/content_to_publish.yaml")
+#   result = await orchestrator.execute(pipeline, context={
+#       "domain": "codeswiftr-com",
+#       "project": "interview-simulator"
+#   })
+
+name: content_to_publish
+description: Generate content, save to Notion, await approval, publish
+version: "1.0.0"
+
+context:
+  # Required context values (to be provided at execution time)
+  domain: null
+  project: null
+  # Optional with defaults
+  tier: flagship
+
+steps:
+  - name: generate
+    harness: content
+    method: generate_content_library
+    description: Generate content from living-docs context
+    inputs:
+      domain: "{{ context.domain }}"
+      project: "{{ context.project }}"
+      tier: "{{ context.tier }}"
+    outputs:
+      - items
+      - briefs
+
+  - name: save_to_notion
+    harness: notion
+    method: save_batch
+    description: Save generated content to Notion
+    inputs:
+      items: "{{ steps.generate.items }}"
+    outputs:
+      - page_ids
+    on_failure: retry
+    retry_count: 3
+
+  - name: await_approval
+    harness: human_gate
+    method: await_feedback
+    description: Wait for human approval in Notion
+    inputs:
+      page_ids: "{{ steps.save_to_notion.page_ids }}"
+    outputs:
+      - approved_ids
+    on_failure: human_gate
+    timeout_seconds: 86400  # 24 hours
+
+  - name: track_analytics
+    harness: posthog
+    method: track_batch
+    description: Track publishing analytics
+    inputs:
+      events:
+        - content_published
+      count: "{{ context.published_count }}"
+    outputs: []
+    on_failure: skip
+
+human_gates:
+  approval:
+    timeout_hours: 24
+    notification_channels:
+      - slack
+    on_timeout: skip
+    message: "Content ready for review. Please approve or reject in Notion."

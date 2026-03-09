@@ -1,0 +1,48 @@
+2026/03/06 03:16:54 using SQLite database
+2026/03/06 03:16:54 detected database type: sqlite
+2026/03/06 03:16:54 applying migration 023_pattern_runs
+2026/03/06 03:16:54 applying migration 024_add_lane_column
+2026/03/06 03:16:54 applying migration 025_agent_telemetry
+2026/03/06 03:16:54 Context manager initialized
+2026/03/06 03:16:54 [Patrol] Starting 9 patrols
+2026/03/06 03:16:54 Patrol system started with 7 patrols (including context threshold)
+2026/03/06 03:16:54 XNode controller initialized for node: sati
+2026/03/06 03:16:54 Flywheel: disabled
+2026/03/06 03:16:54 Flywheel controller initialized (disabled by default)
+2026/03/06 03:16:54 [Patrol:approval-expiry] Starting with schedule 5m0s
+2026/03/06 03:16:54 [Patrol:health-check] Starting with schedule 1m0s
+2026/03/06 03:16:54 Approval system initialized with confidence scoring
+2026/03/06 03:16:54 [Patrol:approval-expiry] Completed in 359.707µs
+2026/03/06 03:16:54 [Patrol:task-timeout] Starting with schedule 5m0s
+2026/03/06 03:16:54 Registering XNode routes...
+2026/03/06 03:16:54 XNode routes registered
+2026/03/06 03:16:54 WebSocket endpoint registered at /ws
+2026/03/06 03:16:54 FORGE v3 Status API starting on :8081
+2026/03/06 03:16:54 [Patrol:worktree-prune] Starting with schedule 1h0m0s
+2026/03/06 03:16:54 [Patrol:worktree-prune] Completed in 30.164µs
+2026/03/06 03:16:54 [Patrol:context-sync] Starting with schedule 10m0s
+2026/03/06 03:16:54 [Patrol:context-sync] Completed in 4.928µs
+2026/03/06 03:16:54 [Patrol:git-cleanup] Starting with schedule 1h0m0s
+2026/03/06 03:16:54 [Patrol:git-cleanup] Completed in 298.175µs
+2026/03/06 03:16:54 [Patrol:queue-depth] Starting with schedule 5m0s
+2026/03/06 03:16:54 [Patrol:health-check] Completed in 1.011061ms
+2026/03/06 03:16:54 [Patrol:metrics-rollup] Starting with schedule 1m0s
+2026/03/06 03:16:54 [Metrics] Computing rollups (1m, 5m)...
+2026/03/06 03:16:54 [Patrol:queue-depth] Completed in 1.142949ms
+2026/03/06 03:16:54 FORGE v3 WebSocket server starting on :8082
+2026/03/06 03:16:54 [Patrol:context-threshold] Starting with schedule 5m0s
+2026/03/06 03:16:54 [Patrol:context-threshold] Completed in 62.012µs
+2026/03/06 03:16:54 [Patrol:task-timeout] Completed in 2.019979ms
+2026/03/06 03:16:54 [Patrol:metrics-rollup] Completed in 1.715054ms
+2026/03/06 03:16:59 Shutting down servers...
+2026/03/06 03:16:59 [Patrol] Stopping all patrols
+2026/03/06 03:16:59 [Patrol:approval-expiry] Stopping
+2026/03/06 03:16:59 [Patrol:health-check] Stopping
+2026/03/06 03:16:59 [Patrol:git-cleanup] Stopping
+2026/03/06 03:16:59 [Patrol:context-sync] Stopping
+2026/03/06 03:16:59 [Patrol:metrics-rollup] Stopping
+2026/03/06 03:16:59 [Patrol:queue-depth] Stopping
+2026/03/06 03:16:59 [Patrol:task-timeout] Stopping
+2026/03/06 03:16:59 [Patrol:context-threshold] Stopping
+2026/03/06 03:16:59 [Patrol:worktree-prune] Stopping
+2026/03/06 03:16:59 [Patrol] All patrols stopped

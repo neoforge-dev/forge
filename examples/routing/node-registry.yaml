@@ -1,0 +1,5 @@
+# For single-node operation, leave empty. For multi-node, uncomment:
+# nodes:
+#   - id: node-a
+#     address: node-a.local:8081
+#     role: control-plane

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/domains.schema.json",
+  "title": "FORGE Domain Configuration",
+  "description": "Schema for domains.yaml domain entries in the FORGE portfolio",
+  "type": "object",
+  "required": ["domains"],
+  "properties": {
+    "domains": {
+      "type": "object",
+      "description": "Map of domain keys to domain configurations",
+      "additionalProperties": {
+        "$ref": "#/$defs/DomainEntry"
+      }
+    }
+  },
+  "$defs": {
+    "DomainEntry": {
+      "type": "object",
+      "required": ["display_name", "compliance", "frontend_tier", "content"],
+      "properties": {
+        "display_name": {
+          "type": "string",
+          "description": "Human-readable domain name",
+          "examples": ["The Bright Harbor", "CalmConnect", "BrandFocus AI"]
+        },
+        "compliance": {
+          "type": "array",
+          "description": "List of compliance requirements for this domain (common: COPPA, HIPAA-lite, SOC2-lite, GDPR, PCI-DSS)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "human_gates": {
+          "type": "array",
+          "description": "Actions that require human review before proceeding",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "frontend_tier": {
+          "type": "string",
+          "description": "Frontend technology/complexity level",
+          "enum": ["React", "Lit PWA", "React Native", "basic", "interactive", "advanced"]
+        },
+        "localization": {
+          "type": ["string", "null"],
+          "description": "ISO language code for localization (e.g., 'en', 'es') or null for none",
+          "default": null
+        },
+        "special_rules": {
+          "type": "object",
+          "description": "Domain-specific configuration rules",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "products": {
+          "type": "array",
+          "description": "List of product names within this domain",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether this domain is actively developed",
+          "default": true
+        },
+        "content": {
+          "$ref": "#/$defs/ContentConfig"
+        },
+        "deployment": {
+          "$ref": "#/$defs/DeploymentConfig"
+        },
+        "notion": {
+          "$ref": "#/$defs/NotionConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ContentConfig": {
+      "type": "object",
+      "description": "Content generation settings for the domain",
+      "required": ["tier", "target_audience", "voice_tone"],
+      "properties": {
+        "tier": {
+          "type": "integer",
+          "description": "Content priority tier (1=60%, 2=25%, 3=15% of effort)",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "target_audience": {
+          "type": "string",
+          "description": "Primary audience for content",
+          "examples": ["Developers", "Product managers", "Parents of children ages 6-14"]
+        },
+        "voice_tone": {
+          "type": "string",
+          "description": "Writing style/tone for content (common: professional, friendly, technical, casual, empathetic, authoritative)"
+        },
+        "content_strategy_path": {
+          "type": ["string", "null"],
+          "description": "Path to content strategy document (relative to domain)",
+          "default": null
+        },
+        "pillars": {
+          "type": "array",
+          "description": "Content pillars/themes for the domain",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeploymentConfig": {
+      "type": "object",
+      "description": "Deployment target configuration",
+      "properties": {
+        "railway_service": {
+          "type": ["string", "null"],
+          "description": "Railway service name for backend deployment",
+          "default": null
+        },
+        "cloudflare_project": {
+          "type": ["string", "null"],
+          "description": "Cloudflare Pages project name for frontend deployment",
+          "default": null
+        },
+        "marketing_site_path": {
+          "type": ["string", "null"],
+          "description": "Path to marketing site (relative to FORGE root)",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "NotionConfig": {
+      "type": "object",
+      "description": "Notion integration configuration",
+      "properties": {
+        "data_source_id": {
+          "type": ["string", "null"],
+          "description": "Notion database ID for content data source (UUID format preferred)",
+          "default": null
+        },
+        "linked_database_id": {
+          "type": ["string", "null"],
+          "description": "Notion linked database ID (UUID format preferred)",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

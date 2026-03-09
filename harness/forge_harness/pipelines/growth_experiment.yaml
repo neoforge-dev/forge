@@ -1,0 +1,81 @@
+# Growth Experiment Pipeline
+# ==========================
+# Full A/B test lifecycle from setup to analysis
+#
+# Usage:
+#   pipeline = orchestrator.load_pipeline_from_yaml("pipelines/growth_experiment.yaml")
+#   result = await orchestrator.execute(pipeline, context={
+#       "experiment_name": "pricing_page_cta",
+#       "variants": ["control", "variant_a", "variant_b"],
+#       "feature_flag": "pricing_cta_experiment",
+#       "rollout_percentage": 50,
+#       "min_samples": 1000
+#   })
+
+name: growth_experiment
+description: Full A/B test lifecycle from setup to analysis
+version: "1.0.0"
+
+context:
+  # Required
+  experiment_name: null
+  variants: null
+  feature_flag: null
+  # Optional with defaults
+  rollout_percentage: 50
+  min_samples: 1000
+
+steps:
+  - name: setup_experiment
+    harness: growth
+    method: create_experiment
+    description: Create A/B experiment in PostHog
+    inputs:
+      name: "{{ context.experiment_name }}"
+      variants: "{{ context.variants }}"
+      feature_flag: "{{ context.feature_flag }}"
+    outputs:
+      - experiment_id
+
+  - name: enable_feature_flag
+    harness: growth
+    method: update_feature_flag
+    description: Enable feature flag for experiment
+    inputs:
+      flag_key: "{{ context.feature_flag }}"
+      rollout_percentage: "{{ context.rollout_percentage }}"
+    outputs:
+      - flag_id
+
+  - name: await_data
+    harness: growth
+    method: await_min_sample_size
+    description: Wait for minimum sample size
+    inputs:
+      experiment_id: "{{ steps.setup_experiment.experiment_id }}"
+      min_samples: "{{ context.min_samples }}"
+    outputs:
+      - current_samples
+    on_failure: skip
+    timeout_seconds: 604800  # 7 days
+
+  - name: check_significance
+    harness: growth
+    method: check_results
+    description: Check statistical significance
+    inputs:
+      experiment_id: "{{ steps.setup_experiment.experiment_id }}"
+    outputs:
+      - winner
+      - confidence
+      - is_significant
+
+  - name: conclude_experiment
+    harness: growth
+    method: conclude_experiment
+    description: Conclude experiment with winner
+    inputs:
+      experiment_id: "{{ steps.setup_experiment.experiment_id }}"
+      winner: "{{ steps.check_significance.winner }}"
+    outputs:
+      - concluded

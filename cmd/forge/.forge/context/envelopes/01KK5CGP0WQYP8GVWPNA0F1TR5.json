@@ -1,0 +1,15 @@
+{
+  "id": "01KK5CGP0WQYP8GVWPNA0F1TR5",
+  "agent_id": "kilo",
+  "domain": "sati",
+  "project": "",
+  "task_id": "",
+  "created_at": "2026-03-08T00:10:53.340486716Z",
+  "expires_at": "2026-03-15T00:10:53.340486808Z",
+  "summary": "Auto-generated: Agent reached 83% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

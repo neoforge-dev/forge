@@ -1,0 +1,443 @@
+# FORGE Domain Registry
+# =====================
+# Single source of truth for all 10 FORGE portfolio domains.
+# Used by DomainRegistry class to provide domain configuration everywhere.
+#
+# Schema:
+#   key: domain-slug (matches directory name)
+#   display_name: Human-readable name
+#   compliance: List of compliance requirements (COPPA, HIPAA-lite, GDPR)
+#   human_gates: Actions requiring human review
+#   frontend_tier: React | Lit PWA | React Native
+#   localization: ISO language code or null
+#   special_rules: Domain-specific configuration
+#   content: Content generation settings
+#   deployment: Railway/Cloudflare targets
+#   notion: Notion database IDs
+#   products: List of products in this domain
+#   active: Whether domain is actively developed
+
+domains:
+  thebrightharbor-com:
+    display_name: The Bright Harbor
+    compliance:
+      - COPPA
+    human_gates:
+      - age_verification
+      - data_collection
+      - parental_consent
+    frontend_tier: Lit PWA
+    localization: null
+    special_rules:
+      age_adaptive_ui: true
+      no_personal_data_collection: true
+      parental_gate_required: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 3
+      target_audience: Parents of children ages 6-14
+      voice_tone: friendly
+      content_strategy_path: CONTENT_STRATEGY.md
+      pillars:
+        - Kids Coding & STEM
+        - Creative Writing
+        - Study Skills
+        - Parenting Tech
+        - Educational Resources
+    deployment:
+      railway_service: null
+      cloudflare_project: thebrightharbor
+      marketing_site_path: marketing-template
+    notion:
+      data_source_id: "14636e9f-74a5-8151-8ddd-000bd1c0cc0a"
+      linked_database_id: "14636e9f-74a5-8175-a3ff-f0993a288e9a"
+    products:
+      - Story Grow
+      - Study Flow
+      - Code Ship
+    active: true
+
+  calmconnect-io:
+    display_name: CalmConnect
+    compliance:
+      - HIPAA-lite
+    human_gates:
+      - health_data
+      - anonymization
+      - crisis_content
+    frontend_tier: React
+    localization: null
+    special_rules:
+      anonymized_data_only: true
+      no_diagnosis_claims: true
+      crisis_resources_required: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 3
+      target_audience: Tech workers, remote teams, knowledge workers
+      voice_tone: empathetic
+      content_strategy_path: CONTENT_STRATEGY.md
+      pillars:
+        - Tech Worker Burnout
+        - Digital Wellness
+        - Focus & Deep Work
+        - Remote Work Wellness
+        - Mental Health in Tech
+    deployment:
+      railway_service: null
+      cloudflare_project: calmconnect
+      marketing_site_path: marketing-template
+    notion:
+      data_source_id: "14636e9f-74a5-8151-8ddd-000bd1c0cc0a"
+      linked_database_id: "14636e9f-74a5-8175-a3ff-f0993a288e9a"
+    products:
+      - Burnout Pulse
+      - Dopamine Detox
+      - Screen Time Coach
+    active: true
+
+  brandfocus-ai:
+    display_name: BrandFocus AI
+    compliance: []
+    human_gates:
+      - payment_integration
+      - content_moderation
+    frontend_tier: React
+    localization: null
+    special_rules:
+      content_safety_required: true
+    content:
+      tier: 3
+      target_audience: Founders, executives, sales professionals, public speakers
+      voice_tone: professional
+      content_strategy_path: CONTENT_STRATEGY.md
+      pillars:
+        - Pitch & Investor Communication
+        - Public Speaking Skills
+        - Executive Communication
+        - Sales Presentations
+        - Personal Branding
+    deployment:
+      railway_service: null
+      cloudflare_project: brandfocus
+      marketing_site_path: marketing-template
+    business:
+      deploy_status: config_ready
+      deploy_url: null
+      deploy_platform: railway+cloudflare
+      current_mrr: 0
+      target_mrr: 3000
+      stripe_live: false
+      human_actions_needed:
+        - "Deploy Voice Coach to Railway (30 min)"
+        - "Set API keys: Groq, OpenRouter, Stripe, JWT (10 min)"
+        - "Create PostgreSQL in Railway (5 min)"
+        - "Run alembic migrations (5 min)"
+    notion:
+      data_source_id: "14636e9f-74a5-8151-8ddd-000bd1c0cc0a"
+      linked_database_id: "14636e9f-74a5-8175-a3ff-f0993a288e9a"
+    products:
+      - Brand Compliance Monitor
+      - Brand Brain
+      - Voice Coach
+    active: true
+
+  codeswiftr-com:
+    display_name: CodeSwiftr
+    compliance: []
+    human_gates:
+      - payment_integration
+      - api_keys
+    frontend_tier: React
+    localization: null
+    special_rules:
+      stripe_integration: true
+      api_rate_limiting: true
+    content:
+      tier: 1
+      target_audience: Software engineers, tech leads, engineering managers
+      voice_tone: technical
+      content_strategy_path: docs/marketing/content/CONTENT_STRATEGY.md
+      pillars:
+        - Technical Interview Prep
+        - Coding Skills
+        - Career Growth
+        - Engineering Leadership
+        - Developer Tools
+    deployment:
+      railway_service: interview-simulator
+      cloudflare_project: codeswiftr
+      marketing_site_path: null
+    business:
+      deploy_status: live
+      deploy_url: "https://app.codeswiftr.com"
+      deploy_platform: railway+cloudflare
+      current_mrr: 0
+      target_mrr: 5000
+      stripe_live: false
+      human_actions_needed:
+        - "Enable Stripe live mode (15 min)"
+        - "Set real price IDs in Railway env (5 min)"
+        - "Register Stripe webhook (5 min)"
+        - "Publish 29 content pieces (2-4 hrs)"
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - Interview Simulator
+      - Tech Diligence Snapshot
+    active: true
+
+  leanvibe-dev:
+    display_name: LeanVibe Dev
+    compliance: []
+    human_gates:
+      - payment_integration
+    frontend_tier: React
+    localization: null
+    special_rules:
+      github_integration: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 2
+      target_audience: CTOs, VPs Engineering, Tech Leads
+      voice_tone: technical
+      content_strategy_path: docs/marketing/content/CONTENT_STRATEGY.md
+      pillars:
+        - Technical Debt Management
+        - Engineering Productivity
+        - Code Quality
+        - Team Scaling
+        - Architecture Decisions
+    deployment:
+      railway_service: null
+      cloudflare_project: null
+      marketing_site_path: null
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - Technical Debt Analyzer
+    active: true
+
+  neoforge-dev:
+    display_name: NeoForge Dev
+    compliance: []
+    human_gates:
+      - api_keys
+      - llm_costs
+    frontend_tier: React
+    localization: null
+    special_rules:
+      llm_cost_tracking: true
+      api_key_rotation: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 2000
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 2
+      target_audience: AI engineers, ML practitioners, knowledge graph specialists
+      voice_tone: technical
+      content_strategy_path: docs/marketing/content/CONTENT_STRATEGY.md
+      pillars:
+        - GraphRAG Patterns
+        - Knowledge Graphs
+        - RAG Architecture
+        - LLM Optimization
+        - AI Engineering
+    deployment:
+      railway_service: null
+      cloudflare_project: null
+      marketing_site_path: null
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - GraphRAG Patterns Library
+      - Support Agent Factory
+    active: true
+
+  babybit-es:
+    display_name: BabyBit
+    compliance:
+      - pediatric_safety
+      - GDPR
+    human_gates:
+      - health_advice
+      - localization_review
+      - medical_disclaimers
+    frontend_tier: React Native
+    localization: es
+    special_rules:
+      spanish_first: true
+      medical_disclaimer_required: true
+      age_appropriate_content: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed:
+        - "Fix SQLite UUID incompatibility (needs Postgres)"
+    content:
+      tier: 3
+      target_audience: Spanish-speaking parents of infants and toddlers
+      voice_tone: warm
+      content_strategy_path: null
+      pillars:
+        - Baby Development
+        - Sleep Training
+        - Feeding & Nutrition
+        - Parenting Tips
+        - Health & Safety
+    deployment:
+      railway_service: null
+      cloudflare_project: null
+      marketing_site_path: null
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - Allergen Coach
+    active: true
+
+  adguild-io:
+    display_name: AdGuild
+    compliance:
+      - advertising_standards
+    human_gates:
+      - ad_content_review
+      - platform_tos
+    frontend_tier: React
+    localization: null
+    special_rules:
+      platform_compliance_check: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 3
+      target_audience: Digital marketers, media buyers, small business owners
+      voice_tone: professional
+      content_strategy_path: null
+      pillars:
+        - Ad Creative
+        - Campaign Optimization
+        - Platform Strategy
+        - ROI Tracking
+        - A/B Testing
+    deployment:
+      railway_service: null
+      cloudflare_project: null
+      marketing_site_path: null
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - Ad Asset Finder
+      - Campaign Intelligence
+    active: true
+
+  mumchef-io:
+    display_name: MumChef
+    compliance:
+      - food_safety_disclaimers
+    human_gates:
+      - allergen_warnings
+      - nutrition_info
+    frontend_tier: React
+    localization: null
+    special_rules:
+      allergen_warnings_required: true
+      nutrition_disclaimers: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 3
+      target_audience: Busy parents, home cooks, meal planners
+      voice_tone: friendly
+      content_strategy_path: null
+      pillars:
+        - Quick Recipes
+        - Meal Planning
+        - Nutrition
+        - Kid-Friendly Food
+        - Budget Cooking
+    deployment:
+      railway_service: null
+      cloudflare_project: null
+      marketing_site_path: null
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - Family Meal Planner
+    active: true
+
+  leanvibe-ai:
+    display_name: LeanVibe AI
+    compliance: []
+    human_gates:
+      - payment_integration
+    frontend_tier: Lit PWA
+    localization: null
+    special_rules:
+      productized_services: true
+    business:
+      deploy_status: none
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
+    content:
+      tier: 2
+      target_audience: Technical founders, solo builders, indie hackers
+      voice_tone: technical
+      content_strategy_path: docs/marketing/content/CONTENT_STRATEGY.md
+      pillars:
+        - MVP Validation
+        - Founder Productivity
+        - Market Research
+        - User Interviews
+        - Rapid Prototyping
+    deployment:
+      railway_service: null
+      cloudflare_project: null
+      marketing_site_path: null
+    notion:
+      data_source_id: null
+      linked_database_id: null
+    products:
+      - MVP Validator
+      - Desk Workout Generator
+    active: true
+
+# Content tier definitions
+# Tier 1 (60% of effort): Revenue-generating products (CodeSwiftr)
+# Tier 2 (25% of effort): B2B authority building (LeanVibe, NeoForge)
+# Tier 3 (15% of effort): All others (maintenance mode)

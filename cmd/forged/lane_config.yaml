@@ -1,0 +1,21 @@
+lanes:
+  dev:
+    gates: [type_check]
+    auto_progress: false
+    timeout: 5m
+
+  test:
+    gates: [test, coverage, lint]
+    thresholds:
+      coverage: 80.0
+      max_lint_issues: 0
+    auto_progress: true
+    timeout: 15m
+
+  deploy:
+    gates: [security_scan, integration_test]
+    requires_approval: true
+    timeout: 30m
+
+  done:
+    gates: []

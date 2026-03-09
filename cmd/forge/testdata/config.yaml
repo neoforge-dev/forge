@@ -1,0 +1,20 @@
+# Test configuration for integration tests
+api_url: http://localhost:8081
+node_id: test-node
+domain: test-domain
+log_level: info
+format: table
+
+control_plane:
+  host: 0.0.0.0
+  port: 8080
+  data_dir: .forge/data
+  database: sqlite
+
+worker:
+  id: test-worker
+  control_plane: http://localhost:8080
+  capabilities:
+    - test
+    - mock
+  max_concurrent: 5

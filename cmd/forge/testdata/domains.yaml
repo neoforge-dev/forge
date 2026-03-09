@@ -1,0 +1,43 @@
+# Test domains for integration tests
+domains:
+  test-domain:
+    display_name: Test Domain
+    active: true
+    compliance: []
+    frontend_tier: react
+    products:
+      - test-product
+    business:
+      deploy_status: active
+      current_mrr: 0
+      target_mrr: 1000
+      stripe_live: false
+      human_actions_needed: []
+
+  demo-domain:
+    display_name: Demo Domain
+    active: true
+    compliance:
+      - soc2
+    frontend_tier: vue
+    products:
+      - demo-app
+    business:
+      deploy_status: staging
+      current_mrr: 500
+      target_mrr: 5000
+      stripe_live: false
+      human_actions_needed: []
+
+  inactive-domain:
+    display_name: Inactive Domain
+    active: false
+    compliance: []
+    frontend_tier: none
+    products: []
+    business:
+      deploy_status: inactive
+      current_mrr: 0
+      target_mrr: 0
+      stripe_live: false
+      human_actions_needed: []
