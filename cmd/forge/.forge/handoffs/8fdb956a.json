@@ -1,0 +1,17 @@
+{
+  "id": "8fdb956a",
+  "from_agent": "glm",
+  "task": "91166af2 feat(v3): add /api/dashboard/throughput endpoint for Command Center (+14 more)",
+  "status": "pending",
+  "priority": "medium",
+  "description": "context",
+  "context": {
+    "branch": "main",
+    "created_at": "2026-03-07T11:40:10Z",
+    "modified_files": [
+      ".claude/worktrees/",
+      "docs/adr/ADR-035-fluid-per-node-fleet-scaling.md"
+    ]
+  },
+  "created_at": "2026-03-07T11:40:10Z"
+}

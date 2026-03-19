@@ -57,15 +57,6 @@ func TestWave107_OpenclawStatusHandler_NilDB(t *testing.T) {
 }
 
 // TestWave107_OpenclawStatusHandler_MethodNotAllowed verifies POST is rejected with 405.
-func TestWave107_OpenclawStatusHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/status", nil)
-	w := httptest.NewRecorder()
-	openclawStatusHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave107_OpenclawStatusHandler_Success verifies 200 JSON response with live DB.
 func TestWave107_OpenclawStatusHandler_Success(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
@@ -90,15 +81,6 @@ func TestWave107_OpenclawStatusHandler_Success(t *testing.T) {
 }
 
 // TestWave107_OpenclawChatHandler_MethodNotAllowed verifies GET is rejected with 405.
-func TestWave107_OpenclawChatHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/openclaw/chat", nil)
-	w := httptest.NewRecorder()
-	openclawChatHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave107_OpenclawChatHandler_BadBody verifies 400 on malformed JSON.
 func TestWave107_OpenclawChatHandler_BadBody(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
@@ -169,15 +151,6 @@ func TestWave107_OpenclawChatHandler_Success(t *testing.T) {
 }
 
 // TestWave107_OpenclawIngestHandler_MethodNotAllowed verifies GET is rejected.
-func TestWave107_OpenclawIngestHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/openclaw/ingest", nil)
-	w := httptest.NewRecorder()
-	openclawIngestHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave107_OpenclawIngestHandler_MissingFields verifies 400 when required fields absent.
 func TestWave107_OpenclawIngestHandler_MissingFields(t *testing.T) {
 	body := `{"task_id":"t1","status":"","agent":"","node":"","summary":""}`

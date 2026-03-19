@@ -1,0 +1,15 @@
+{
+  "id": "01KKTY7Q9N4H8J1WZBP0Y5W92Q",
+  "agent_id": "claude-25",
+  "domain": "prya",
+  "project": "default",
+  "task_id": "auto-generated",
+  "created_at": "2026-03-16T09:04:37.173760428Z",
+  "expires_at": "2026-03-23T09:04:37.173760488Z",
+  "summary": "Auto-generated at 50% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

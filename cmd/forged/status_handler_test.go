@@ -125,23 +125,5 @@ func TestStatusHandler_OK(t *testing.T) {
 	}
 }
 
-// TestHandleGitAndFleetStatus exercise small CLI status stubs to ensure they
-// return the expected NotImplemented status code.
-func TestHandleGitAndFleetStatus_NotImplemented(t *testing.T) {
-	for name, fn := range map[string]func(http.ResponseWriter, *http.Request){
-		"git":   handleGitStatus,
-		"fleet": handleFleetStatus,
-	} {
-		t.Run(name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/cli/"+name+"/status", nil)
-			rr := httptest.NewRecorder()
 
-			fn(rr, req)
-
-			if rr.Code != http.StatusNotImplemented {
-				t.Fatalf("status = %d, want %d; body: %s", rr.Code, http.StatusNotImplemented, rr.Body.String())
-			}
-		})
-	}
-}
 

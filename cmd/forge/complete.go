@@ -225,6 +225,7 @@ func gitSimplePush(dryRun bool) error {
 }
 
 func init() {
+	completeCmd.Hidden = true
 	completeCmd.Flags().Bool("run-tests", false, "Run tests before committing (go test ./... or uv run pytest -q)")
 	completeCmd.Flags().StringP("message", "m", "", "Commit message (default: auto-generated from task title)")
 	completeCmd.Flags().Bool("no-push", false, "Skip git push")

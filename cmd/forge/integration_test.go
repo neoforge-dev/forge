@@ -67,10 +67,9 @@ func NewTestRunner(t *testing.T) *TestRunner {
 	root.AddCommand(agentCmd)
 	root.AddCommand(patrolCmd)
 	root.AddCommand(daemonCmd)
-	root.AddCommand(workerCmd)
-	root.AddCommand(controlPlaneCmd)
 	root.AddCommand(versionCmd)
 	root.AddCommand(statusCmd)
+	root.AddCommand(blueprintCmd)
 
 	return &TestRunner{t: t, rootCmd: root}
 }
@@ -532,15 +531,15 @@ func TestPatternCommands(t *testing.T) {
 		},
 		{
 			name:     "show pattern",
-			args:     []string{"pattern", "show", "fastapi-endpoint"},
+			args:     []string{"pattern", "show", "api_endpoint:simple"},
 			wantErr:  false,
-			contains: "FastAPI Endpoint",
+			contains: "Simple API",
 		},
 		{
 			name:     "show pattern with render",
-			args:     []string{"pattern", "show", "adr", "--render"},
+			args:     []string{"pattern", "show", "documentation:standard", "--render"},
 			wantErr:  false,
-			contains: "ADR",
+			contains: "documentation",
 		},
 		{
 			name:     "show nonexistent pattern",

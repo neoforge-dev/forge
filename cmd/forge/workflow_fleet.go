@@ -393,6 +393,11 @@ func buildFleetStatus() (*internal.FleetStatus, error) {
 				ramPercent = int(math.Round(float64(used) * 100 / float64(hb.Resources.RAMTotalMB)))
 			}
 
+			lastSeen := time.Now().UTC()
+			if t, err := time.Parse(time.RFC3339, hb.Timestamp); err == nil {
+				lastSeen = t
+			}
+
 			node := internal.FleetNode{
 				ID:           hb.NodeID,
 				Hostname:     hb.NodeID,
@@ -402,7 +407,7 @@ func buildFleetStatus() (*internal.FleetStatus, error) {
 				CPUPercent:   int(math.Round(hb.Resources.CPUUsagePercent)),
 				RAMPercent:   ramPercent,
 				Capabilities: hb.Capabilities,
-				LastSeen:     time.Now().UTC(),
+				LastSeen:     lastSeen,
 			}
 
 			status.Nodes = append(status.Nodes, node)
@@ -487,8 +492,17 @@ func buildFleetHealth() (*internal.FleetHealth, error) {
 				ramPercent = int(math.Round(float64(used) * 100 / float64(hb.Resources.RAMTotalMB)))
 			}
 
-			isHealthy := hb.Health.Status == "healthy" || hb.Health.Status == ""
+			lastSeen := time.Now().UTC()
+			if t, err := time.Parse(time.RFC3339, hb.Timestamp); err == nil {
+				lastSeen = t
+			}
+
+			isHealthy := (hb.Health.Status == "healthy" || hb.Health.Status == "") && time.Since(lastSeen) < 10*time.Minute
 			var issues []string
+
+			if time.Since(lastSeen) >= 10*time.Minute {
+				issues = append(issues, fmt.Sprintf("stale heartbeat (%s ago)", time.Since(lastSeen).Round(time.Minute)))
+			}
 
 			if cpuPercent > 80 {
 				isHealthy = false
@@ -521,7 +535,7 @@ func buildFleetHealth() (*internal.FleetHealth, error) {
 				Healthy:    isHealthy,
 				CPUPercent: cpuPercent,
 				RAMPercent: ramPercent,
-				LastSeen:   time.Now().UTC(),
+				LastSeen:   lastSeen,
 				Issues:     issues,
 			})
 		}
@@ -1780,6 +1794,7 @@ Examples:
 }
 
 func init() {
+	// fleetCmd visible — orchestrators need fleet management
 	// Add subcommands
 	fleetCmd.AddCommand(fleetListCmd)
 	fleetCmd.AddCommand(fleetStatusWorkflowCmd)

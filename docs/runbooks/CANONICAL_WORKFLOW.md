@@ -4,7 +4,7 @@
 **Scope:** OpenClaw -> lead orchestration, multi-node messaging, active `forge` CLI control plane, flywheel operations, portfolio operating loop
 
 This is the single source of truth for day-to-day operations.
-For lead-to-`prya` messaging specifics, use `/Users/bogdan/work/FORGE/docs/runbooks/PRYA_LEAD_XNODE_WORKFLOW.md`.
+For lead-to-`node-1` messaging specifics, use `/Users/bogdan/work/FORGE/docs/runbooks/PRYA_LEAD_XNODE_WORKFLOW.md`.
 For control plane objectives and success metrics, use `/Users/bogdan/work/FORGE/docs/runbooks/CONTROL_PLANE_OBJECTIVES.md`.
 
 ## 1. Operating Defaults
@@ -29,10 +29,10 @@ Source: `.forge/heartbeat/nodes/*.json` and `forge` CLI codepaths.
 
 | Node | Role | Notes |
 |---|---|---|
-| `prya` | Main lead + Command Center backend | SSE/event hub + xnode bridge |
-| `nova` | Primary local dev/iOS-capable node | Local lead window: `forge:nova` |
-| `sati` | Linux workhorse node | Backend/test-heavy capacity |
-| `code-vega` | Auxiliary node | Overflow/secondary capacity |
+| `node-1` | Main lead + Command Center backend | SSE/event hub + xnode bridge |
+| `node-3` | Primary local dev/iOS-capable node | Local lead window: `forge:node-3` |
+| `node-2` | Linux workhorse node | Backend/test-heavy capacity |
+| `code-node-4` | Auxiliary node | Overflow/secondary capacity |
 
 Lead window convention on every node: `forge:${HOSTNAME}`.
 
@@ -53,7 +53,7 @@ Current behavior:
 - OpenClaw routes are registered in webhook server startup.
 - OpenClaw dispatch uses `forge_harness.fleet.dispatch_client.send_sync(...)` through `openclaw_gateway.py`.
 - Compatibility helper names still mention tmux in a few code paths, but delivery is no longer raw `tmux send-keys`.
-- Main-node interaction rule: OpenClaw on `prya` should route orchestration work to `forge:prya`, then `forge:prya` fans out cross-node work through `forge lead send`.
+- Main-node interaction rule: OpenClaw on `node-1` should route orchestration work to `forge:node-1`, then `forge:node-1` fans out cross-node work through `forge lead send`.
 
 ## 4. Cross-Node Communication Model
 
@@ -175,7 +175,7 @@ When updating operations docs:
 3. Run `forge status` and `forge fleet status` (fallback: `forge nodes list --offline`).
 4. Initialize/confirm node defaults: `forge config rc-init` then `forge config rc-show` (expects `~/.forgerc` on each node with API URL + token).
 5. Refresh doc index for agent lookup: `python scripts/qmd_maintenance.py --skip-embed`.
-6. Validate control-plane parity before major ops: `python scripts/control_plane_parity_audit.py --api-url <prya-backend-url> --token $FORGE_WEBHOOK_TOKEN`.
+6. Validate control-plane parity before major ops: `python scripts/control_plane_parity_audit.py --api-url <node-1-backend-url> --token $FORGE_WEBHOOK_TOKEN`.
 7. Dispatch using `forge dispatch send`.
 8. For cross-node work, run `forge lead send --strict --to-node <node> ...` and `forge lead ack --require-realtime-delivery`.
 9. For portfolio decisions, use `forge portfolio status` and update `docs/portfolio/portfolio-state.yaml` before broadening scope.

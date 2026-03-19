@@ -51,7 +51,7 @@ func TestContextManager(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	defer cm.Stop()
 
 	// Prepare some filesystem data
@@ -226,7 +226,7 @@ func TestEnvelopesHandler_MinimalPayload(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	defer cm.Stop()
 
 	body := []byte(`{"task_id":"minimal-task"}`)
@@ -255,7 +255,7 @@ func TestEnvelopesHandler_MinimalPayload(t *testing.T) {
 func TestContextManager_SyncEnvelopesToFilesystem_NilSync(t *testing.T) {
 	db := setupContextTestDB(t)
 	defer db.Close()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 	cm.sync = nil
 	err := cm.SyncEnvelopesToFilesystem()
@@ -267,7 +267,7 @@ func TestContextManager_SyncEnvelopesToFilesystem_NilSync(t *testing.T) {
 func TestContextManager_SyncDomainToFilesystem_NilSync(t *testing.T) {
 	db := setupContextTestDB(t)
 	defer db.Close()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 	cm.sync = nil
 	err := cm.SyncDomainToFilesystem("forge")

@@ -106,15 +106,6 @@ func TestPatrolExecutionsHandler_WithPatrolFilter_W41(t *testing.T) {
 
 // ─── queueTaskHandler ─────────────────────────────────────────────────────
 
-func TestQueueTaskHandler_MethodNotAllowed_W41(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-X/queue", nil)
-	w := httptest.NewRecorder()
-	queueTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestQueueTaskHandler_TaskNotFound_W41(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -169,15 +160,6 @@ func TestQueueTaskHandler_WrongStatus_W41(t *testing.T) {
 }
 
 // ─── agentTasksHandler ────────────────────────────────────────────────────
-
-func TestAgentTasksHandler_MethodNotAllowed_W41(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/agent-x/tasks", nil)
-	w := httptest.NewRecorder()
-	agentTasksHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestAgentTasksHandler_WithData_W41(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)

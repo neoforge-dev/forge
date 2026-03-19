@@ -296,53 +296,6 @@ func TestWave74_HandleTaskLogs_WithID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// main.go: handleTaskCancel — 0% (trivially covered)
-// ---------------------------------------------------------------------------
-
-func TestWave74_HandleTaskCancel(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/tasks/cancel?id=some-id", nil)
-	w := httptest.NewRecorder()
-	handleTaskCancel(w, r)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("handleTaskCancel: expected 501, got %d", w.Code)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// main.go: handleAgentStop, handleAgentSpawn
-// ---------------------------------------------------------------------------
-
-func TestWave74_HandleAgentStop_MissingID(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodPost, "/agents/stop", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, r)
-
-	// 400 (missing id) or 501 (not implemented) are both acceptable
-	if w.Code == http.StatusOK {
-		t.Error("expected non-200 for missing agent id in stop")
-	}
-	t.Logf("handleAgentStop missing id: %d", w.Code)
-}
-
-func TestWave74_HandleAgentSpawn_MissingType(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodPost, "/agents/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, r)
-
-	if w.Code == http.StatusOK {
-		t.Error("expected non-200 for missing agent type in spawn")
-	}
-	t.Logf("handleAgentSpawn missing type: %d", w.Code)
-}
-
-// ---------------------------------------------------------------------------
 // patrol.go: syncRoyalJelly — 65.7%
 // Test with no context data → covers query-no-results path.
 // ---------------------------------------------------------------------------

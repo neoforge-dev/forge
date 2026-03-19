@@ -1,0 +1,127 @@
+# Task Envelope Schema v1 — Trinity ↔ prya-lead contract
+# Both parties must produce/consume this format.
+# Last updated: 2026-03-08 S86
+
+# --- SCHEMA (with defaults) ---
+
+schema:
+  objective:
+    type: string
+    required: true
+    description: "One sentence. What should be true when this task is done."
+    example: "Add GET /api/fleet/summary endpoint returning agent+task counts."
+
+  weight:
+    type: enum
+    values: [light, heavy]
+    default: light
+    description: "light = docs/edits/api-calls. heavy = go-test/builds/ML."
+
+  constraints:
+    forbidden_nodes:
+      type: list
+      default: []
+      example: [prya]
+    required_node:
+      type: string
+      default: null
+      example: sati
+    forbidden_workloads:
+      type: list
+      default: []
+      example: [go-test]
+    max_ram_gb:
+      type: float
+      default: null
+
+  preferred_executor:
+    type: string
+    default: null
+    description: "Agent ID (kimi, gemini, etc.) or null for auto-routing."
+
+  suggested_node:
+    type: string
+    default: null
+    description: "Trinity's routing suggestion. prya-lead may override."
+
+  approval_required:
+    type: bool
+    default: false
+    description: "If true, surface to CC + Telegram before executing."
+
+  approval_prompt:
+    type: string
+    default: null
+    description: "What to show user when asking for approval."
+    example: "Merge PR #42 into main? Changes: 3 files, +120/-40 lines."
+
+  artifacts_expected:
+    type: list
+    default: []
+    description: "What Trinity should watch for as completion signal."
+    example:
+      - type: result_file
+        pattern: ".forge/heartbeat/results/{agent}-{task_id}*.md"
+      - type: pr_link
+      - type: endpoint_check
+        url: "http://localhost:8081/api/fleet/summary"
+
+# --- EXAMPLE ENVELOPE ---
+
+example:
+  objective: "Implement GET /api/fleet/summary in v3 daemon."
+  weight: heavy
+  constraints:
+    forbidden_nodes: [prya]
+    forbidden_workloads: [go-test]
+  preferred_executor: kimi
+  suggested_node: sati
+  approval_required: false
+  artifacts_expected:
+    - type: result_file
+      pattern: ".forge/heartbeat/results/kimi-cc-bridge-s86.md"
+    - type: endpoint_check
+      url: "http://localhost:8081/api/fleet/summary"
+
+# --- COMPLETION SIGNALING CONVENTION (both, always) ---
+#
+# 1. RESULT FILE (durable, source of truth, audit log)
+#    Path: .forge/results/<task_id>.json
+#    Also accepted: .forge/heartbeat/results/<agent>-<task_id>*.md (legacy, human-readable)
+#
+#    JSON shape:
+#      {
+#        "task_id": "TASK-XXXX-YYYY-ZZZ",
+#        "status": "ok | fail | needs_approval",
+#        "agent": "kimi",
+#        "node": "sati",
+#        "summary": "1-3 lines of what happened",
+#        "result_path": ".forge/results/TASK-XXXX-YYYY-ZZZ.json",
+#        "artifacts": ["cmd/forge-v3/handlers_fleet.go", "http://localhost:8081/api/fleet/summary"],
+#        "approval": {          // only if status == needs_approval
+#          "prompt": "Merge PR #42? +120/-40 lines, 3 files",
+#          "risk": "low | medium | high",
+#          "diff_url": "..."
+#        },
+#        "completed_at": "2026-03-08T12:00:00Z"
+#      }
+#
+# 2. OPENCLAW INGEST PUSH (real-time notification)
+#    POST http://localhost:8081/api/openclaw/ingest
+#    Body: same JSON shape as result file above
+#    Trinity listens on /api/openclaw/events SSE stream for immediate delivery.
+#
+# 3. TRINITY FALLBACK BEHAVIOR
+#    - Prefer push (openclaw ingest) — fires immediately on task complete.
+#    - Always write result file — durable even if openclaw is down.
+#    - If no push within 5 minutes → poll .forge/results/<task_id>.json.
+#    - If neither after 10 minutes → alert prya-lead, mark task STALE.
+
+# --- ROUTING DECISION ALGORITHM (for Trinity) ---
+#
+# 1. If approval_required → post to CC + Telegram, wait for approval.
+# 2. If required_node set → use that node, pick best available agent there.
+# 3. If weight == heavy → check node-registry, pick sati first, nova second, deny prya.
+# 4. If preferred_executor set and status == OK → use it (verify node allows workload).
+# 5. Else → pick lowest-context agent on an allowed node.
+# 6. If no eligible agent → alert prya-lead, do not proceed.

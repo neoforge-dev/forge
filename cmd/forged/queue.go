@@ -233,10 +233,11 @@ func (q *sqliteTaskQueue) Dequeue(ctx context.Context, agentID string) (*Task, e
 
 	// First, collect all candidate tasks
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT t.id, t.domain, t.project, t.type, t.priority, t.status, t.assigned_to, 
-			t.plan_version, t.plan_id, t.created_at, t.started_at, t.updated_at
+		`SELECT t.id, t.domain, t.project, t.type, t.priority, t.status, t.assigned_to,
+			t.plan_version, t.plan_id, t.created_at, t.started_at, t.updated_at,
+			t.title
 		 FROM tasks t
-		 WHERE t.status = ? 
+		 WHERE t.status = ?
 		 ORDER BY t.priority DESC, t.created_at ASC
 		 LIMIT 10`,
 		TaskStatusQueued,
@@ -248,12 +249,13 @@ func (q *sqliteTaskQueue) Dequeue(ctx context.Context, agentID string) (*Task, e
 	var candidates []Task
 	for rows.Next() {
 		var task Task
-		var createdAt, updatedAt, startedAt, assignedTo, planID sql.NullString
+		var createdAt, updatedAt, startedAt, assignedTo, planID, titleVal sql.NullString
 		var planVersion sql.NullInt64
 		err := rows.Scan(&task.ID, &task.Domain, &task.Project, &task.Type,
 			&task.Priority, &task.Status, &assignedTo,
 			&planVersion, &planID,
-			&createdAt, &startedAt, &updatedAt)
+			&createdAt, &startedAt, &updatedAt,
+			&titleVal)
 
 		if err != nil {
 			continue
@@ -267,6 +269,9 @@ func (q *sqliteTaskQueue) Dequeue(ctx context.Context, agentID string) (*Task, e
 		}
 		if planVersion.Valid {
 			task.PlanVersion = int(planVersion.Int64)
+		}
+		if titleVal.Valid {
+			task.Title = titleVal.String
 		}
 
 		// Parse timestamps
@@ -473,14 +478,17 @@ func (q *sqliteTaskQueue) GetTask(ctx context.Context, taskID string) (Task, err
 	var createdAt, updatedAt, startedAt, result, errorMsg, assignedTo, planID, lane, envelopeID sql.NullString
 	var planVersion sql.NullInt64
 
+	var titleVal sql.NullString
 	err := q.db.QueryRowContext(ctx,
-		`SELECT id, domain, project, type, priority, status, lane, assigned_to, 
-		                                        plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at 
+		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
+		                                        plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+		                                        title
 		                                        FROM tasks WHERE id = ?`, taskID,
 	).Scan(&task.ID, &task.Domain, &task.Project, &task.Type,
 		&task.Priority, &task.Status, &lane, &assignedTo,
 		&planVersion, &planID, &result, &errorMsg, &envelopeID,
-		&createdAt, &startedAt, &updatedAt)
+		&createdAt, &startedAt, &updatedAt,
+		&titleVal)
 
 	if err == sql.ErrNoRows {
 		return Task{}, ErrTaskNotFound
@@ -509,6 +517,9 @@ func (q *sqliteTaskQueue) GetTask(ctx context.Context, taskID string) (Task, err
 	}
 	if envelopeID.Valid {
 		task.EnvelopeID = envelopeID.String
+	}
+	if titleVal.Valid {
+		task.Title = titleVal.String
 	}
 
 	if createdAt.Valid {
@@ -615,8 +626,8 @@ func (q *sqliteTaskQueue) MarkBad(taskID string) {
 func (q *sqliteTaskQueue) ListAllTasks(ctx context.Context, limit int) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at 
- 
+					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+					 title
 		 FROM tasks ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -629,8 +640,8 @@ func (q *sqliteTaskQueue) ListAllTasks(ctx context.Context, limit int) ([]Task, 
 func (q *sqliteTaskQueue) ListTasksByStatus(ctx context.Context, status TaskStatus, limit int) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at 
- 
+					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+					 title
 		 FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC LIMIT ?`,
 		status, limit)
 	if err != nil {
@@ -644,12 +655,12 @@ func (q *sqliteTaskQueue) ListTasksByStatus(ctx context.Context, status TaskStat
 func (q *sqliteTaskQueue) GetClaimableTasks(ctx context.Context, limit int) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at 
- 
-		 FROM tasks 
-		 WHERE (status = ? OR status = ?) 
-		 AND (assigned_to IS NULL OR assigned_to = '') 
-		 ORDER BY priority DESC, created_at ASC 
+					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+					 title
+		 FROM tasks
+		 WHERE (status = ? OR status = ?)
+		 AND (assigned_to IS NULL OR assigned_to = '')
+		 ORDER BY priority DESC, created_at ASC
 		 LIMIT ?`,
 		TaskStatusQueued, TaskStatusRequested, limit)
 	if err != nil {
@@ -664,13 +675,14 @@ func (q *sqliteTaskQueue) scanTasks(rows *sql.Rows) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var task Task
-		var createdAt, updatedAt, startedAt, result, errorMsg, assignedTo, planID, lane, envelopeID sql.NullString
+		var createdAt, updatedAt, startedAt, result, errorMsg, assignedTo, planID, lane, envelopeID, titleVal sql.NullString
 		var planVersion sql.NullInt64
 
 		err := rows.Scan(&task.ID, &task.Domain, &task.Project, &task.Type,
 			&task.Priority, &task.Status, &lane, &assignedTo,
 			&planVersion, &planID, &result, &errorMsg, &envelopeID,
-			&createdAt, &startedAt, &updatedAt)
+			&createdAt, &startedAt, &updatedAt,
+			&titleVal)
 		if err != nil {
 			return nil, err
 		}
@@ -695,6 +707,9 @@ func (q *sqliteTaskQueue) scanTasks(rows *sql.Rows) ([]Task, error) {
 		}
 		if envelopeID.Valid {
 			task.EnvelopeID = envelopeID.String
+		}
+		if titleVal.Valid {
+			task.Title = titleVal.String
 		}
 
 		if createdAt.Valid {

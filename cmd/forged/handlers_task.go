@@ -16,17 +16,52 @@ import (
 	"time"
 )
 
+// createTaskRequest extends Task with optional portfolio routing fields that
+// are not persisted on the Task struct directly.
+type createTaskRequest struct {
+	Task
+	PortfolioStage string `json:"portfolio_stage,omitempty"`
+}
+
 func createTaskHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var task Task
-	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+	var req createTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	task := req.Task
+
+	// Apply stage-aware required tier when portfolio_stage is provided.
+	if req.PortfolioStage != "" && task.RequiredTier == "" {
+		if tier, _ := GetApprovalTierForStage(req.PortfolioStage); tier != "" {
+			task.RequiredTier = string(tier)
+		}
+	}
+
+	// Stage gate: check whether this task type is allowed for the domain's
+	// current portfolio stage. The gate is advisory (returns a warning in the
+	// response body) — it does not hard-block task creation so that existing
+	// integrations are not broken.
+	var stageGateWarning string
+	if task.Domain != "" && task.Type != "" {
+		sgResult := EnforceStageGate(task.Domain, string(task.Type))
+		if !sgResult.Allowed {
+			// Advisory: populate warning but do not return an error.
+			stageGateWarning = sgResult.BlockReason
+		} else if sgResult.Warning != "" {
+			stageGateWarning = sgResult.Warning
+		}
+	}
+
+	// Auto-assign lane based on portfolio stage when the caller has not
+	// specified an explicit lane.  AutoAssignLane is a no-op for infrastructure
+	// domains and unknown products (returns "default" in those cases).
+	task.Lane = AutoAssignLane(task.Domain, string(task.Type), task.Lane)
 
 	// Validate critical fields
 	task.ID = sanitizeID(task.ID)
@@ -175,7 +210,22 @@ func createTaskHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(task)
+	if stageGateWarning != "" {
+		// Return a richer response that includes the advisory stage gate message.
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                 task.ID,
+			"domain":             task.Domain,
+			"project":            task.Project,
+			"type":               task.Type,
+			"title":              task.Title,
+			"priority":           task.Priority,
+			"status":             task.Status,
+			"state":              task.State,
+			"stage_gate_warning": stageGateWarning,
+		})
+	} else {
+		json.NewEncoder(w).Encode(task)
+	}
 }
 
 func completeTaskHandler(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +339,12 @@ func completeTaskHandler(w http.ResponseWriter, r *http.Request) {
 			`UPDATE worktrees SET status='removed', removed_at=datetime('now') WHERE id=?`,
 			taskID,
 		)
+	}
+
+	// Epic 2 GitHub Loop: notify originating GitHub issue on completion.
+	// Best-effort — never blocks the HTTP response.
+	if task.Domain == "github" {
+		notifyGithubTaskCompleted(taskID, task.Title, task.Description, targetState == StateFailed)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

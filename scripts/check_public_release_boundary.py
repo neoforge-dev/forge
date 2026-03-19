@@ -19,7 +19,7 @@ PUBLIC_DOCS = [
     REPO_ROOT / "docs" / "OPEN_SOURCE_SPLIT_PLAN.md",
     REPO_ROOT / "docs" / "PUBLIC_RELEASE_CHECKLIST.md",
     REPO_ROOT / "docs" / "portfolio" / "OPERATING_LOOP_V1.md",
-    REPO_ROOT / "docs" / "portfolio" / "sample-portfolio-state.yaml",
+    REPO_ROOT / "examples" / "portfolio" / "sample-portfolio-state.yaml",
 ]
 
 PRIVATE_MARKERS = [

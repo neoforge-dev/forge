@@ -480,6 +480,95 @@ func TestInsertTokenBudgetLog_TB(t *testing.T) {
 	}
 }
 
+func TestTokenBudgetCooldownResetPatrol_BelowThreshold(t *testing.T) {
+	// Patrol with a provider whose usage is below all thresholds (status already OK,
+	// no cooldown). fileModified stays false — no file write — but snapshots must
+	// still be upserted into SQLite. This exercises the no-change branch.
+	dbPath := fmt.Sprintf("/tmp/test_tb_patrol_below_%d.db", time.Now().UnixNano())
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove(dbPath)
+
+	ctx := context.Background()
+	if err := ensureTokenBudgetTables(ctx, db); err != nil {
+		t.Fatalf("ensureTokenBudgetTables: %v", err)
+	}
+
+	nodeID := fmt.Sprintf("patrol-below-%d", time.Now().UnixNano())
+	t.Setenv("NODE_ID", nodeID)
+
+	budgetDir := filepath.Join(".", ".forge", "heartbeat")
+	if err := os.MkdirAll(budgetDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	budgetPath := filepath.Join(budgetDir, fmt.Sprintf("token-budgets-%s.json", nodeID))
+	defer os.Remove(budgetPath)
+
+	// Low usage, no cooldown, status already OK — patrol should be a no-op for the file
+	// but must still upsert a snapshot row.
+	f := &tokenBudgetFile{
+		Node:      nodeID,
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		Providers: map[string]tbProviderData{
+			"anthropic": {
+				Provider: "anthropic",
+				Agents:   []string{"glm", "kimi"},
+				Limits:   map[string]int{"monthly_pct": 10, "weekly_pct": 5, "5h_rolling_pct": 2},
+				Status:   "OK",
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(f, "", "  ")
+	if err := os.WriteFile(budgetPath, data, 0644); err != nil {
+		t.Fatalf("write budget file: %v", err)
+	}
+
+	originalStat, err := os.Stat(budgetPath)
+	if err != nil {
+		t.Fatalf("stat before patrol: %v", err)
+	}
+
+	if err := tokenBudgetCooldownResetPatrol(ctx, db); err != nil {
+		t.Fatalf("tokenBudgetCooldownResetPatrol (below threshold): %v", err)
+	}
+
+	// File should NOT have been rewritten (status unchanged, no cooldown to clear).
+	afterStat, err := os.Stat(budgetPath)
+	if err != nil {
+		t.Fatalf("stat after patrol: %v", err)
+	}
+	if !afterStat.ModTime().Equal(originalStat.ModTime()) {
+		// Allow a 1-second window for filesystem timestamp granularity.
+		diff := afterStat.ModTime().Sub(originalStat.ModTime())
+		if diff > time.Second {
+			t.Errorf("file was unexpectedly rewritten (modtime changed by %v)", diff)
+		}
+	}
+
+	// Snapshot must have been upserted regardless of whether the file changed.
+	var count int
+	row := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM token_budget_snapshots WHERE node_id = ? AND provider = 'anthropic'", nodeID)
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("scan snapshot count: %v", err)
+	}
+	if count == 0 {
+		t.Error("expected snapshot row in SQLite even when file was not modified")
+	}
+
+	// Since status did not change (no_change event type), no log row should be inserted.
+	var logCount int
+	logRow := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM token_budget_log WHERE node_id = ?", nodeID)
+	if err := logRow.Scan(&logCount); err != nil {
+		t.Fatalf("scan log count: %v", err)
+	}
+	if logCount != 0 {
+		t.Errorf("expected 0 log rows for no_change event, got %d", logCount)
+	}
+}
+
 func TestInsertTokenBudgetLog_WithCooldown(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/test_tb_logcd_%d.db", time.Now().UnixNano())
 	db, err := OpenDB(dbPath)

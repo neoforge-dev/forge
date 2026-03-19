@@ -27,7 +27,7 @@ func TestWave89_PatrolSystem_StartWithContextPatrol(t *testing.T) {
 	ps := NewPatrolSystem(db)
 
 	// Add a context-aware patrol to cover the contextPatrols iteration
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	cap := ContextAwarePatrol{
 		Patrol: Patrol{
 			ID:       "wave89-ctx-patrol",
@@ -252,19 +252,6 @@ func TestWave89_DispatchHandler_POST_Success(t *testing.T) {
 // handlers_agent.go: agentsSSEHandler — 53.6%
 // Test method not allowed path.
 // ---------------------------------------------------------------------------
-
-func TestWave89_AgentsSSEHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodPost, "/api/agents/sse", nil)
-	w := httptest.NewRecorder()
-	agentsSSEHandler(w, r)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("agentsSSEHandler POST: got %d", w.Code)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // coordination.go: sendBlockerAlert — 71.4%

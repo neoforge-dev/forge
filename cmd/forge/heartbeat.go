@@ -34,6 +34,7 @@ Examples:
 }
 
 func init() {
+	// heartbeatCmd visible — agents need heartbeat commands
 	heartbeatCmd.Flags().String("agent", "", "Agent ID / name to send heartbeat for (required)")
 	heartbeatCmd.MarkFlagRequired("agent")
 	heartbeatCmd.Flags().Duration("interval", 60*time.Second, "Interval between heartbeats (used with --daemon)")

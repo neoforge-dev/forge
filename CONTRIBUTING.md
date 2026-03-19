@@ -33,7 +33,7 @@ cd cmd/forge && go build ./... && ./forge version
 ## Code Standards
 
 - **Python**: 3.12+, ruff for linting/formatting, type hints encouraged
-- **TypeScript** (Command Center): ESLint + Prettier
+- **Go**: `cmd/forge/` (CLI) and `cmd/forged/` (daemon) — `go vet`, `go test`
 - **Commits**: [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`)
 - **Tests**: Required for new features and bug fixes
 
@@ -42,12 +42,11 @@ cd cmd/forge && go build ./... && ./forge version
 ```
 forge/
 ├── cmd/forge/             # CLI binary (Go)
-├── cmd/forged/            # Daemon binary (Go)
-├── harness/               # Core framework (Python)
+├── cmd/forged/            # Daemon binary (Go) — HTTP :8081, SQLite
+├── harness/               # Python harness (iOS automation, agent SDK)
 │   ├── forge_harness/     # Main package
-│   │   ├── webhook_server/# Command Center API
+│   │   ├── ios_harness/   # iOS build/test automation
 │   │   └── ...
-│   ├── command_center/    # Web dashboard (React/TypeScript)
 │   └── tests/             # Test suite
 ├── portfolio/             # MVP project submodules (11 domains)
 ├── forge-shared/          # Shared libraries across projects

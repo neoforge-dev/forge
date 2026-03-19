@@ -1,0 +1,15 @@
+{
+  "id": "01KKT7XKRQAT9GNXDB7E5GAP9N",
+  "agent_id": "kimi-3",
+  "domain": "sati",
+  "project": "default",
+  "task_id": "auto-generated",
+  "created_at": "2026-03-16T02:34:37.207246779Z",
+  "expires_at": "2026-03-23T02:34:37.207246829Z",
+  "summary": "Auto-generated at 50% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

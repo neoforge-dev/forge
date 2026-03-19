@@ -194,3 +194,218 @@ func TestWave66_SSEDeliveryHandler_TargetNodeFilter(t *testing.T) {
 		t.Error("expected beta node messages to be filtered out by target_node=alpha")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Consolidated from coverage_wave179_test.go: xnodeAckProcessorPatrol tests
+// ---------------------------------------------------------------------------
+
+// setXNodeAcksDir saves and restores XNodeAcksDir around a test.
+func setXNodeAcksDir(t *testing.T, dir string) func() {
+	t.Helper()
+	orig := XNodeAcksDir
+	XNodeAcksDir = dir
+	return func() { XNodeAcksDir = orig }
+}
+
+func TestWave179_XnodeAckProcessor_EmptyDir(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_NotConfigured(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	defer setXNodeAcksDir(t, "")()
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil for empty XNodeAcksDir, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_DirIsNotExist(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	defer setXNodeAcksDir(t, "/tmp/wave179_nonexistent_acks_dir_xyz987")()
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil for non-existent dir, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_ReadDirError(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	f, err := os.CreateTemp("", "wave179_notadir*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	defer os.Remove(f.Name())
+
+	defer setXNodeAcksDir(t, f.Name())()
+
+	err = xnodeAckProcessorPatrol(context.Background(), db)
+	if err == nil {
+		t.Error("expected error when ackDir is a file, not a directory")
+	}
+}
+
+func TestWave179_XnodeAckProcessor_ReadFileError(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	subdir := filepath.Join(dir, "bad.json")
+	if err := os.Mkdir(subdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_InvalidJSON(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	ackFile := filepath.Join(dir, "bad_msg.json")
+	if err := os.WriteFile(ackFile, []byte("{not valid json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil on bad JSON, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_NonAckedStatus(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	ack := map[string]string{"message_id": "msg-001", "status": "pending"}
+	data, _ := json.Marshal(ack)
+	if err := os.WriteFile(filepath.Join(dir, "pending.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil for non-acked status, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_EmptyMessageID(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	ack := map[string]string{"message_id": "", "status": "acked"}
+	data, _ := json.Marshal(ack)
+	if err := os.WriteFile(filepath.Join(dir, "noid.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil for empty message_id, got %v", err)
+	}
+}
+
+func TestWave179_XnodeAckProcessor_SuccessfulAck(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS xnode_outbox (
+		id TEXT PRIMARY KEY,
+		target_node TEXT,
+		message_type TEXT,
+		payload TEXT,
+		idempotency_key TEXT,
+		status TEXT DEFAULT 'serialized',
+		acked_at TEXT,
+		created_at TEXT DEFAULT (datetime('now'))
+	)`)
+	if err != nil {
+		t.Fatalf("create xnode_outbox: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO xnode_outbox (id, target_node, message_type, payload, status)
+		VALUES ('msg-ack-179', 'sati', 'test', '{}', 'serialized')`)
+	if err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	ack := map[string]string{"message_id": "msg-ack-179", "status": "acked"}
+	data, _ := json.Marshal(ack)
+	ackPath := filepath.Join(dir, "ack179.json")
+	if err := os.WriteFile(ackPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+
+	var status string
+	db.QueryRow(`SELECT status FROM xnode_outbox WHERE id='msg-ack-179'`).Scan(&status)
+	if status != "acked" {
+		t.Errorf("expected status=acked, got %q", status)
+	}
+
+	if _, err := os.Stat(ackPath); !os.IsNotExist(err) {
+		t.Error("expected ack file to be removed after successful processing")
+	}
+}
+
+func TestWave179_XnodeAckProcessor_DBExecError(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	cleanup() // close DB immediately so ExecContext fails
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	ack := map[string]string{"message_id": "msg-closed-179", "status": "acked"}
+	data, _ := json.Marshal(ack)
+	if err := os.WriteFile(filepath.Join(dir, "closed.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = xnodeAckProcessorPatrol(context.Background(), db)
+}
+
+func TestWave179_XnodeAckProcessor_NonJsonExtSkipped(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+
+	dir := t.TempDir()
+	defer setXNodeAcksDir(t, dir)()
+
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not an ack"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := xnodeAckProcessorPatrol(context.Background(), db); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}

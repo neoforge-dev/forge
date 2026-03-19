@@ -258,7 +258,7 @@ func TestWave84_CheckContextThreshold_WithHighContext(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 
 	// Insert an agent with high context_pct in agent_heartbeats
 	now := time.Now().UTC().Format(time.RFC3339)

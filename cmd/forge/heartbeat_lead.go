@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/neoforge-dev/forge/internal"
@@ -23,7 +25,7 @@ type loopState struct {
 	LastCommit     string `json:"last_commit"`
 }
 
-const loopStateFile = ".forge/heartbeat/loop_state.json"
+var loopStateFile = ".forge/heartbeat/loop_state.json"
 
 func readLoopState() (*loopState, error) {
 	data, err := os.ReadFile(loopStateFile)
@@ -278,10 +280,150 @@ var heartbeatCrossNodeCmd = &cobra.Command{
 	},
 }
 
+// autoCommitResults stages and commits new result files written since the last
+// commit timestamp recorded in loopState. Returns nil (no-op) when the tree is
+// already clean or no new files are present.
+func autoCommitResults(s *loopState) error {
+	refTime := time.Now().Add(-24 * time.Hour) // safe fallback
+	if s.LastCommit != "" {
+		if t, err := time.Parse(time.RFC3339, s.LastCommit); err == nil {
+			refTime = t
+		}
+	}
+
+	count, err := newResultFiles(refTime)
+	if err != nil {
+		return fmt.Errorf("scan results: %w", err)
+	}
+	if count == 0 {
+		return nil
+	}
+
+	if out, err := exec.Command("git", "add", ".forge/heartbeat/results/").CombinedOutput(); err != nil {
+		return fmt.Errorf("git add: %w\n%s", err, out)
+	}
+
+	msg := fmt.Sprintf("chore(heartbeat): commit %d result file(s) [HB #%d]", count, s.HeartbeatCount)
+	if out, err := exec.Command("git", "commit", "-m", msg).CombinedOutput(); err != nil {
+		// "nothing to commit" is not a real error — git exits 1 with that message.
+		if strings.Contains(string(out), "nothing to commit") {
+			return nil
+		}
+		return fmt.Errorf("git commit: %w\n%s", err, out)
+	}
+
+	fmt.Printf("[run] committed %d result file(s): %s\n", count, msg)
+	s.LastCommit = time.Now().UTC().Format(time.RFC3339)
+	return writeLoopState(s)
+}
+
+var heartbeatRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Autonomous eval loop: tick → check triggers → (optionally) commit results",
+	Long: `Run the lead orchestrator heartbeat loop.
+
+Each cycle:
+  1. Increment heartbeat counter and print trigger recommendations (same as 'eval')
+  2. If --commit is set and new result files exist, stage and commit them
+  3. Wait for --interval, then repeat
+
+Safety guardrails:
+  --max-iterations N  stop after N cycles (0 = run until Ctrl+C)
+  --context-max N     stop if $FORGE_CONTEXT_PCT exceeds N% (default 75)
+
+Examples:
+  forge heartbeat run                      # eval loop, no auto-commit
+  forge heartbeat run --interval 15m       # 15-minute eval cycle
+  forge heartbeat run --commit             # also auto-commit result files
+  forge heartbeat run --max-iterations 8   # stop after 8 cycles`,
+	RunE: runHeartbeatRun,
+}
+
+func init() {
+	heartbeatRunCmd.Flags().Duration("interval", 15*time.Minute, "Interval between heartbeat cycles")
+	heartbeatRunCmd.Flags().Int("max-iterations", 0, "Maximum number of cycles to run (0 = unlimited)")
+	heartbeatRunCmd.Flags().Bool("commit", false, "Auto-commit new result files after each eval")
+	heartbeatRunCmd.Flags().Float64("context-max", 75.0, "Stop if context window exceeds this percentage")
+}
+
+func runHeartbeatRun(cmd *cobra.Command, args []string) error {
+	interval, _ := cmd.Flags().GetDuration("interval")
+	maxIter, _ := cmd.Flags().GetInt("max-iterations")
+	doCommit, _ := cmd.Flags().GetBool("commit")
+	contextMax, _ := cmd.Flags().GetFloat64("context-max")
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+
+	fmt.Printf("Heartbeat loop started\n")
+	fmt.Printf("  Interval:  %s\n", interval)
+	if maxIter > 0 {
+		fmt.Printf("  Max iter:  %d\n", maxIter)
+	}
+	fmt.Printf("  Auto-commit: %v\n", doCommit)
+	fmt.Printf("  Context max: %.0f%%\n", contextMax)
+	fmt.Printf("  Press Ctrl+C to stop\n\n")
+
+	iter := 0
+	for {
+		// Safety: stop if context window is too full.
+		if pct := readContextPct(); pct > contextMax {
+			fmt.Printf("[run] context %.1f%% exceeds max %.1f%% — stopping\n", pct, contextMax)
+			return nil
+		}
+
+		// Eval: increment counter and print triggers.
+		s, err := readLoopState()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[run] read loop state: %v\n", err)
+		} else {
+			s.HeartbeatCount++
+			if werr := writeLoopState(s); werr != nil {
+				fmt.Fprintf(os.Stderr, "[run] write loop state: %v\n", werr)
+			} else {
+				if perr := printEvalOutput(s); perr != nil {
+					fmt.Fprintf(os.Stderr, "[run] eval output: %v\n", perr)
+				}
+			}
+
+			// Auto-commit result files if requested.
+			if doCommit {
+				if cerr := autoCommitResults(s); cerr != nil {
+					fmt.Fprintf(os.Stderr, "[run] commit: %v\n", cerr)
+				}
+			}
+		}
+
+		iter++
+		if maxIter > 0 && iter >= maxIter {
+			fmt.Printf("\n[run] reached max iterations (%d) — stopping\n", maxIter)
+			return nil
+		}
+
+		// Wait for next cycle, checking for shutdown every 200ms.
+		deadline := time.Now().Add(interval)
+		for time.Now().Before(deadline) {
+			remaining := time.Until(deadline)
+			wait := remaining
+			if wait > 200*time.Millisecond {
+				wait = 200 * time.Millisecond
+			}
+			select {
+			case sig := <-sigs:
+				fmt.Printf("\n[run] received %s — shutting down after %d iteration(s)\n", sig, iter)
+				return nil
+			case <-time.After(wait):
+			}
+		}
+	}
+}
+
 func init() {
 	heartbeatCmd.AddCommand(heartbeatEvalCmd)
 	heartbeatCmd.AddCommand(heartbeatStatusCmd)
 	heartbeatCmd.AddCommand(heartbeatResetCmd)
 	heartbeatCmd.AddCommand(heartbeatRetroCmd)
 	heartbeatCmd.AddCommand(heartbeatCrossNodeCmd)
+	heartbeatCmd.AddCommand(heartbeatRunCmd)
 }

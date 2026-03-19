@@ -201,44 +201,7 @@ func TestWave73_CouncilCleanup_WithActiveMarker(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// patrol.go: fleetScaleRecommend — 67.6%
-// Exercise the main recommendation logic paths.
-// ---------------------------------------------------------------------------
-
-func TestWave73_FleetScaleRecommend_EmptyDB(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	db := getDBConn()
-	// May write to .forge/heartbeat/results/ — that's OK
-	err := fleetScaleRecommend(context.Background(), db)
-	// Error only if it can't write the result file — acceptable in CI
-	if err != nil {
-		t.Logf("fleetScaleRecommend: %v (may fail if .forge/heartbeat/results/ doesn't exist)", err)
-	}
-}
-
-func TestWave73_FleetScaleRecommend_WithQueuedTasks(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	db := getDBConn()
-
-	// Add several queued tasks to trigger scale-up logic
-	now := time.Now().UTC().Format(time.RFC3339)
-	for i := 0; i < 10; i++ {
-		db.Exec(`INSERT INTO tasks (id, domain, project, type, priority, status, state, created_at, updated_at)
-			VALUES (?, 'd', 'p', 'feature', 5, 'queued', 'QUEUED', ?, ?)`,
-			fmt.Sprintf("wave73-scale-task-%d", i), now, now)
-	}
-
-	err := fleetScaleRecommend(ctx, db)
-	if err != nil {
-		t.Logf("fleetScaleRecommend with tasks: %v", err)
-	}
-}
+// fleetScaleRecommend was deleted (f715a295) — tests removed.
 
 // ---------------------------------------------------------------------------
 // patrol.go: checkBinaryFreshness — 68%
@@ -379,39 +342,6 @@ func TestWave73_HandleQueueDepth_WithManyTasks(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Errorf("decode response: %v", err)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// main.go: handleFleetStatus — covers fleet-status path
-// ---------------------------------------------------------------------------
-
-func TestWave73_HandleFleetStatus_OK(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodGet, "/fleet/status", nil)
-	w := httptest.NewRecorder()
-	handleFleetStatus(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Logf("handleFleetStatus: got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// ---------------------------------------------------------------------------
-// main.go: handleGitStatus — 71%
-// ---------------------------------------------------------------------------
-
-func TestWave73_HandleGitStatus_WithForgeRoot(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodGet, "/git/status", nil)
-	w := httptest.NewRecorder()
-	handleGitStatus(w, r)
-
-	// Returns 200 (with data), 500 (error), or 501 (not yet implemented)
-	t.Logf("handleGitStatus: %d", w.Code)
 }
 
 // ---------------------------------------------------------------------------
@@ -692,8 +622,9 @@ func TestWave73_CalculateFileHash_ValidFile(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	cs, _ := NewContextSync(cm, db, t.TempDir())
+	t.Cleanup(cs.Stop)
 
 	tmpFile := filepath.Join(t.TempDir(), "test.txt")
 	os.WriteFile(tmpFile, []byte("hello world"), 0644)
@@ -711,8 +642,9 @@ func TestWave73_CalculateFileHash_NotExist(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	cs, _ := NewContextSync(cm, db, t.TempDir())
+	t.Cleanup(cs.Stop)
 
 	_, err := cs.calculateFileHash("/nonexistent/path/to/file.txt")
 	if err == nil {

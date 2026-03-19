@@ -345,7 +345,7 @@ func TestWave87_GenerateEnvelope_WithTask(t *testing.T) {
 		"wave87-env-task", "codeswiftr", "proj", "feature", 5, "executing", "RUNNING", "Env Task", taskNow, taskNow)
 	_, _ = db.Exec(`INSERT OR REPLACE INTO agent_heartbeats (agent_id, node, status, context_pct, current_task_id, last_seen, connected_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"wave87-env-agent", "test-node", "working", 60.0, "wave87-env-task", now, now)
-	cm := NewContextManager(db, "")
+	cm := testContextManager(t, db, "")
 	_, err := cm.GenerateEnvelope(ctx, "wave87-env-agent", "codeswiftr", "proj", "wave87-env-task", "test")
 	if err != nil {
 		t.Logf("GenerateEnvelope with task: %v", err)

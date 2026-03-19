@@ -1,0 +1,15 @@
+{
+  "id": "01KKSWRJ3N81Y0J9ACG4AT4V8H",
+  "agent_id": "cursor",
+  "domain": "prya",
+  "project": "default",
+  "task_id": "auto-generated",
+  "created_at": "2026-03-15T23:19:37.333718727Z",
+  "expires_at": "2026-03-22T23:19:37.333718787Z",
+  "summary": "Auto-generated at 50% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

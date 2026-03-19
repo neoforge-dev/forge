@@ -95,23 +95,6 @@ func TestWave96_XNodeController_RegisterHandler_POST(t *testing.T) {
 	t.Logf("RegisterHandler POST: %d", w.Code)
 }
 
-func TestWave96_XNodeController_RegisterHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	xc, err := NewXNodeController(db, "wave96-node")
-	if err != nil {
-		t.Fatalf("NewXNodeController: %v", err)
-	}
-
-	r := httptest.NewRequest(http.MethodGet, "/api/xnode/nodes/register", nil)
-	w := httptest.NewRecorder()
-	xc.RegisterHandler(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("RegisterHandler GET: got %d (want 405)", w.Code)
-	}
-}
-
 func TestWave96_XNodeController_StatusHandler(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()

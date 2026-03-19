@@ -469,7 +469,7 @@ func TestWave82_CheckContextThreshold_EmptyDB(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 
 	err := checkContextThreshold(ctx, db, cm, nil)
 	if err != nil {

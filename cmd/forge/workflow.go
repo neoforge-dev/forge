@@ -259,6 +259,7 @@ func executeStep(step WorkflowStep) error {
 }
 
 func init() {
+	workflowCmd.Hidden = true
 	workflowCmd.AddCommand(workflowValidateCmd)
 	workflowCmd.AddCommand(workflowRunCmd)
 

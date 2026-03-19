@@ -1,0 +1,63 @@
+# Optimization Recommendations Generator
+
+Based on all profiling data collected, generate a prioritized action plan.
+
+## Input Data
+
+### Python Profile
+```json
+{{python_profile}}
+```
+
+### Memory Profile
+```json
+{{memory_profile}}
+```
+
+### API Latency
+```json
+{{api_latency}}
+```
+
+### Database Queries
+```json
+{{db_queries}}
+```
+
+## Output: Prioritized Optimization Roadmap
+
+### P0 - Critical (Fix Today)
+| Issue | Impact | Effort | File/Location |
+|-------|--------|--------|---------------|
+| [issue] | [X% speedup] | [hours] | [location] |
+
+### P1 - High (This Sprint)
+| Issue | Impact | Effort | File/Location |
+|-------|--------|--------|---------------|
+| [issue] | [X% speedup] | [hours] | [location] |
+
+### P2 - Medium (Backlog)
+| Issue | Impact | Effort | File/Location |
+|-------|--------|--------|---------------|
+| [issue] | [X% speedup] | [hours] | [location] |
+
+### Quick Wins (< 1 hour each)
+1. [Quick win 1]
+2. [Quick win 2]
+3. [Quick win 3]
+
+### Expected Impact Summary
+- **P0 fixes**: X% improvement in [metric]
+- **P1 fixes**: Y% improvement in [metric]
+- **Combined**: Z% overall improvement
+
+### Verification Steps
+After each optimization:
+1. Re-run profiler to confirm improvement
+2. Check for regressions in other metrics
+3. Update baseline for future comparisons
+
+### Monitoring Recommendations
+- Set up alerts for: [thresholds]
+- Dashboard metrics to track: [metrics]
+- Review frequency: [daily/weekly]

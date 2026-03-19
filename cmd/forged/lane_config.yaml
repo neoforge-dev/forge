@@ -19,3 +19,53 @@ lanes:
 
   done:
     gates: []
+
+  # Stage-aligned lanes (portfolio stage → execution lane mapping)
+  research:
+    description: "Validation & research work (validate stage)"
+    gates:
+      - lint
+    thresholds:
+      coverage: 0
+      max_lint_issues: 50
+    auto_progress: true
+    requires_approval: false
+    timeout: 60m
+
+  implementation:
+    description: "Feature development (build stage)"
+    gates:
+      - test
+      - lint
+      - build
+    thresholds:
+      coverage: 70
+      max_lint_issues: 30
+    auto_progress: false
+    requires_approval: false
+    timeout: 120m
+
+  release:
+    description: "Deployment & release (deploy stage)"
+    gates:
+      - test
+      - lint
+      - build
+    thresholds:
+      coverage: 80
+      max_lint_issues: 10
+    auto_progress: false
+    requires_approval: true
+    timeout: 60m
+
+  analytics:
+    description: "Metrics & optimization (measure stage)"
+    gates:
+      - test
+      - lint
+    thresholds:
+      coverage: 60
+      max_lint_issues: 30
+    auto_progress: true
+    requires_approval: false
+    timeout: 90m

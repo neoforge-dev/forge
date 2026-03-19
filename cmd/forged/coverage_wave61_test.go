@@ -140,24 +140,6 @@ func TestWave61_ExecutePatrol_DirectCall(t *testing.T) {
 
 // ─── XNodeController.ForwardHandler: GET returns method not allowed ──────
 
-func TestWave61_ForwardHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	xc, err := NewXNodeController(db, "test-node-w61")
-	if err != nil {
-		t.Fatalf("NewXNodeController: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/xnode/forward", nil)
-	w := httptest.NewRecorder()
-	xc.ForwardHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ─── XNodeController.ForwardHandler: invalid JSON body ───────────────────
 
 func TestWave61_ForwardHandler_InvalidJSON(t *testing.T) {
@@ -222,20 +204,6 @@ func TestWave61_ForwardHandler_MissingTaskID(t *testing.T) {
 
 // ─── handleQueueCancel: method not allowed ────────────────────────────────
 
-func TestWave61_HandleQueueCancel_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	_ = db
-
-	req := httptest.NewRequest(http.MethodGet, "/api/queue/cancel", nil)
-	w := httptest.NewRecorder()
-	handleQueueCancel(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ─── handleQueueCancel: invalid JSON ─────────────────────────────────────
 
 func TestWave61_HandleQueueCancel_InvalidJSON(t *testing.T) {
@@ -287,20 +255,6 @@ func TestWave61_HandleQueueCancel_TaskNotFound(t *testing.T) {
 }
 
 // ─── completeTaskWithApprovalHandler: method not allowed ─────────────────
-
-func TestWave61_CompleteTaskWithApprovalHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	_ = db
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-123/complete-with-approval", nil)
-	w := httptest.NewRecorder()
-	completeTaskWithApprovalHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 // ─── completeTaskWithApprovalHandler: invalid JSON body ──────────────────
 
@@ -359,20 +313,6 @@ func TestWave61_GetModifiedFiles_SuccessPath(t *testing.T) {
 }
 
 // ─── queueTaskHandler: method not allowed ────────────────────────────────
-
-func TestWave61_QueueTaskHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	_ = db
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-W61/queue", nil)
-	w := httptest.NewRecorder()
-	queueTaskHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 // ─── queueTaskHandler: task not found ────────────────────────────────────
 

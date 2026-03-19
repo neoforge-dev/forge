@@ -226,8 +226,8 @@ func (xc *XNodeController) StartHeartbeatMonitor(interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Mark nodes as offline if no heartbeat for 2 minutes
-				threshold := time.Now().Add(-2 * time.Minute)
+				// Mark nodes as offline if no heartbeat for 10 minutes
+				threshold := time.Now().Add(-10 * time.Minute)
 				_, err := xc.db.Exec(`
 					UPDATE nodes SET status = 'offline'
 					WHERE last_heartbeat < ? AND status = 'online'
@@ -510,8 +510,11 @@ func (xc *XNodeController) ForwardHandler(w http.ResponseWriter, r *http.Request
 	var req struct {
 		TargetNode string `json:"target_node"`
 		TaskID     string `json:"task_id"`
+		Summary    string `json:"summary"`
+		Durable    bool   `json:"durable"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[XNode] ForwardHandler: JSON decode error: %v", err)
 		respondWithError(w, http.StatusBadRequest, "Invalid request body",
 			fmt.Sprintf("JSON decode failed: %v", err))
 		return

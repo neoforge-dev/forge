@@ -52,14 +52,87 @@ Examples:
   forge patrol logs patrol-fleet --lines 50`,
 }
 
+// patrolGroupName maps a patrol type (derived from ID prefix) to one of 6 display groups.
+func patrolGroupName(patrolType string) string {
+	switch patrolType {
+	case "health", "heartbeat", "liveness", "agent", "metrics", "confidence", "node":
+		return "health"
+	case "task", "approval", "stale":
+		return "scheduling"
+	case "queue", "fleet", "token":
+		return "capacity"
+	case "result", "xnode", "dispatch", "inbox", "context":
+		return "sync"
+	case "git", "data", "worktree", "hygiene", "council", "daily":
+		return "hygiene"
+	case "work", "auto", "binary", "strategy":
+		return "autonomy"
+	default:
+		return "other"
+	}
+}
+
+// printPatrolGroups renders the 6-group summary view of patrols.
+func printPatrolGroups(patrols []Patrol) {
+	type groupStats struct {
+		total    int
+		running  int
+		warnings int
+		errors   int
+	}
+	groups := map[string]*groupStats{}
+	order := []string{"health", "scheduling", "capacity", "sync", "hygiene", "autonomy", "other"}
+	for _, g := range order {
+		groups[g] = &groupStats{}
+	}
+
+	for _, p := range patrols {
+		g := patrolGroupName(p.Type)
+		if _, ok := groups[g]; !ok {
+			groups[g] = &groupStats{}
+		}
+		gs := groups[g]
+		gs.total++
+		switch p.Status {
+		case "running":
+			gs.running++
+		case "warning":
+			gs.warnings++
+		case "error":
+			gs.errors++
+		}
+	}
+
+	fmt.Printf("%-12s  %6s  %7s  %8s  %6s\n", "GROUP", "TOTAL", "RUNNING", "WARNINGS", "ERRORS")
+	fmt.Printf("%-12s  %6s  %7s  %8s  %6s\n", "-----", "-----", "-------", "--------", "------")
+	for _, name := range order {
+		gs := groups[name]
+		if gs.total == 0 {
+			continue
+		}
+		errMark := ""
+		if gs.errors > 0 {
+			errMark = " !"
+		}
+		warnMark := ""
+		if gs.warnings > 0 {
+			warnMark = " ~"
+		}
+		fmt.Printf("%-12s  %6d  %7d  %8d  %6d%s%s\n",
+			name, gs.total, gs.running, gs.warnings, gs.errors, warnMark, errMark)
+	}
+	fmt.Printf("\nUse --all to see individual patrols.\n")
+}
+
 // patrolListCmd: forge patrol list
 var patrolListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all patrols",
-	Long:  "List all background monitoring patrols with their status.",
+	Long:  "List background monitoring patrols grouped by function. Use --all for individual view.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		patrolType, _ := cmd.Flags().GetString("type")
 		format, _ := cmd.Flags().GetString("format")
+		showAll, _ := cmd.Flags().GetBool("all")
 
 		patrols, err := loadPatrols()
 		if err != nil {
@@ -77,7 +150,13 @@ var patrolListCmd = &cobra.Command{
 			patrols = filtered
 		}
 
-		// Convert to PatrolInfo for formatting
+		// Default: grouped view
+		if !showAll && format == "table" {
+			printPatrolGroups(patrols)
+			return nil
+		}
+
+		// --all: individual patrol view (or JSON)
 		patrolInfos := make([]internal.PatrolInfo, len(patrols))
 		for i, p := range patrols {
 			patrolInfos[i] = internal.PatrolInfo{
@@ -427,6 +506,7 @@ Examples:
 }
 
 func init() {
+	// patrolCmd visible — orchestrators need patrol management
 	patrolCmd.AddCommand(patrolListCmd)
 	patrolCmd.AddCommand(patrolStatusCmd)
 	patrolCmd.AddCommand(patrolLogsCmd)
@@ -434,6 +514,7 @@ func init() {
 
 	// Flags for list
 	patrolListCmd.Flags().String("type", "", "Filter by patrol type (health, heartbeat, quality, deploy)")
+	patrolListCmd.Flags().Bool("all", false, "Show individual patrols instead of grouped summary")
 
 	// Flags for logs
 	patrolLogsCmd.Flags().IntP("lines", "n", 20, "Number of log lines to show")

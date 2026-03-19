@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Migration Assistant Wrapper
+# Usage: /migrate <command> [options]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+show_help() {
+    echo -e "${BLUE}FORGE Migration Assistant${NC}"
+    echo ""
+    echo "Usage: /migrate <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  generate    Generate a new Alembic migration"
+    echo "  validate    Validate migrations for breaking changes"
+    echo "  plan        Plan data migration for large tables"
+    echo "  rollback    Generate rollback procedure"
+    echo "  status      Check migration status"
+    echo "  help        Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  /migrate generate --description 'add user preferences'"
+    echo "  /migrate validate --strict"
+    echo "  /migrate plan --table orders --rows 10M"
+    echo "  /migrate rollback --revision abc123 --preview"
+    echo ""
+    echo "For detailed help on a command:"
+    echo "  /migrate <command> --help"
+}
+
+# Parse command
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+    generate|gen)
+        "$SCRIPT_DIR/scripts/migrate-generate.sh" "$@"
+        ;;
+    validate|val)
+        "$SCRIPT_DIR/scripts/migrate-validate.sh" "$@"
+        ;;
+    plan)
+        "$SCRIPT_DIR/scripts/migrate-plan.sh" "$@"
+        ;;
+    rollback|down)
+        "$SCRIPT_DIR/scripts/migrate-rollback.sh" "$@"
+        ;;
+    status|st)
+        "$SCRIPT_DIR/scripts/migrate-status.sh" "$@"
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $COMMAND${NC}"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac

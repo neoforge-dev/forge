@@ -1,0 +1,93 @@
+# FORGE Daily Digest — 2026-03-19
+
+**Generated:** 2026-03-19 13:21 UTC
+
+## Tasks (24h)
+- Completed: 0
+- Failed/Abandoned: 0
+
+## Patrols
+- Errors: 0
+
+## Recent Commits
+- fb0a4199 chore: sync voice-coach submodule — python-jose CVE fix pointer
+- 1802aec7 chore: sync submodule pointers + add context-monitor cron script
+- 046f2873 fix(is): sync submodule — 2 critical security fixes + hardening audit
+- 216ac07b feat(is): sync submodule — email drip campaign for activation
+- 3d74fca3 chore: sync study-flow — Stripe portal endpoint + launch checklist
+- d5f2d99e chore(adguild): update lead context with session summary
+- e5802aa3 chore(adguild): update lead context and plan status
+- b8462c4a feat(patterns): add content-batch, ios-deploy  and seo-audit patterns
+- 8f308932 chore(adguild): update vite config and lock file
+- b5dc8ba1 test(adguild): add frontend test suite for campaign-intelligence
+- 5cb02595 docs(adguild): add Sprint 120 implementation plan
+- 5d629ef6 fix(adguild): resolve forge-shared dependency for campaign-intelligence
+- 1b62633f chore: sync voice-coach submodule — coverage 85.83% + lint fixes
+- 3976680c docs(pkm-ai): add CLAUDE.md — project context, standards, quick start
+- a2125ace chore: S120-P1 infrastructure cleanup
+- dff2f37d chore: sync code-atlas — all 12 billing tests green
+- 56605fcb chore: sync code-atlas — webhook dev mode fix + pilot docs
+- 3f1a41fd feat(is): sync submodule — 3 activation funnel fixes
+- f30a8f39 chore: sync code-atlas submodule — pilot program docs
+- f40d4487 fix(is): remove .env from git tracking + sync migration fix
+- caa25367 chore: sync IS submodule — 4 more company interview guides
+- 58b4d915 docs: update S120 plan with deep audit findings — 4 phases, 40+ items
+- 77399389 docs: S120 plan — infrastructure consolidation from deep audit
+- 3516396e chore: sync IS submodule — migration chain fix + company guides
+- 7ac53b8f chore: auto-sync submodule pointers
+- 003ddf9a chore(s119): BACKLOG hygiene + AGENTS.md skill matrix
+- ccca2add chore(s119): remove 23 stale result files from heartbeat results
+- 16ac2f49 feat(dispatch): add reassign-stale command for timeout detection + auto-reassign
+- 04a689d9 feat(dispatch): add check-results quality gate command
+- 1f1cc8b9 feat(dispatch): add pending dispatch files to forge dispatch status
+- 37cb727b feat(forge): implement forge heartbeat run autonomous eval loop
+- bafd389b docs: mark P2-3/P2-4 done in PROMPT.md
+- f17cab68 test(allergen-coach): add 10 integration tests for core user journeys
+- 99fa951f docs(allergen-coach): add Week 2 production deploy guide
+- 886923b5 fix(allergen-coach): lower coverage gate 90%→40% in pytest.ini
+- 621e7b60 chore(s119): resolve merge conflicts + allergen-coach Alembic setup
+- 7ec2442d test(forged): merge S119 coverage push 84.7% → 85.0%
+- 9289cd424 chore(s119): update sprint state + allergen-coach prep
+- 8bf328d1 test(forged): add S119 coverage tests across canonical test files
+- 14533a0e test(forged): push coverage from 84.7% → 85.0%
+- 444a67bc docs: mark SF COPPA compliance as FIXED — S119 BACKLOG complete
+- 7abdd262 feat(study-flow): update submodule — COPPA compliance (age gate + data deletion)
+- a6a6385b docs: mark CA CORS tightening as FIXED in BACKLOG
+- 4db7606c fix(code-atlas): update submodule — CORS tightened for production
+- 5f131e44 docs: mark IS webhook dedup + rate limiting as FIXED in BACKLOG
+- 6246cdae fix(interview-simulator): update submodule — webhook dedup bug fixes
+- 2499d370 docs: mark CA billing webhook handlers as FIXED in BACKLOG
+- 01521bf4 fix(code-atlas): update submodule — billing webhook handlers implemented
+- e7ceec8c docs: add TODO audit findings to BACKLOG — 6 medium billing issues
+- c83c4baf fix: repair corrupted portfolio-state.yaml from merge conflict
+- 71b8269b docs: update BACKLOG.md with security audit results
+- 061c2039 test commit
+- 5e523da0 test commit
+- 9eb361ab test commit
+- 4e2da1ff test commit
+- d7250bb3 test commit
+- 0b5ee681 docs: update runbooks to v4 Go CLI (S120)
+- f0909eff Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- bc841551 refactor: mark zombie products ( allergen-coach, burnout-pulse, dopamine-detox) as kill-stage in portfolio-state.yaml
+- 504f566b refactor: mark zombie products as kill-stage in portfolio-state.yaml
+- 0158346f chore: sync IS submodule — 4 company interview guides added
+- d6cbf2cb fix(voice-coach): update submodule — python-jose CVE-2024-33663 fix
+- 90a37cb7 docs: Council TC-S120-SIMPLIFICATION — 5 proposals for portfolio focus
+- 9ada8bdc test(pkm-ai): boost coverage with 30+ targeted unit tests
+- fc50050d docs: update PROMPT.md — Epic 1 complete, security audits in progress
+- d9c9e063 refactor: slim CLAUDE.md from 406 to 259 lines (-36%)
+- 548f663e feat: add 3 path-scoped rules + progressive disclosure infrastructure map
+- 1300f5cc docs(voice-coach): add 3 SEO blog posts for pre-launch content
+- cacc1557 feat(brandfocus-platform): add landing page for demand validation
+- a95c1b8d feat(voice-coach): add docker-compose.dev.yml and deployment configs
+- 41e20692 feat(pkm-ai): add Makefile, CI/CD, and docker-compose
+- d5b4d7bd docs: add Code Atlas quickstart guide
+- 1ba3b9ef docs: S119 strategic audit + BACKLOG.md refresh with 4 epics
+- 97a1d40e docs: add strategic epics to PROMPT.md — infrastructure, autonomy, launch, quality
+- 7bd1ef51 docs: comprehensive BACKLOG.md refresh — 4 epics, real status, gaps identified
+- 67ed7b72 docs: update PROMPT.md with S119 progress (submodules removed, fleet dispatched)
+- f6308d31 chore: remove 4 empty kill-stage submodules
+- c14527e7 docs: refresh PROMPT.md, PLAN.md, BLOCKED.md for S119
+- 9b4aed79 docs: add market research reports + BLOCKED.md + TEST_MAP.md
+- 5f7f3e0c chore(forged): delete 3 consolidated coverage_wave test files
+- b6efdcec chore: auto-sync submodule pointers

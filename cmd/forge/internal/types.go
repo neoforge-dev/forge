@@ -31,18 +31,20 @@ type Task struct {
 }
 
 // DisplayTitle returns a human-readable label for display.
-// Uses Title if set, otherwise falls back to "domain/project (type)".
+// Uses Title if set; otherwise constructs a fallback that makes it immediately
+// clear the task has no explicit title (prefixed with "[auto]" so operators
+// know to investigate or set a meaningful title).
 func (t *Task) DisplayTitle() string {
 	if t.Title != "" {
 		return t.Title
 	}
 	if t.Domain != "" && t.Project != "" {
 		if t.TaskType != "" {
-			return fmt.Sprintf("%s/%s (%s)", t.Domain, t.Project, t.TaskType)
+			return fmt.Sprintf("[auto] %s/%s %s task", t.Domain, t.Project, t.TaskType)
 		}
-		return fmt.Sprintf("%s/%s", t.Domain, t.Project)
+		return fmt.Sprintf("[auto] %s/%s task", t.Domain, t.Project)
 	}
-	return "-"
+	return "[auto] untitled task"
 }
 
 // TaskListResponse represents the response from listing tasks (V3 format).

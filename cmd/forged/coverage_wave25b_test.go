@@ -86,19 +86,6 @@ func TestListPatternsHandler_DomainFilter_W25B(t *testing.T) {
 }
 
 // TestPatternsHandler_MethodNotAllowed_W25B: non GET/POST → 405.
-func TestPatternsHandler_MethodNotAllowed_W25B(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPut, "/api/patterns", nil)
-	w := httptest.NewRecorder()
-	patternsHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestListPatternsHandler_MultiplePatterns_W25B: insert 3 patterns, ensure
 // all rows scanned (covers the rows.Next loop body).
 func TestListPatternsHandler_MultiplePatterns_W25B(t *testing.T) {

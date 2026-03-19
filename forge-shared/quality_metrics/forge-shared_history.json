@@ -1,0 +1,30 @@
+[
+  {
+    "timestamp": "2026-03-03T07:43:12.731186+00:00",
+    "quality_score": 65.0,
+    "coverage_percent": 0.0,
+    "complexity_score": 1.4761904761904763,
+    "security_issues": 0
+  },
+  {
+    "timestamp": "2026-03-03T07:54:32.132377+00:00",
+    "quality_score": 65.0,
+    "coverage_percent": 0.0,
+    "complexity_score": 1.4761904761904763,
+    "security_issues": 0
+  },
+  {
+    "timestamp": "2026-03-03T07:57:35.945695+00:00",
+    "quality_score": 65.0,
+    "coverage_percent": 0.0,
+    "complexity_score": 1.4761904761904763,
+    "security_issues": 0
+  },
+  {
+    "timestamp": "2026-03-03T08:13:11.908357+00:00",
+    "quality_score": 65.0,
+    "coverage_percent": 0.0,
+    "complexity_score": 1.4761904761904763,
+    "security_issues": 0
+  }
+]

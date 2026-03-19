@@ -1,0 +1,25 @@
+name: forge-drift-check
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "PROMPT.md"
+      - "README.md"
+      - "docs/**"
+      - "scripts/drift-check.sh"
+      - ".github/workflows/forge-drift-check.yml"
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run drift check (policy surfaces)
+        run: |
+          chmod +x scripts/drift-check.sh
+          ./scripts/drift-check.sh --strict

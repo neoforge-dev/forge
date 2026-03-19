@@ -109,6 +109,7 @@ var lanePromoteCmd = &cobra.Command{
 }
 
 func init() {
+	laneCmd.Hidden = true
 	// lane promote flags
 	lanePromoteCmd.Flags().String("to", "", "Target lane key (optional, defaults to next)")
 	lanePromoteCmd.Flags().String("comment", "", "Optional comment for promotion")

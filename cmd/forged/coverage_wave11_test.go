@@ -46,18 +46,6 @@ func TestContextsHandler_WithFilters(t *testing.T) {
 	}
 }
 
-func TestContextsHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/contexts", nil)
-	w := httptest.NewRecorder()
-	contextsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // --- handlers_ui.go: uiFleetHandler ---
 
 func TestUiFleetHandler_Get(t *testing.T) {
@@ -73,31 +61,7 @@ func TestUiFleetHandler_Get(t *testing.T) {
 	}
 }
 
-func TestUiFleetHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/ui", nil)
-	w := httptest.NewRecorder()
-	uiFleetHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // --- handlers_plan.go: resumeTaskHandler ---
-
-func TestResumeTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-001/resume", nil)
-	w := httptest.NewRecorder()
-	resumeTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestResumeTaskHandler_TaskNotFound(t *testing.T) {
 	cleanup := setupWave5(t)

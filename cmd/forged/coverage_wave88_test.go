@@ -172,17 +172,6 @@ func TestWave88_NodeMetricsPushPatrol_WithMetricsRows(t *testing.T) {
 	}
 }
 
-func TestWave88_ExtendLeaseHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	r := httptest.NewRequest(http.MethodGet, "/api/tasks/extend-lease", nil)
-	w := httptest.NewRecorder()
-	extendLeaseHandler(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("extendLeaseHandler GET: got %d", w.Code)
-	}
-}
-
 func TestWave88_AgentsHandler_POST(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()

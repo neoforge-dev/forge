@@ -117,6 +117,7 @@ var projectCreateCmd = &cobra.Command{
 }
 
 func init() {
+	projectCmd.Hidden = true
 	// project list flags
 	projectListCmd.Flags().String("domain", "", "Filter projects by domain")
 

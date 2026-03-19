@@ -205,6 +205,7 @@ var pluginInfoCmd = &cobra.Command{
 }
 
 func init() {
+	pluginCmd.Hidden = true
 	pluginCmd.AddCommand(pluginListCmd)
 	pluginCmd.AddCommand(pluginInstallCmd)
 	pluginCmd.AddCommand(pluginRemoveCmd)
@@ -424,8 +425,8 @@ func getControlPlaneURL() string {
 	if url := os.Getenv("FORGE_API_URL"); url != "" {
 		return url
 	}
-	if cfg != nil && cfg.Worker.ControlPlane != "" {
-		return cfg.Worker.ControlPlane
+	if cfg != nil && cfg.APIURL != "" {
+		return cfg.APIURL
 	}
 	return "http://localhost:8081"
 }

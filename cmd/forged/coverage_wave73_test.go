@@ -137,16 +137,6 @@ func TestWave73_HandleQueueDepth_Basic(t *testing.T) {
 // TestWave73_OpenclawEventsHandler — openclawEventsHandler (handlers_openclaw.go:264)
 // ---------------------------------------------------------------------------
 
-func TestWave73_OpenclawEventsHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/events", nil)
-	rr := httptest.NewRecorder()
-	openclawEventsHandler(rr, req)
-
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", rr.Code)
-	}
-}
-
 func TestWave73_OpenclawEventsHandler_NonFlusher(t *testing.T) {
 	type nonFlusherW struct{ http.ResponseWriter }
 	req := httptest.NewRequest(http.MethodGet, "/api/openclaw/events", nil)
@@ -178,16 +168,6 @@ func TestWave73_OpenclawEventsHandler_ImmediateCancel(t *testing.T) {
 // ---------------------------------------------------------------------------
 // TestWave73_AgentsSSEHandler — agentsSSEHandler (handlers_agent.go:437)
 // ---------------------------------------------------------------------------
-
-func TestWave73_AgentsSSEHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/stream", nil)
-	rr := httptest.NewRecorder()
-	agentsSSEHandler(rr, req)
-
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", rr.Code)
-	}
-}
 
 func TestWave73_AgentsSSEHandler_NonFlusher(t *testing.T) {
 	type nonFlusherW struct{ http.ResponseWriter }

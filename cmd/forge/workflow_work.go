@@ -74,10 +74,12 @@ FORGE_DOMAIN and FORGE_PROJECT (e.g. eval $(forge work -e domain/project)).
 	cmd.Flags().String("agent", "", "Agent ID for claim loop (default: FORGE_AGENT_NAME or hostname)")
 	cmd.Flags().Duration("interval", 30*time.Second, "Poll interval for --daemon mode")
 	cmd.Flags().Int("max-tasks", 0, "Max tasks to claim in --daemon mode (0 = unlimited)")
+	cmd.Flags().Bool("execute", false, "Execute tasks after claiming (default: false, claim-only mode)")
 	return cmd
 }
 
 func init() {
+	// workCmd visible — agents need autonomous task claiming
 	rootCmd.AddCommand(workCmd)
 }
 
@@ -113,7 +115,8 @@ func runWork(cmd *cobra.Command, args []string) error {
 		}
 		interval, _ := cmd.Flags().GetDuration("interval")
 		maxTasks, _ := cmd.Flags().GetInt("max-tasks")
-		return runWorkDaemon(agentID, interval, maxTasks)
+		execute, _ := cmd.Flags().GetBool("execute")
+		return runWorkDaemonExecute(agentID, interval, maxTasks, execute)
 	}
 
 	out := io.Writer(os.Stdout)
@@ -192,10 +195,46 @@ func runWork(cmd *cobra.Command, args []string) error {
 	return formatter.FormatWorkContext(&ctx)
 }
 
-// runWorkDaemon runs the autonomous task claim loop.
+// workDaemonConfig holds tunable parameters for the work daemon backoff and
+// circuit breaker. Extracted to a struct so tests can override defaults.
+type workDaemonConfig struct {
+	// BaseInterval is the normal poll interval when the queue has tasks.
+	BaseInterval time.Duration
+	// MaxInterval caps exponential backoff when the queue is empty.
+	MaxInterval time.Duration
+	// CircuitOpenAfter is the number of consecutive API errors before the
+	// circuit breaker opens and polling is paused.
+	CircuitOpenAfter int
+	// Execute controls whether claimed tasks are executed immediately.
+	// When false (default), the daemon only claims tasks and prints the dispatch path.
+	// When true, executeTask() is called after every successful claim.
+	Execute bool
+}
+
+// defaultWorkDaemonConfig returns production defaults.
+func defaultWorkDaemonConfig(baseInterval time.Duration) workDaemonConfig {
+	return workDaemonConfig{
+		BaseInterval:     baseInterval,
+		MaxInterval:      5 * time.Minute,
+		CircuitOpenAfter: 3,
+	}
+}
+
+// runWorkDaemon runs the autonomous task claim loop (claim-only mode).
 // It polls /api/tasks?status=queued at the given interval and claims the next
 // available task for agentID. Runs until interrupted or maxTasks claimed.
 func runWorkDaemon(agentID string, interval time.Duration, maxTasks int) error {
+	return runWorkDaemonWithConfig(agentID, maxTasks, defaultWorkDaemonConfig(interval))
+}
+
+// runWorkDaemonExecute is like runWorkDaemon but allows toggling task execution.
+func runWorkDaemonExecute(agentID string, interval time.Duration, maxTasks int, execute bool) error {
+	cfg := defaultWorkDaemonConfig(interval)
+	cfg.Execute = execute
+	return runWorkDaemonWithConfig(agentID, maxTasks, cfg)
+}
+
+func runWorkDaemonWithConfig(agentID string, maxTasks int, cfg workDaemonConfig) error {
 	client := internal.NewClient()
 
 	sigCh := make(chan os.Signal, 1)
@@ -204,14 +243,11 @@ func runWorkDaemon(agentID string, interval time.Duration, maxTasks int) error {
 	claimed := 0
 	fmt.Printf("Work daemon started\n")
 	fmt.Printf("  Agent:    %s\n", agentID)
-	fmt.Printf("  Interval: %s\n", interval)
+	fmt.Printf("  Interval: %s (max backoff: %s)\n", cfg.BaseInterval, cfg.MaxInterval)
 	if maxTasks > 0 {
 		fmt.Printf("  Max:      %d tasks\n", maxTasks)
 	}
 	fmt.Printf("  Press Ctrl+C to stop\n\n")
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 
 	// Register this agent as a node in the xnode mesh so it appears in forge node list.
 	// Best-effort: errors are logged but never fatal.
@@ -260,78 +296,290 @@ func runWorkDaemon(agentID string, interval time.Duration, maxTasks int) error {
 		}
 	}
 
-	// Run immediately on first tick
-	if err := tryClaimTask(client, agentID); err == nil {
-		claimed++
-		if maxTasks > 0 && claimed >= maxTasks {
-			fmt.Printf("Reached max tasks (%d). Stopping.\n", maxTasks)
-			return nil
+	// backoffInterval returns a capped exponential interval based on how many
+	// consecutive empty-queue polls have occurred.
+	backoffInterval := func(emptyStreak int) time.Duration {
+		d := cfg.BaseInterval
+		for i := 0; i < emptyStreak && d < cfg.MaxInterval; i++ {
+			d *= 2
 		}
+		if d > cfg.MaxInterval {
+			d = cfg.MaxInterval
+		}
+		return d
 	}
-	sendHeartbeat()
 
+	// Poll state
+	emptyStreak := 0  // consecutive empty-queue responses
+	errStreak := 0    // consecutive API errors (circuit breaker)
+	nextPoll := time.Now() // when to next attempt a claim
+
+	// Run immediately on first iteration.
 	for {
+		// Check for shutdown before sleeping.
 		select {
 		case <-sigCh:
 			fmt.Printf("\nShutting down (claimed %d tasks)\n", claimed)
 			return nil
-		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := tryClaimTaskCtx(ctx, client, agentID)
-			cancel()
-			if err == nil {
-				claimed++
-				fmt.Printf("[%s] Claimed task #%d\n", time.Now().Format("15:04:05"), claimed)
-				if maxTasks > 0 && claimed >= maxTasks {
-					fmt.Printf("Reached max tasks (%d). Stopping.\n", maxTasks)
-					return nil
-				}
-			} else if !isNoTasksAvailable(err) {
-				fmt.Fprintf(os.Stderr, "[%s] Claim error: %v\n", time.Now().Format("15:04:05"), err)
-			}
-			sendHeartbeat()
+		default:
 		}
+
+		// Wait until nextPoll, checking for shutdown every 200ms.
+		for time.Now().Before(nextPoll) {
+			remaining := time.Until(nextPoll)
+			wait := remaining
+			if wait > 200*time.Millisecond {
+				wait = 200 * time.Millisecond
+			}
+			select {
+			case <-sigCh:
+				fmt.Printf("\nShutting down (claimed %d tasks)\n", claimed)
+				return nil
+			case <-time.After(wait):
+			}
+		}
+
+		// Circuit breaker: if API errors exceed threshold, skip and back off.
+		if errStreak >= cfg.CircuitOpenAfter {
+			backoff := backoffInterval(errStreak - cfg.CircuitOpenAfter + 1)
+			fmt.Fprintf(os.Stderr, "[%s] Circuit open after %d errors — backing off %s\n",
+				time.Now().Format("15:04:05"), errStreak, backoff)
+			nextPoll = time.Now().Add(backoff)
+			sendHeartbeat()
+			continue
+		}
+
+		// Attempt to claim a task.
+		claimCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		claimedTask, err := tryClaimTaskCtx(claimCtx, client, agentID)
+		cancel()
+
+		switch {
+		case err == nil:
+			// Success: reset all streak counters, poll at base interval.
+			claimed++
+			emptyStreak = 0
+			errStreak = 0
+			fmt.Printf("[%s] Claimed task #%d\n", time.Now().Format("15:04:05"), claimed)
+			if cfg.Execute && claimedTask != nil {
+				execCtx, execCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+				if execErr := executeTask(execCtx, client, claimedTask, agentID); execErr != nil {
+					fmt.Fprintf(os.Stderr, "[%s] Execute error for task %s: %v\n",
+						time.Now().Format("15:04:05"), claimedTask.ID, execErr)
+				}
+				execCancel()
+			}
+			if maxTasks > 0 && claimed >= maxTasks {
+				fmt.Printf("Reached max tasks (%d). Stopping.\n", maxTasks)
+				return nil
+			}
+			nextPoll = time.Now().Add(cfg.BaseInterval)
+
+		case isNoTasksAvailable(err):
+			// Queue is empty: apply exponential backoff.
+			emptyStreak++
+			errStreak = 0
+			sleep := backoffInterval(emptyStreak)
+			if emptyStreak > 1 {
+				fmt.Printf("[%s] Queue empty (streak %d) — next poll in %s\n",
+					time.Now().Format("15:04:05"), emptyStreak, sleep)
+			}
+			nextPoll = time.Now().Add(sleep)
+
+		default:
+			// API error: increment error streak toward circuit breaker.
+			errStreak++
+			emptyStreak = 0
+			fmt.Fprintf(os.Stderr, "[%s] Claim error (%d/%d): %v\n",
+				time.Now().Format("15:04:05"), errStreak, cfg.CircuitOpenAfter, err)
+			nextPoll = time.Now().Add(cfg.BaseInterval)
+		}
+
+		sendHeartbeat()
 	}
 }
 
 func tryClaimTask(client *internal.Client, agentID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return tryClaimTaskCtx(ctx, client, agentID)
+	_, err := tryClaimTaskCtx(ctx, client, agentID)
+	return err
 }
 
-func tryClaimTaskCtx(ctx context.Context, client *internal.Client, agentID string) error {
+// tryClaimTaskCtx finds and claims the next available queued/requested task.
+// Returns the claimed Task on success, errNoTasks if the queue is empty, or
+// another error if the API call failed.
+func tryClaimTaskCtx(ctx context.Context, client *internal.Client, agentID string) (*internal.Task, error) {
 	// Get next queued or requested task (both are claimable per claimTaskHandler)
 	// Try "queued" first, then "requested" if no queued tasks
 	result, err := client.ListTasks(ctx, "queued", 1, "")
 	if err != nil {
-		return fmt.Errorf("list tasks: %w", err)
+		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 	if result == nil || len(result.Tasks) == 0 {
 		// Try "requested" status
 		result, err = client.ListTasks(ctx, "requested", 1, "")
 		if err != nil {
-			return fmt.Errorf("list tasks: %w", err)
+			return nil, fmt.Errorf("list tasks: %w", err)
 		}
 		if result == nil || len(result.Tasks) == 0 {
-			return errNoTasks
+			return nil, errNoTasks
 		}
 	}
 
 	task := result.Tasks[0]
 	claimed, err := client.ClaimTask(ctx, task.ID, agentID)
 	if err != nil {
-		return fmt.Errorf("claim task %s: %w", task.ID, err)
+		return nil, fmt.Errorf("claim task %s: %w", task.ID, err)
 	}
 
 	fmt.Printf("[%s] Claimed: %s → %s\n",
 		time.Now().Format("15:04:05"), claimed.ID, agentID)
 	fmt.Printf("  Read: .forge/dispatches/%s.md (if exists)\n", claimed.ID)
-	return nil
+	return claimed, nil
 }
 
 var errNoTasks = fmt.Errorf("no tasks available")
 
 func isNoTasksAvailable(err error) bool {
 	return err == errNoTasks || strings.Contains(err.Error(), "no tasks available")
+}
+
+// agentCommands maps FORGE_AGENT_NAME values to their CLI invocation.
+// The slice is the base argv; executeTask appends task-specific arguments as needed.
+var agentCommands = map[string][]string{
+	"kimi":     {"kimi", "-y"},
+	"gemini":   {"gemini", "-y"},
+	"pi":       {"pi"},
+	"minimax":  {"minimax"},
+	"glm":      {"glm"},
+	"opencode": {"opencode"},
+	"kilo":     {"kilo"},
+	"claude":   {"claude", "--dangerously-skip-permissions", "-p"},
+	"codex":    {"codex", "--dangerously-bypass-approvals-and-sandbox"},
+}
+
+// executeTask runs the given task for agentID.
+//
+// For "claude", the task is executed as a subprocess in print-mode (-p) and the
+// captured stdout is written to .forge/heartbeat/results/{agentID}-{taskID}.md.
+// CompleteTask is called after the subprocess exits.
+//
+// For all other agents the task prompt is pushed into the agent's tmux window
+// using the 2-step send-keys protocol. The function returns immediately after
+// the tmux push without waiting for the agent to finish; the agent is expected
+// to write its own result file and the daemon's result-file-monitor patrol will
+// detect completion.
+//
+// In both paths a dispatch file is written first so the agent has a persistent
+// record of the task content.
+func executeTask(ctx context.Context, client *internal.Client, task *internal.Task, agentID string) error {
+	forgeRoot := getForgeRoot()
+	if forgeRoot == "" {
+		forgeRoot = "."
+	}
+
+	// Build the human-readable task prompt.
+	title := task.Title
+	if title == "" {
+		title = task.ID
+	}
+	description := task.Description
+	if description == "" {
+		description = title
+	}
+	prompt := fmt.Sprintf("Task %s: %s\n\n%s", task.ID, title, description)
+
+	// Write dispatch file so the agent has a durable record.
+	dispatchDir := filepath.Join(forgeRoot, ".forge", "dispatches")
+	if err := os.MkdirAll(dispatchDir, 0755); err != nil {
+		return fmt.Errorf("create dispatches dir: %w", err)
+	}
+	dispatchFile := filepath.Join(dispatchDir, task.ID+".md")
+	dispatchContent := fmt.Sprintf("# Task %s\n\n**Title:** %s\n\n**Description:**\n\n%s\n",
+		task.ID, title, description)
+	if writeErr := os.WriteFile(dispatchFile, []byte(dispatchContent), 0644); writeErr != nil {
+		// Non-fatal: log and continue.
+		fmt.Fprintf(os.Stderr, "[warn] write dispatch file %s: %v\n", dispatchFile, writeErr)
+	}
+
+	// Determine agent name from env (strip any node prefix like "forge:kimi").
+	agentName := os.Getenv("FORGE_AGENT_NAME")
+	if agentName == "" {
+		agentName = agentID
+	}
+	// Normalise "forge:kimi" → "kimi"
+	if idx := strings.LastIndex(agentName, ":"); idx >= 0 {
+		agentName = agentName[idx+1:]
+	}
+
+	if agentName == "claude" {
+		return executeTaskClaude(ctx, client, task, agentID, prompt, forgeRoot)
+	}
+	return executeTaskTmux(agentID, agentName, task.ID, prompt)
+}
+
+// executeTaskClaude runs claude non-interactively (-p flag), captures output,
+// writes a result file, then marks the task complete.
+func executeTaskClaude(ctx context.Context, client *internal.Client, task *internal.Task, agentID, prompt, forgeRoot string) error {
+	baseCmd, ok := agentCommands["claude"]
+	if !ok {
+		return fmt.Errorf("claude not found in agentCommands")
+	}
+
+	// argv: claude --dangerously-skip-permissions -p "<prompt>"
+	argv := append(append([]string{}, baseCmd...), prompt)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = os.Environ()
+
+	fmt.Printf("[%s] Executing claude for task %s\n", time.Now().Format("15:04:05"), task.ID)
+	output, err := cmd.Output()
+	if err != nil {
+		// Capture stderr if available.
+		exitErr, _ := err.(*exec.ExitError)
+		stderr := ""
+		if exitErr != nil {
+			stderr = string(exitErr.Stderr)
+		}
+		return fmt.Errorf("claude subprocess failed: %w\nstderr: %s", err, stderr)
+	}
+
+	// Write result file.
+	resultsDir := filepath.Join(forgeRoot, ".forge", "heartbeat", "results")
+	if mkErr := os.MkdirAll(resultsDir, 0755); mkErr != nil {
+		return fmt.Errorf("create results dir: %w", mkErr)
+	}
+	resultFile := filepath.Join(resultsDir, agentID+"-"+task.ID+".md")
+	resultContent := fmt.Sprintf("# Result: %s\n\n**Agent:** %s\n**Task:** %s\n\n## Output\n\n%s\n",
+		task.ID, agentID, task.Title, string(output))
+	if writeErr := os.WriteFile(resultFile, []byte(resultContent), 0644); writeErr != nil {
+		return fmt.Errorf("write result file: %w", writeErr)
+	}
+	fmt.Printf("[%s] Result written: %s\n", time.Now().Format("15:04:05"), resultFile)
+
+	// Mark complete.
+	summary := string(output)
+	if len(summary) > 500 {
+		summary = summary[:500] + "..."
+	}
+	if _, completeErr := client.CompleteTask(ctx, task.ID, summary); completeErr != nil {
+		return fmt.Errorf("complete task %s: %w", task.ID, completeErr)
+	}
+	fmt.Printf("[%s] Task %s marked complete\n", time.Now().Format("15:04:05"), task.ID)
+	return nil
+}
+
+// executeTaskTmux pushes the task prompt to the agent's tmux window using the
+// 2-step send-keys protocol and returns immediately (fire-and-forget).
+// The daemon's result-file-monitor patrol is responsible for detecting completion.
+func executeTaskTmux(agentID, agentName, taskID, prompt string) error {
+	tmuxSession := "forge"
+	fmt.Printf("[%s] Pushing task %s to tmux %s:%s\n",
+		time.Now().Format("15:04:05"), taskID, tmuxSession, agentID)
+	if err := notifyAgentViaTmux(tmuxSession, agentID, prompt); err != nil {
+		// Non-fatal: agent may not be running in a tmux window.
+		fmt.Fprintf(os.Stderr, "[warn] tmux push for task %s: %v\n", taskID, err)
+	}
+	// Don't mark complete — the agent will do it when it writes results.
+	return nil
 }

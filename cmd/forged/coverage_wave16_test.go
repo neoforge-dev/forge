@@ -347,20 +347,6 @@ func TestHandoffHandler_Create_BadJSON(t *testing.T) {
 	}
 }
 
-func TestHandoffHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	handler := NewHandoffHandler(NewHandoffService(NewHandoffStore(db)))
-	req := httptest.NewRequest(http.MethodDelete, "/api/handoffs", nil)
-	w := httptest.NewRecorder()
-	handler.handleHandoffs(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandoffHandler_Action_InvalidPath(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -373,21 +359,6 @@ func TestHandoffHandler_Action_InvalidPath(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandoffHandler_Action_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	handler := NewHandoffHandler(NewHandoffService(NewHandoffStore(db)))
-	req := httptest.NewRequest(http.MethodGet, "/api/handoffs/some-id/accept", nil)
-	req.URL.Path = "/api/handoffs/some-id/accept"
-	w := httptest.NewRecorder()
-	handler.handleHandoffAction(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 

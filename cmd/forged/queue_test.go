@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func setupTestQueue(t *testing.T) (TaskQueue, func()) {
@@ -375,5 +378,183 @@ func TestQueueDequeueEmpty(t *testing.T) {
 	_, err := q.Dequeue(ctx, "agent-001")
 	if err == nil {
 		t.Error("expected error when dequeuing from empty queue")
+	}
+}
+
+// ── Closed-DB error path coverage ─────────────────────────────────────────────
+
+// setupQueueWithClosedDB creates a TaskQueue whose underlying DB is immediately
+// closed, so all SQL-backed operations return "sql: database is closed".
+// This exercises the error-handling branches throughout queue.go.
+func setupQueueWithClosedDB(t *testing.T) (TaskQueue, func()) {
+	t.Helper()
+	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("test_qclosed_%d_%d.db", time.Now().UnixNano(), os.Getpid()))
+
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("setupQueueWithClosedDB: open: %v", err)
+	}
+	if err := MigrateUp(db); err != nil {
+		db.Close()
+		t.Fatalf("setupQueueWithClosedDB: migrate: %v", err)
+	}
+
+	q, err := NewTaskQueueFromDB(db)
+	if err != nil {
+		db.Close()
+		t.Fatalf("setupQueueWithClosedDB: new queue: %v", err)
+	}
+
+	// Close the DB NOW — subsequent queue calls will get "sql: database is closed".
+	db.Close()
+
+	cleanup := func() {
+		os.Remove(dbPath)
+		os.Remove(dbPath + "-wal")
+		os.Remove(dbPath + "-shm")
+	}
+	return q, cleanup
+}
+
+func TestQueue_ClosedDB_Enqueue(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	task := Task{
+		ID: "closed-db-1", Domain: "d", Project: "p", Type: TaskTypeFeature, Priority: 5,
+	}
+	if err := q.Enqueue(context.Background(), task); err == nil {
+		t.Error("expected error on Enqueue with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_Dequeue(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if _, err := q.Dequeue(context.Background(), "agent-x"); err == nil {
+		t.Error("expected error on Dequeue with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_ClaimTask(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if err := q.ClaimTask(context.Background(), "no-task", "agent-x"); err == nil {
+		t.Error("expected error on ClaimTask with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_GetTask(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if _, err := q.GetTask(context.Background(), "no-task"); err == nil {
+		t.Error("expected error on GetTask with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_GetStatus(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if _, err := q.GetStatus(context.Background(), "no-task"); err == nil {
+		t.Error("expected error on GetStatus with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_ListAllTasks(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if _, err := q.ListAllTasks(context.Background(), 100); err == nil {
+		t.Error("expected error on ListAllTasks with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_Pause(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if err := q.Pause(context.Background(), "no-task"); err == nil {
+		t.Error("expected error on Pause with closed DB")
+	}
+}
+
+func TestQueue_ClosedDB_Resume(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	if err := q.Resume(context.Background(), "no-task"); err == nil {
+		t.Error("expected error on Resume with closed DB")
+	}
+}
+
+// TestQueue_EventTable_Missing covers the error path in writeEvent (line 882: _ = err).
+// writeEvent is called after the main SQL operation succeeds, so to hit its error
+// path we need the task_events table to be absent while the tasks table exists.
+func TestQueue_EventTable_Missing(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	// Only create tasks table — no task_events table.
+	if _, err := db.Exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY, domain TEXT DEFAULT '', project TEXT DEFAULT '')`); err != nil {
+		t.Fatalf("create tasks: %v", err)
+	}
+
+	q := &sqliteTaskQueue{db: db, bad: make(map[string]bool)}
+	// writeEvent tries INSERT INTO task_events, which fails silently.
+	q.writeEvent(context.Background(), "t1", "domain", "proj", "test.event", nil)
+	// Test passes if no panic — the error is intentionally swallowed.
+}
+
+// TestQueuePendingDispatch_UnmarshalablePayload covers the json.Marshal error path
+// in QueuePendingDispatch (return err when Marshal fails).
+func TestQueuePendingDispatch_UnmarshalablePayload(t *testing.T) {
+	q, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	// channels are not JSON-serializable; json.Marshal will return an error.
+	badPayload := map[string]interface{}{"ch": make(chan int)}
+	err := q.QueuePendingDispatch(context.Background(), "task-id", "agent-id", badPayload)
+	if err == nil {
+		t.Error("expected error from QueuePendingDispatch with unmarshalable payload")
+	}
+}
+
+// TestQueue_ClosedDB_QueuePendingDispatch covers the ExecContext error path.
+func TestQueue_ClosedDB_QueuePendingDispatch(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	err := q.QueuePendingDispatch(context.Background(), "t1", "agent", nil)
+	if err == nil {
+		t.Error("expected error from QueuePendingDispatch with closed DB")
+	}
+}
+
+// TestQueue_ClosedDB_GetPendingDispatches covers the QueryContext error path.
+func TestQueue_ClosedDB_GetPendingDispatches(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	_, err := q.GetPendingDispatches(context.Background(), "agent-id")
+	if err == nil {
+		t.Error("expected error from GetPendingDispatches with closed DB")
+	}
+}
+
+// TestQueue_ClosedDB_MarkDispatchSent covers the ExecContext error path.
+func TestQueue_ClosedDB_MarkDispatchSent(t *testing.T) {
+	q, cleanup := setupQueueWithClosedDB(t)
+	defer cleanup()
+
+	err := q.MarkDispatchSent(context.Background(), 1)
+	if err == nil {
+		t.Error("expected error from MarkDispatchSent with closed DB")
 	}
 }

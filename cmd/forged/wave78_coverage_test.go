@@ -293,7 +293,7 @@ func TestWave78_SyncEnvelopesToFilesystem_Empty(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)

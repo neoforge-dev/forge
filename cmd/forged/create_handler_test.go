@@ -302,6 +302,64 @@ func TestCreateTaskHandler_InvalidBody(t *testing.T) {
 }
 
 // TestCreateTaskHandler_TitleTooLong tests title length validation
+// TestCreateTaskHandler_WithPortfolioStage exercises the portfolio_stage path
+// (handlers_task.go:40.57,41.73) where GetApprovalTierForStage returns a tier
+// and task.RequiredTier is set.
+func TestCreateTaskHandler_WithPortfolioStage(t *testing.T) {
+	cleanup := setupCreateHandlerTest(t)
+	defer cleanup()
+
+	payload := map[string]interface{}{
+		"domain":          "test-domain",
+		"project":         "test-project",
+		"type":            "feature",
+		"title":           "Stage Tier Test",
+		"priority":        5,
+		"portfolio_stage": "build", // valid stage → GetApprovalTierForStage returns TierDesktop
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	createTaskHandler(w, req)
+
+	// The request should succeed (200) or fail gracefully (not panic).
+	if w.Code >= 500 {
+		t.Errorf("unexpected server error: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateTaskHandler_WithPortfolioStage_StageGateWarning exercises the
+// EnforceStageGate warning path (handlers_task.go:56.36,58.4). Using a
+// non-infrastructure domain without a valid portfolio-state.yaml causes
+// EnforceStageGate to return Allowed=true with a Warning.
+func TestCreateTaskHandler_WithPortfolioStage_StageGateWarning(t *testing.T) {
+	cleanup := setupCreateHandlerTest(t)
+	defer cleanup()
+
+	// Use a domain that is not an infrastructure domain, so EnforceStageGate
+	// attempts to load portfolio-state.yaml. In tests, the file is absent →
+	// returns {Allowed:true, Warning:"stage gate skipped..."}.
+	payload := map[string]interface{}{
+		"domain":   "some-portfolio-domain",
+		"project":  "test-project",
+		"type":     "feature",
+		"title":    "Stage Gate Warning Test",
+		"priority": 5,
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	createTaskHandler(w, req)
+
+	if w.Code >= 500 {
+		t.Errorf("unexpected server error: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateTaskHandler_TitleTooLong(t *testing.T) {
 	cleanup := setupCreateHandlerTest(t)
 	defer cleanup()

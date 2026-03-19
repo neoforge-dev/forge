@@ -280,6 +280,7 @@ File paths (relative to FORGE root):
 }
 
 func init() {
+	stateCmd.Hidden = true
 	stateCmd.AddCommand(stateShowCmd)
 	stateCmd.AddCommand(stateSetCmd)
 	stateCmd.AddCommand(stateLogCmd)

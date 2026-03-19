@@ -1,0 +1,15 @@
+{
+  "id": "01KKQBVQHP471BFETGEYE1ZRTX",
+  "agent_id": "claude-1",
+  "domain": "prya",
+  "project": "default",
+  "task_id": "cli-consolidation-tui",
+  "created_at": "2026-03-14T23:45:46.550357751Z",
+  "expires_at": "2026-03-21T23:45:46.550357801Z",
+  "summary": "Auto-generated at 50% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

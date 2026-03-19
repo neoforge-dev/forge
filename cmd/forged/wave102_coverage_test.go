@@ -538,7 +538,7 @@ func TestWave102_GenerateEnvelope_WithDB(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	env, err := cm.GenerateEnvelope(context.Background(), "wave102-agent", "codeswiftr", "proj1", "task-1", "coverage test")
 	if err != nil {

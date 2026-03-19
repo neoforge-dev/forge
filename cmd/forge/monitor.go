@@ -674,5 +674,6 @@ Keyboard shortcuts:
 }
 
 func init() {
+	monitorCmd.Hidden = true
 	rootCmd.AddCommand(monitorCmd)
 }

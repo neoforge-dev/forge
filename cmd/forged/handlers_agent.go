@@ -588,7 +588,11 @@ func agentsHealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getAllAgentsHealth() ([]AgentHeartbeat, error) {
-	rows, err := getDBConn().Query(`
+	db := getDBConn()
+	if db == nil {
+		return nil, fmt.Errorf("database connection not initialized")
+	}
+	rows, err := db.Query(`
 		SELECT agent_id, node, status, current_task_id, context_pct, capabilities, last_seen, connected_at
 		FROM agent_heartbeats
 		ORDER BY last_seen DESC
@@ -627,9 +631,15 @@ func getAllAgentsHealth() ([]AgentHeartbeat, error) {
 		a.LastSeen, _ = time.Parse("2006-01-02 15:04:05", lastSeen)
 		a.ConnectedAt, _ = time.Parse("2006-01-02 15:04:05", connectedAt)
 
+		// Determine online status: connected via WebSocket OR recent HTTP heartbeat
+		onlineThreshold := time.Now().UTC().Add(-10 * time.Minute)
+
 		if liveWorkers[a.AgentID] {
-			a.Status = "connected"
+			a.Status = "online"
 			a.LastSeen = time.Now().UTC()
+		} else if a.LastSeen.After(onlineThreshold) {
+			// Agent has sent HTTP heartbeat recently - mark as online
+			a.Status = "online"
 		}
 
 		seenInDB[a.AgentID] = true
@@ -656,12 +666,16 @@ func getAllAgentsHealth() ([]AgentHeartbeat, error) {
 }
 
 func getAgentHealth(agentID string) (*AgentHeartbeat, error) {
+	db := getDBConn()
+	if db == nil {
+		return nil, fmt.Errorf("database connection not initialized")
+	}
 	var a AgentHeartbeat
 	var currentTask sql.NullString
 	var capabilities sql.NullString
 	var lastSeen, connectedAt string
 
-	err := getDBConn().QueryRow(`
+	err := db.QueryRow(`
 		SELECT agent_id, node, status, current_task_id, context_pct, capabilities, last_seen, connected_at
 		FROM agent_heartbeats
 		WHERE agent_id = ?
@@ -763,7 +777,7 @@ func agentFleetSummaryHandler_V2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	cutoff := time.Now().UTC().Add(-5 * time.Minute).Format("2006-01-02 15:04:05")
+	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02 15:04:05")
 
 	var summary agentFleetSummaryResponse
 	db.QueryRowContext(ctx, `

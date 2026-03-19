@@ -197,6 +197,37 @@ func TestTask_Apply(t *testing.T) {
 	}
 }
 
+func TestTask_Apply_BadPayload(t *testing.T) {
+	// EventTaskCompleted and EventTaskFailed call json.Unmarshal with _ (ignore error).
+	// Passing malformed JSON must not panic and Apply must return nil.
+	task := &Task{ID: "test-1", Status: "queued"}
+
+	evt := Event{
+		Type:    EventTaskCompleted,
+		Payload: json.RawMessage(`{invalid json`),
+	}
+	err := task.Apply(evt)
+	if err != nil {
+		t.Errorf("Apply EventTaskCompleted with bad payload should return nil, got: %v", err)
+	}
+	if task.Status != TaskStatusCompleted {
+		t.Errorf("status should be completed even with bad payload, got: %s", task.Status)
+	}
+
+	task2 := &Task{ID: "test-2", Status: "queued"}
+	evt2 := Event{
+		Type:    EventTaskFailed,
+		Payload: json.RawMessage(`not json at all`),
+	}
+	err2 := task2.Apply(evt2)
+	if err2 != nil {
+		t.Errorf("Apply EventTaskFailed with bad payload should return nil, got: %v", err2)
+	}
+	if task2.Status != TaskStatusFailed {
+		t.Errorf("status should be failed even with bad payload, got: %s", task2.Status)
+	}
+}
+
 func TestEventStore_RebuildTaskState_Extended(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -220,5 +251,71 @@ func TestEventStore_RebuildTaskState_Extended(t *testing.T) {
 
 	if task.ID != taskID || task.AssignedTo != "a1" {
 		t.Errorf("rebuilt task mismatch: %+v", task)
+	}
+}
+
+// ── Closed-DB error path coverage ─────────────────────────────────────────────
+
+func setupClosedEventStore(t *testing.T) EventStore {
+	t.Helper()
+	db, cleanup := setupClaimTestDB(t)
+	t.Cleanup(cleanup)
+	db.Close()
+	return NewEventStore(db)
+}
+
+func TestEventStore_ClosedDB_Append(t *testing.T) {
+	store := setupClosedEventStore(t)
+	err := store.Append(context.Background(), []Event{{AggregateID: "t1", Type: EventTaskCreated}})
+	if err == nil {
+		t.Error("expected error from Append with closed DB")
+	}
+}
+
+func TestEventStore_ClosedDB_GetEvents(t *testing.T) {
+	store := setupClosedEventStore(t)
+	_, err := store.GetEvents(context.Background(), "t1")
+	if err == nil {
+		t.Error("expected error from GetEvents with closed DB")
+	}
+}
+
+func TestEventStore_ClosedDB_GetEventsByType(t *testing.T) {
+	store := setupClosedEventStore(t)
+	_, err := store.GetEventsByType(context.Background(), EventTaskCreated)
+	if err == nil {
+		t.Error("expected error from GetEventsByType with closed DB")
+	}
+}
+
+func TestEventStore_ClosedDB_GetEventsSince(t *testing.T) {
+	store := setupClosedEventStore(t)
+	_, err := store.GetEventsSince(context.Background(), time.Now())
+	if err == nil {
+		t.Error("expected error from GetEventsSince with closed DB")
+	}
+}
+
+func TestEventStore_ClosedDB_GetAllEvents(t *testing.T) {
+	store := setupClosedEventStore(t)
+	_, err := store.GetAllEvents(context.Background(), 10)
+	if err == nil {
+		t.Error("expected error from GetAllEvents with closed DB")
+	}
+}
+
+func TestEventStore_ClosedDB_GetCurrentVersion(t *testing.T) {
+	store := setupClosedEventStore(t)
+	_, err := store.GetCurrentVersion(context.Background(), "t1")
+	if err == nil {
+		t.Error("expected error from GetCurrentVersion with closed DB")
+	}
+}
+
+func TestEventStore_ClosedDB_RebuildTaskState(t *testing.T) {
+	store := setupClosedEventStore(t)
+	_, err := store.RebuildTaskState(context.Background(), "t1")
+	if err == nil {
+		t.Error("expected error from RebuildTaskState with closed DB")
 	}
 }

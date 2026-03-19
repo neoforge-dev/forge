@@ -7,7 +7,9 @@ on:
       - "AGENTS.md"
       - "docs/**"
       - "scripts/check_active_surface_policy.py"
+      - "scripts/check_public_release_boundary.py"
       - "scripts/tests/test_active_surface_policy.py"
+      - "scripts/tests/test_public_release_boundary.py"
       - ".github/workflows/docs-hygiene.yml"
   push:
     branches:
@@ -17,7 +19,9 @@ on:
       - "AGENTS.md"
       - "docs/**"
       - "scripts/check_active_surface_policy.py"
+      - "scripts/check_public_release_boundary.py"
       - "scripts/tests/test_active_surface_policy.py"
+      - "scripts/tests/test_public_release_boundary.py"
       - ".github/workflows/docs-hygiene.yml"
 
 jobs:

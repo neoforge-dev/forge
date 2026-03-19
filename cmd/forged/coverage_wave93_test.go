@@ -50,19 +50,6 @@ func TestWave93_FleetSummaryHandler_Success(t *testing.T) {
 }
 
 // PWA handleAgents method-not-allowed + GET
-func TestWave93_PWA_HandleAgents_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	d := NewDashboard(db, nil)
-	pwa := NewPWADashboardHandler(d)
-	r := httptest.NewRequest(http.MethodDelete, "/api/agents", nil)
-	w := httptest.NewRecorder()
-	pwa.handleAgents(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("handleAgents DELETE: got %d", w.Code)
-	}
-}
-
 func TestWave93_PWA_HandleAgents_Get(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()

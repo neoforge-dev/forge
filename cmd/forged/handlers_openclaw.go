@@ -1,7 +1,7 @@
-//go:build openclaw
-// +build openclaw
+//go:build !tmux_bridge
+// +build !tmux_bridge
 
-// TODO(ADR-031): move to plugin package when plugin system is implemented
+// ADR-031: will move to plugin package when plugin system is implemented.
 
 package main
 
@@ -61,6 +61,8 @@ func openclawHandler(w http.ResponseWriter, r *http.Request) {
 			openclawStatusHandler(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "/events") {
 			openclawEventsHandler(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/portfolio") {
+			openclawPortfolioHandler(w, r)
 		} else {
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -69,6 +71,10 @@ func openclawHandler(w http.ResponseWriter, r *http.Request) {
 			openclawChatHandler(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "/ingest") {
 			openclawIngestHandler(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/dispatch") {
+			openclawDispatchHandler(w, r)
+		} else if strings.HasSuffix(r.URL.Path, "/notify") {
+			openclawNotifyHandler(w, r)
 		} else {
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -182,6 +188,20 @@ func openclawChatHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse task title from message
 	title := parseTaskFromMessage(msg.Text)
 
+	// Attempt to detect a product domain and task type from the message text so
+	// that we can run the stage gate. This is best-effort: if no domain is found
+	// the check is skipped. The gate is advisory — it adds a warning to the
+	// response but never blocks task creation from the chat interface.
+	var openclawStageGateWarning string
+	if domainHint, typeHint := extractDomainAndTypeFromMessage(msg.Text); domainHint != "" {
+		sgResult := EnforceStageGate(domainHint, typeHint)
+		if !sgResult.Allowed {
+			openclawStageGateWarning = sgResult.BlockReason
+		} else if sgResult.Warning != "" {
+			openclawStageGateWarning = sgResult.Warning
+		}
+	}
+
 	// Create task with default values for openclaw-sourced tasks
 	task := Task{
 		ID:       generateTaskID(),
@@ -201,10 +221,15 @@ func openclawChatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	responseMsg := fmt.Sprintf("Task created: %s", task.ID)
+	if openclawStageGateWarning != "" {
+		responseMsg = fmt.Sprintf("Task created: %s [stage gate advisory: %s]", task.ID, openclawStageGateWarning)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(OpenClawChatResponse{
 		TaskID:  task.ID,
-		Message: fmt.Sprintf("Task created: %s", task.ID),
+		Message: responseMsg,
 	})
 }
 
@@ -219,6 +244,47 @@ func parseTaskFromMessage(text string) string {
 	}
 	// Use full text as title if no prefix found
 	return text
+}
+
+// extractDomainAndTypeFromMessage attempts to detect a product domain and task
+// type from a free-form chat message. Used for stage gate advisory checks.
+//
+// Recognised patterns (case-insensitive):
+//   - "domain:<value>" or "for <value>" — sets domainHint
+//   - "type:<value>" or "task type:<value>" — sets typeHint
+//
+// If no domain can be detected, domainHint is returned as "".
+// If no type can be detected, a default of "feature" is returned.
+func extractDomainAndTypeFromMessage(text string) (domainHint, typeHint string) {
+	lower := strings.ToLower(text)
+
+	// Extract explicit domain: prefix
+	for _, prefix := range []string{"domain:", "for domain:", "project:"} {
+		if idx := strings.Index(lower, prefix); idx >= 0 {
+			rest := strings.TrimSpace(text[idx+len(prefix):])
+			// Take the first word/token as the domain
+			parts := strings.Fields(rest)
+			if len(parts) > 0 {
+				domainHint = strings.Trim(parts[0], ",;.")
+				break
+			}
+		}
+	}
+
+	// Extract task type
+	typeHint = "feature" // default
+	for _, prefix := range []string{"task type:", "type:", "task:"} {
+		if idx := strings.Index(lower, prefix); idx >= 0 {
+			rest := strings.TrimSpace(text[idx+len(prefix):])
+			parts := strings.Fields(rest)
+			if len(parts) > 0 {
+				typeHint = strings.ToLower(strings.Trim(parts[0], ",;."))
+				break
+			}
+		}
+	}
+
+	return domainHint, typeHint
 }
 
 // openclawStatusHandler handles GET /api/openclaw/status

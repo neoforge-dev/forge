@@ -594,8 +594,9 @@ func TestWave71_CalculateFileHash_ValidFile(t *testing.T) {
 
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	cs, _ := NewContextSync(cm, db, t.TempDir())
+	t.Cleanup(cs.Stop)
 
 	hash, err := cs.calculateFileHash(tmpFile)
 	if err != nil {
@@ -609,8 +610,9 @@ func TestWave71_CalculateFileHash_ValidFile(t *testing.T) {
 func TestWave71_CalculateFileHash_NotExist(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	cs, _ := NewContextSync(cm, db, t.TempDir())
+	t.Cleanup(cs.Stop)
 
 	_, err := cs.calculateFileHash("/nonexistent/file.txt")
 	if err == nil {

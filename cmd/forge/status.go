@@ -36,19 +36,62 @@ type taskStatusSummary struct {
 	Total     int
 }
 
+// fetchPendingApprovalCount returns the number of pending approvals from
+// /api/approvals?status=pending. Returns 0 on any error (daemon offline,
+// network issue, etc.) so the status command always prints something useful.
+func fetchPendingApprovalCount(apiURL string) int {
+	client := internal.NewClientWithURL(internal.NormalizeAPIBaseURL(apiURL))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	approvals, err := client.ListApprovals(ctx, "pending")
+	if err != nil {
+		return 0
+	}
+	// Also count "requested" status in case the API uses that term.
+	count := 0
+	for _, a := range approvals {
+		if a.Status == "pending" || a.Status == "requested" {
+			count++
+		}
+	}
+	// If the API already filtered to pending, len(approvals) may be the full
+	// answer; use max(count, len(approvals)) to handle both cases.
+	if len(approvals) > count {
+		count = len(approvals)
+	}
+	return count
+}
+
 func init() {
 	// Flags for the status command
 	statusCmd.Flags().Bool("full", false, "Show full fleet standup (default is compact)")
 	statusCmd.Flags().Bool("json", false, "Output as JSON")
 }
 
-// statusCmd is declared in main.go — we override its RunE here.
+// detectProfile returns the operational profile based on environment.
+// Profiles: "hub" (default for orchestrators), "worker" (fleet agents).
+func detectProfile() string {
+	if p := os.Getenv("FORGE_PROFILE"); p != "" {
+		return p
+	}
+	switch os.Getenv("FORGE_AGENT_TYPE") {
+	case "fleet":
+		return "worker"
+	case "orchestrator":
+		return "hub"
+	}
+	return "hub" // default: orchestrator node
+}
+
+// statusCmdImpl is declared in main.go — we override its RunE here.
 // NOTE: statusCmd var is in main.go; we register the full implementation via init().
 func statusCmdImpl(cmd *cobra.Command, args []string) error {
 	full, _ := cmd.Flags().GetBool("full")
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	_ = full // all info shown by default; --full kept for future expansion
 
+	profile := detectProfile()
 	now := time.Now().UTC()
 	controlPlaneURL := internal.ResolveControlPlaneURL()
 
@@ -88,11 +131,17 @@ func statusCmdImpl(cmd *cobra.Command, args []string) error {
 	// 6. Pending dispatch files (no matching result)
 	pendingDispatches := countPendingDispatches()
 
-	if jsonOut {
-		return printStatusJSON(now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches)
+	// 7. Pending approvals (real count from API — not hardcoded)
+	pendingApprovals := 0
+	if controlPlaneOnline {
+		pendingApprovals = fetchPendingApprovalCount(controlPlaneURL)
 	}
 
-	return printStatusTable(now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches)
+	if jsonOut {
+		return printStatusJSON(now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches, pendingApprovals)
+	}
+
+	return printStatusTable(profile, now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches, pendingApprovals)
 }
 
 func fetchAgents(apiURL string) ([]agentHealthEntry, error) {
@@ -291,11 +340,15 @@ func checkControlPlane(apiURL string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func printStatusTable(now time.Time, controlPlaneURL string, controlPlaneOnline, localDaemonOnline bool, pid int, agents []agentHealthEntry,
+func printStatusTable(profile string, now time.Time, controlPlaneURL string, controlPlaneOnline, localDaemonOnline bool, pid int, agents []agentHealthEntry,
 	agentErr error, tasks taskStatusSummary, commits []string,
-	patrolCount, patrolErrors, pendingDispatches int) error {
+	patrolCount, patrolErrors, pendingDispatches, pendingApprovals int) error {
 
-	fmt.Printf("FORGE Fleet Status — %s\n", now.Format("2006-01-02 15:04 UTC"))
+	profileLabel := "Lead Orchestrator"
+	if profile == "worker" {
+		profileLabel = "Fleet Agent"
+	}
+	fmt.Printf("FORGE — %s — %s\n", profileLabel, now.Format("2006-01-02 15:04 UTC"))
 	fmt.Printf("==========================================\n")
 
 	if controlPlaneOnline {
@@ -365,12 +418,35 @@ func printStatusTable(now time.Time, controlPlaneURL string, controlPlaneOnline,
 		fmt.Printf("\nPending Results: %d dispatch files awaiting results\n", pendingDispatches)
 	}
 
+	// Profile-aware NEXT actions
+	fmt.Printf("\nNEXT:\n")
+	if profile == "worker" {
+		if tasks.Queued > 0 {
+			fmt.Printf("  forge task claim              # %d tasks queued\n", tasks.Queued)
+		} else {
+			fmt.Printf("  forge work --daemon           # Autonomous claim loop\n")
+		}
+		fmt.Printf("  forge task list               # Browse full queue\n")
+	} else {
+		// hub / portfolio
+		if tasks.Queued > 0 {
+			fmt.Printf("  forge task list               # %d tasks queued\n", tasks.Queued)
+		} else {
+			fmt.Printf("  forge task create --title \"...\"  # Add work to the queue\n")
+		}
+		if pendingApprovals > 0 {
+			fmt.Printf("  forge approval list           # %d pending approvals\n", pendingApprovals)
+		} else {
+			fmt.Printf("  forge approval list           # Review human gates\n")
+		}
+	}
+
 	return nil
 }
 
 func printStatusJSON(now time.Time, controlPlaneURL string, controlPlaneOnline, localDaemonOnline bool, pid int, agents []agentHealthEntry,
 	agentErr error, tasks taskStatusSummary, commits []string,
-	patrolCount, patrolErrors, pendingDispatches int) error {
+	patrolCount, patrolErrors, pendingDispatches, pendingApprovals int) error {
 
 	onlineCount := 0
 	for _, a := range agents {
@@ -392,6 +468,7 @@ func printStatusJSON(now time.Time, controlPlaneURL string, controlPlaneOnline, 
 		"patrol_count":         patrolCount,
 		"patrol_errors_1h":     patrolErrors,
 		"pending_dispatches":   pendingDispatches,
+		"pending_approvals":    pendingApprovals,
 	}
 	if agentErr != nil {
 		out["agent_error"] = agentErr.Error()

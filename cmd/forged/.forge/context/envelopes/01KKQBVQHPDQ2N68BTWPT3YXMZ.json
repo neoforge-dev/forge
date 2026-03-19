@@ -1,0 +1,15 @@
+{
+  "id": "01KKQBVQHPDQ2N68BTWPT3YXMZ",
+  "agent_id": "claude-1",
+  "domain": "prya",
+  "project": "",
+  "task_id": "cli-consolidation-tui",
+  "created_at": "2026-03-14T23:45:46.550081768Z",
+  "expires_at": "2026-03-21T23:45:46.550081869Z",
+  "summary": "Auto-generated: Agent reached 59% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

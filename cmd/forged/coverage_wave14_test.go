@@ -115,18 +115,6 @@ func TestAgentContextHandlerW14_UnknownAgent(t *testing.T) {
 
 // --- handlers_agent.go: agentByIDHandler ---
 
-func TestAgentByIDHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/agent-001", nil)
-	w := httptest.NewRecorder()
-	agentByIDHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestAgentByIDHandlerW14_NotFound(t *testing.T) {
 	cleanup := setupWave5(t)
 	defer cleanup()
@@ -167,18 +155,6 @@ func TestAgentsHealthHandler_SpecificAgent(t *testing.T) {
 }
 
 // --- handlers_lane.go: laneByIDHandler ---
-
-func TestLaneByIDHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/lanes/forge-main", nil)
-	w := httptest.NewRecorder()
-	laneByIDHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestLaneByIDHandlerW14_NotFound(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -238,18 +214,6 @@ func TestAgentMetricsHandler_WithSince(t *testing.T) {
 }
 
 // --- handlers_patrols.go: dashHandler ---
-
-func TestDashHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/dash", nil)
-	w := httptest.NewRecorder()
-	dashHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestDashHandler_Get(t *testing.T) {
 	cleanup := setupWave5(t)

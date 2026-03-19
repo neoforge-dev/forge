@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/neoforge-dev/forge/internal"
 )
@@ -189,6 +190,63 @@ func TestWorkJSONFormat(t *testing.T) {
 	}
 	if ctx.Domain != "d" || ctx.Project != "p" {
 		t.Errorf("context = %+v", ctx)
+	}
+}
+
+// --- backoff / circuit-breaker unit tests ------------------------------------
+
+func TestBackoffInterval_Progression(t *testing.T) {
+	cfg := workDaemonConfig{
+		BaseInterval:     10 * time.Second,
+		MaxInterval:      5 * time.Minute,
+		CircuitOpenAfter: 3,
+	}
+	backoff := func(streak int) time.Duration {
+		d := cfg.BaseInterval
+		for i := 0; i < streak && d < cfg.MaxInterval; i++ {
+			d *= 2
+		}
+		if d > cfg.MaxInterval {
+			d = cfg.MaxInterval
+		}
+		return d
+	}
+
+	cases := []struct {
+		streak int
+		want   time.Duration
+	}{
+		{0, 10 * time.Second},
+		{1, 20 * time.Second},
+		{2, 40 * time.Second},
+		{3, 80 * time.Second},
+		{4, 160 * time.Second},
+		{100, 5 * time.Minute}, // capped at MaxInterval
+	}
+	for _, tc := range cases {
+		got := backoff(tc.streak)
+		if got != tc.want {
+			t.Errorf("backoff(streak=%d) = %s, want %s", tc.streak, got, tc.want)
+		}
+	}
+}
+
+func TestDefaultWorkDaemonConfig(t *testing.T) {
+	cfg := defaultWorkDaemonConfig(30 * time.Second)
+	if cfg.BaseInterval != 30*time.Second {
+		t.Errorf("BaseInterval = %s, want 30s", cfg.BaseInterval)
+	}
+	if cfg.MaxInterval != 5*time.Minute {
+		t.Errorf("MaxInterval = %s, want 5m", cfg.MaxInterval)
+	}
+	if cfg.CircuitOpenAfter != 3 {
+		t.Errorf("CircuitOpenAfter = %d, want 3", cfg.CircuitOpenAfter)
+	}
+}
+
+func TestIsNoTasksAvailable(t *testing.T) {
+	if !isNoTasksAvailable(errNoTasks) {
+		t.Error("isNoTasksAvailable(errNoTasks) = false, want true")
 	}
 }
 

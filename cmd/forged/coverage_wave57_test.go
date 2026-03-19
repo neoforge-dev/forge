@@ -92,7 +92,7 @@ func TestContextByIDHandler_W57(t *testing.T) {
 
 	// Set global contextManager
 	origCM := contextManager
-	contextManager = NewContextManager(db, t.TempDir())
+	contextManager = testContextManager(t, db, t.TempDir())
 	defer func() { contextManager = origCM }()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/contexts/env-w57-notexist", nil)
@@ -109,7 +109,7 @@ func TestContextByIDHandler_WithData_W57(t *testing.T) {
 
 	origCM := contextManager
 	tmpDir := t.TempDir()
-	contextManager = NewContextManager(db, tmpDir)
+	contextManager = testContextManager(t, db, tmpDir)
 	defer func() { contextManager = origCM }()
 
 	// Insert an envelope
@@ -148,7 +148,7 @@ func TestContextManagerEnvelopesHandler_WithData_W57(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 
 	// Insert an envelope
 	content, _ := json.Marshal(map[string]string{"test": "w57"})

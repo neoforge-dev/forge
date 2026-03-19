@@ -574,87 +574,6 @@ func TestWave71_HandleTaskLogs_MissingID(t *testing.T) {
 	}
 }
 
-func TestWave71_HandleTaskCancel(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/task/cancel", nil)
-	w := httptest.NewRecorder()
-	handleTaskCancel(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleAgentSpawn(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/agent/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleAgentStop(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/agent/stop", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleSystemPatrol(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/system/patrol", nil)
-	w := httptest.NewRecorder()
-	handleSystemPatrol(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleFleetStatus(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/cli/fleet/status", nil)
-	w := httptest.NewRecorder()
-	handleFleetStatus(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleFleetTopology(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/cli/fleet/topology", nil)
-	w := httptest.NewRecorder()
-	handleFleetTopology(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleGitGuard(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/git/guard", nil)
-	w := httptest.NewRecorder()
-	handleGitGuard(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleGitStatus(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/cli/git/status", nil)
-	w := httptest.NewRecorder()
-	handleGitStatus(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestWave71_HandleSystemMetrics(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/cli/system/metrics", nil)
-	w := httptest.NewRecorder()
-	handleSystemMetrics(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // fleet_scaler.go: readLiveRAMMB, readLoadAverage, getCPUCount
 // On macOS /proc/meminfo doesn't exist — test the error path
@@ -983,8 +902,9 @@ func TestWave71_ContextSync_SyncDomainToFilesystem_NoData(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, _ := NewContextSync(cm, db, tmpDir)
+	t.Cleanup(cs.Stop)
 
 	// No data for domain — should return nil
 	err := cs.SyncDomainToFilesystem("nonexistent-domain")

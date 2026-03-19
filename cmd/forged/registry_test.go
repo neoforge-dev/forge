@@ -492,6 +492,51 @@ func TestStartCleanup_RemovesStaleAgents(t *testing.T) {
 	}
 }
 
+// TestRegistry_ClosedDB_Register covers the db.Exec error path in Register.
+func TestRegistry_ClosedDB_Register(t *testing.T) {
+	reg, cleanup := setupRegistryDB(t)
+	cleanup() // close DB
+
+	a := &Agent{ID: "closed-db-agent", Name: "x", Node: "prya", Status: "active"}
+	err := reg.Register(a)
+	if err == nil {
+		t.Error("expected error from Register with closed DB")
+	}
+}
+
+// TestRegistry_ClosedDB_Unregister covers the db.Exec error path in Unregister.
+func TestRegistry_ClosedDB_Unregister(t *testing.T) {
+	reg, cleanup := setupRegistryDB(t)
+	cleanup()
+
+	err := reg.Unregister("any-agent")
+	if err == nil {
+		t.Error("expected error from Unregister with closed DB")
+	}
+}
+
+// TestRegistry_ClosedDB_UpdateStatus covers the db.Exec error path in UpdateStatus.
+func TestRegistry_ClosedDB_UpdateStatus(t *testing.T) {
+	reg, cleanup := setupRegistryDB(t)
+	cleanup()
+
+	err := reg.UpdateStatus("any-agent", "offline")
+	if err == nil {
+		t.Error("expected error from UpdateStatus with closed DB")
+	}
+}
+
+// TestRegistry_ClosedDB_Heartbeat covers the db.Exec error path in Heartbeat.
+func TestRegistry_ClosedDB_Heartbeat(t *testing.T) {
+	reg, cleanup := setupRegistryDB(t)
+	cleanup()
+
+	err := reg.Heartbeat("any-agent", "active", 50.0)
+	if err == nil {
+		t.Error("expected error from Heartbeat with closed DB")
+	}
+}
+
 func TestStartCleanup_KeepsFreshAgents(t *testing.T) {
 	reg, cleanup := setupRegistryDB(t)
 	defer cleanup()

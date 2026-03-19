@@ -12,7 +12,7 @@ import (
 )
 
 // Wave 56: ContextSync.Start/Stop, ContextSync.SyncEnvelopesToFilesystem/SyncDomainToFilesystem,
-//          handleTaskShow, handleTaskLogs, handleTaskCancel, handleTaskCreate stub paths
+//          handleTaskShow, handleTaskLogs, handleTaskCreate paths
 
 // ─── ContextSync.Start / Stop ─────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ func TestContextSync_StartStop_EmptyDir_W56(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
@@ -41,7 +41,7 @@ func TestContextSync_StartStop_WithSubdir_W56(t *testing.T) {
 	// Create a domain subdirectory so the watcher loop has something to watch
 	import_os_mkdir_all_w56(t, tmpDir+"/test-domain")
 
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
@@ -59,11 +59,12 @@ func TestContextSync_SyncEnvelopes_W56(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
 	}
+	defer cs.Stop()
 	// No envelopes → iterates empty result set
 	if err := cs.SyncEnvelopesToFilesystem(); err != nil {
 		t.Logf("ContextSync.SyncEnvelopesToFilesystem: %v (may be OK)", err)
@@ -77,11 +78,12 @@ func TestContextSync_SyncDomain_NoRows_W56(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
 	}
+	defer cs.Stop()
 	// No envelope for domain → ErrNoRows → returns nil
 	if err := cs.SyncDomainToFilesystem("domain-w56"); err != nil {
 		t.Logf("ContextSync.SyncDomainToFilesystem no rows: %v (may be OK)", err)
@@ -153,17 +155,6 @@ func TestHandleTaskLogs_WithID_W56(t *testing.T) {
 	_ = w.Code // 404 or 200 with empty — just verify no crash
 }
 
-// ─── handleTaskCancel ────────────────────────────────────────────────────
-
-func TestHandleTaskCancel_W56(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/cli/tasks/cancel", nil)
-	w := httptest.NewRecorder()
-	handleTaskCancel(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
 // ─── context_sync context path (Start with context) ──────────────────────
 
 func TestContextSync_StartContext_W56(t *testing.T) {
@@ -171,7 +162,7 @@ func TestContextSync_StartContext_W56(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)

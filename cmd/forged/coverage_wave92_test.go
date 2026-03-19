@@ -188,7 +188,7 @@ func TestWave92_GenerateEnvelope_WithContext(t *testing.T) {
 
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	// Insert a task to reference
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -281,21 +281,6 @@ func TestWave92_HandleSummary_Get(t *testing.T) {
 	pwa.handleSummary(w, r)
 	if w.Code >= 500 {
 		t.Logf("handleSummary GET: got %d — %s", w.Code, w.Body.String())
-	}
-}
-
-func TestWave92_HandleSummary_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	d := NewDashboard(db, nil)
-	pwa := NewPWADashboardHandler(d)
-
-	r := httptest.NewRequest(http.MethodDelete, "/api/summary", nil)
-	w := httptest.NewRecorder()
-	pwa.handleSummary(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("handleSummary DELETE: got %d", w.Code)
 	}
 }
 

@@ -57,7 +57,7 @@ func TestContextSync_Bidirectional(t *testing.T) {
 	}
 
 	// Create ContextManager
-	cm := NewContextManager(db, contextDir)
+	cm := testContextManager(t, db, contextDir)
 	defer cm.Stop()
 
 	// Give sync time to start
@@ -155,7 +155,7 @@ func TestContextSync_FileHashTracking(t *testing.T) {
 	testDomainDir := filepath.Join(contextDir, "test-domain")
 	os.MkdirAll(testDomainDir, 0755)
 
-	cm := NewContextManager(db, contextDir)
+	cm := testContextManager(t, db, contextDir)
 	defer cm.Stop()
 
 	time.Sleep(100 * time.Millisecond)
@@ -324,4 +324,46 @@ func TestContextSync_Simple(t *testing.T) {
 	}
 
 	t.Log("Simple sync test passed!")
+}
+
+// TestSyncEnvelopesToFilesystem_EmptyDB verifies that SyncEnvelopesToFilesystem
+// returns nil when there are no expired envelopes (empty result set).
+// This covers the query execution and rows iteration paths.
+func TestSyncEnvelopesToFilesystem_EmptyDB(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	contextDir := t.TempDir()
+	cm := &ContextManager{db: db, contextDir: contextDir}
+	cs, err := NewContextSync(cm, db, contextDir)
+	if err != nil {
+		t.Fatalf("NewContextSync: %v", err)
+	}
+	defer cs.Stop()
+
+	// No envelopes in DB — should succeed with empty result.
+	if err := cs.SyncEnvelopesToFilesystem(); err != nil {
+		t.Errorf("SyncEnvelopesToFilesystem on empty DB: %v", err)
+	}
+}
+
+// TestSyncDomainToFilesystem_NoRows verifies that SyncDomainToFilesystem
+// returns nil (not an error) when there are no context_envelopes for the domain.
+// This covers the sql.ErrNoRows early-return branch.
+func TestSyncDomainToFilesystem_NoRows(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	contextDir := t.TempDir()
+	cm := &ContextManager{db: db, contextDir: contextDir}
+	cs, err := NewContextSync(cm, db, contextDir)
+	if err != nil {
+		t.Fatalf("NewContextSync: %v", err)
+	}
+	defer cs.Stop()
+
+	// No envelopes for domain "nonexistent" — should return nil.
+	if err := cs.SyncDomainToFilesystem("nonexistent"); err != nil {
+		t.Errorf("SyncDomainToFilesystem with no rows: %v", err)
+	}
 }

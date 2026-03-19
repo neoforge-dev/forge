@@ -563,4 +563,7 @@ Keyboard:
 	},
 }
 
-func init() { rootCmd.AddCommand(tuiCmd) }
+func init() {
+	tuiCmd.Hidden = true
+	rootCmd.AddCommand(tuiCmd)
+}

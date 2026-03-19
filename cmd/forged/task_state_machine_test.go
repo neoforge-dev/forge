@@ -599,3 +599,60 @@ func TestTaskStateMachine(t *testing.T) {
 	t.Run("Sequence", TestStateMachine_TransitionSequence)
 	t.Run("Retry", TestStateMachine_RetryFlow)
 }
+
+// TestClaimTransition_ClosedDB covers the db.Begin() error path in ClaimTransition.
+func TestClaimTransition_ClosedDB(t *testing.T) {
+	db, cleanup := setupStateMachineTestDB(t)
+	store := NewTaskStore(db)
+	sm := NewStateMachine(store, db)
+	cleanup() // close DB before calling ClaimTransition
+
+	err := sm.ClaimTransition("any-task", "any-agent")
+	if err == nil {
+		t.Error("expected error from ClaimTransition with closed DB, got nil")
+	}
+}
+
+// TestClaimTransition_TaskNotFound_Direct covers the sql.ErrNoRows path in ClaimTransition.
+func TestClaimTransition_TaskNotFound_Direct(t *testing.T) {
+	db, cleanup := setupStateMachineTestDB(t)
+	defer cleanup()
+
+	store := NewTaskStore(db)
+	sm := NewStateMachine(store, db)
+	err := sm.ClaimTransition("nonexistent-tsm-task", "agent-1")
+	if err == nil {
+		t.Error("expected error for nonexistent task, got nil")
+	}
+}
+
+// TestClaimTransition_WrongState_Direct covers the currentState != from branch.
+func TestClaimTransition_WrongState_Direct(t *testing.T) {
+	db, cleanup := setupStateMachineTestDB(t)
+	defer cleanup()
+
+	// Insert a task in RUNNING state (not QUEUED) so ClaimTransition fails.
+	now := time.Now().UTC().Format(time.RFC3339)
+	createTestTask(t, db, "tsm-running-task", StateRunning)
+	_ = now
+
+	store := NewTaskStore(db)
+	sm := NewStateMachine(store, db)
+	claimErr := sm.ClaimTransition("tsm-running-task", "agent-1")
+	if claimErr == nil {
+		t.Error("expected error claiming task in RUNNING state, got nil")
+	}
+}
+
+// TestGetState_ClosedDB covers the error path in GetState when DB is closed.
+func TestGetState_ClosedDB(t *testing.T) {
+	db, cleanup := setupStateMachineTestDB(t)
+	store := NewTaskStore(db)
+	sm := NewStateMachine(store, db)
+	cleanup()
+
+	_, err := sm.GetState("any-task")
+	if err == nil {
+		t.Error("expected error from GetState with closed DB, got nil")
+	}
+}

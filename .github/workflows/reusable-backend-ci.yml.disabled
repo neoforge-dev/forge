@@ -1,0 +1,178 @@
+name: Reusable FastAPI Backend CI
+
+on:
+  workflow_call:
+    inputs:
+      project_path:
+        description: 'Relative path to the backend project (e.g., "brandfocus-ai/voice-coach/app/backend")'
+        required: true
+        type: string
+      python_version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.11'
+      coverage_threshold:
+        description: 'Minimum coverage percentage required'
+        required: false
+        type: number
+        default: 70
+      enable_mypy:
+        description: 'Run mypy type checking'
+        required: false
+        type: boolean
+        default: true
+      enable_docker_build:
+        description: 'Verify Docker image builds'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  lint:
+    name: Lint (Ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.project_path }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Lint with ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+  typecheck:
+    name: Type Check (mypy)
+    runs-on: ubuntu-latest
+    if: inputs.enable_mypy
+    defaults:
+      run:
+        working-directory: ${{ inputs.project_path }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Type check with mypy
+        run: uv run mypy app tests
+        continue-on-error: true
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.project_path }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run tests with coverage
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-for-ci-minimum-32-chars-long
+          ENVIRONMENT: test
+        run: |
+          uv run pytest \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=${{ inputs.coverage_threshold }} \
+            -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ${{ inputs.project_path }}/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+  build:
+    name: Docker Build Verification
+    runs-on: ubuntu-latest
+    if: inputs.enable_docker_build
+    defaults:
+      run:
+        working-directory: ${{ inputs.project_path }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.project_path }}
+          push: false
+          tags: backend:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

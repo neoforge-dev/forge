@@ -414,6 +414,43 @@ func (s *sqliteApprovalStore) scanApprovals(rows *sql.Rows) ([]Approval, error) 
 	return approvals, rows.Err()
 }
 
+// ApprovalStagePolicyEntry defines the tier and confidence threshold for a portfolio stage.
+type ApprovalStagePolicyEntry struct {
+	Tier                ApprovalTier `yaml:"tier"`
+	ConfidenceThreshold float64      `yaml:"confidence_threshold"`
+	Notes               string       `yaml:"notes"`
+}
+
+// ApprovalTierConfig is the top-level structure of approval-tiers.yaml.
+type ApprovalTierConfig struct {
+	ApprovalTiers map[string]ApprovalStagePolicyEntry `yaml:"approval_tiers"`
+}
+
+// defaultApprovalTierPolicies are used when the YAML config cannot be loaded.
+var defaultApprovalTierPolicies = map[string]ApprovalStagePolicyEntry{
+	"idea":     {Tier: TierWatch, ConfidenceThreshold: 1.0},
+	"validate": {Tier: TierPhone, ConfidenceThreshold: 0.0},
+	"build":    {Tier: TierDesktop, ConfidenceThreshold: 0.80},
+	"deploy":   {Tier: TierDesktop, ConfidenceThreshold: 0.95},
+	"measure":  {Tier: TierPhone, ConfidenceThreshold: 0.70},
+	"monetize": {Tier: TierDesktop, ConfidenceThreshold: 0.0},
+	"scale":    {Tier: TierPhone, ConfidenceThreshold: 0.85},
+	"kill":     {Tier: TierWatch, ConfidenceThreshold: 1.0},
+}
+
+// GetApprovalTierForStage returns the ApprovalTier and confidence threshold for
+// a given portfolio stage. Returns ("", 0) for an empty stage. Falls back to
+// TierDesktop (safest) with threshold 0.0 for unknown stages.
+func GetApprovalTierForStage(stage string) (ApprovalTier, float64) {
+	if stage == "" {
+		return "", 0
+	}
+	if policy, ok := defaultApprovalTierPolicies[strings.ToLower(stage)]; ok {
+		return policy.Tier, policy.ConfidenceThreshold
+	}
+	return TierDesktop, 0.0 // unknown stage = safest default
+}
+
 // ApprovalService handles approval business logic including confidence scoring
 type ApprovalService struct {
 	store ApprovalStore
@@ -891,6 +928,12 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 		return
+	}
+
+	// Epic 2 Phase 4: when a merge-type approval is approved, trigger GitHub merge.
+	// Best-effort — never blocks the HTTP response.
+	if action == "approve" {
+		go triggerGithubMergeIfApplicable(r.Context(), id)
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{

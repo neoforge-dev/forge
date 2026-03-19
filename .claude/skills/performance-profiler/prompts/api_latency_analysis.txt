@@ -1,0 +1,53 @@
+# API Latency Analysis Prompt
+
+Analyze the following API profiling results and provide optimization recommendations.
+
+## Input Data
+```json
+{{latency_data}}
+```
+
+## Analysis Tasks
+
+1. **Latency Distribution**: Interpret percentiles (P50, P95, P99)
+2. **Throughput Assessment**: Evaluate requests per second
+3. **Error Analysis**: Review error rates and types
+4. **Bottleneck Identification**: Determine if latency is CPU, DB, or network bound
+
+## Output Format
+
+### Summary
+- Endpoint: [METHOD] [path]
+- P50 latency: X ms
+- P99 latency: Y ms
+- Throughput: Z req/s
+- Status: [Good/Needs Improvement/Critical]
+
+### Latency Analysis
+```
+Distribution:
+- Fast (P50): X ms - [interpretation]
+- Tail (P95-P99): Y-Z ms - [interpretation]
+- Variance: [high/medium/low] - indicates [issue]
+```
+
+### Performance Classification
+- **< 50ms P99**: Excellent
+- **50-200ms P99**: Good (room for improvement)
+- **200-500ms P99**: Needs optimization
+- **> 500ms P99**: Critical
+
+### Optimization Recommendations
+1. **[Immediate]**: [Fix for tail latency]
+2. **[Short-term]**: [Caching strategy]
+3. **[Long-term]**: [Architecture improvements]
+
+### Database Query Check
+- [ ] Check for missing indexes
+- [ ] Review N+1 query patterns
+- [ ] Analyze slow query log
+
+### Caching Opportunities
+- [ ] Response caching
+- [ ] Database query caching
+- [ ] Computed value memoization

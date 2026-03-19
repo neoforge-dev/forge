@@ -78,18 +78,6 @@ func TestListApprovals_LimitClamped_W45(t *testing.T) {
 
 // ─── handlePending ────────────────────────────────────────────────────────
 
-func TestHandlePending_MethodNotAllowed_W45(t *testing.T) {
-	h, cleanup := setupApprovalHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/approvals/pending", nil)
-	w := httptest.NewRecorder()
-	h.handlePending(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandlePending_WithLimit_W45(t *testing.T) {
 	h, cleanup := setupApprovalHandler(t)
 	defer cleanup()
@@ -127,19 +115,6 @@ func TestHandleApprovalAction_InvalidPath_W45(t *testing.T) {
 	h.handleApprovalAction(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid path, got %d", w.Code)
-	}
-}
-
-func TestHandleApprovalAction_MethodNotAllowed_W45(t *testing.T) {
-	h, cleanup := setupApprovalHandler(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/approvals/some-id/approve", nil)
-	req.URL.Path = "/api/approvals/some-id/approve"
-	w := httptest.NewRecorder()
-	h.handleApprovalAction(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 

@@ -1,0 +1,80 @@
+name: Marketing API CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'marketing-api/**'
+      - '.github/workflows/marketing-api.yml'
+  pull_request:
+    paths:
+      - 'marketing-api/**'
+      - '.github/workflows/marketing-api.yml'
+
+jobs:
+  test-lint:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marketing-api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[dev]"
+
+      - name: Lint with ruff
+        run: |
+          ruff check app/
+          ruff format --check app/
+
+      - name: Run tests
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+          BLOG_CONTENT_DIR: ../docs/blog
+        run: |
+          pytest --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./marketing-api/coverage.xml
+          flags: marketing-api
+          fail_ci_if_error: false
+
+  deploy:
+    name: Deploy to Railway
+    runs-on: ubuntu-latest
+    needs: [test-lint]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync blog content
+        run: |
+          mkdir -p marketing-api/content/blog
+          cp -r docs/blog/* marketing-api/content/blog/ 2>/dev/null || true
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: |
+          cd marketing-api
+          railway up --service marketing-api
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

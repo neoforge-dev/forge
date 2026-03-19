@@ -10,51 +10,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Wave 78: stub handlers returning 501 — one test each to hit 0% functions
-// ---------------------------------------------------------------------------
-
-func TestW78_HandleSystemMetrics_NotImplemented(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/cli/system/metrics", nil)
-	w := httptest.NewRecorder()
-	handleSystemMetrics(w, r)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("handleSystemMetrics: expected 501, got %d", w.Code)
-	}
-}
-
-func TestW78_HandleAgentSpawn_NotImplemented(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/agents/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, r)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("handleAgentSpawn: expected 501, got %d", w.Code)
-	}
-}
-
-func TestW78_HandleAgentStop_NotImplemented(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/agents/stop", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, r)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("handleAgentStop: expected 501, got %d", w.Code)
-	}
-}
-
-func TestW78_HandleTaskCancel_NotImplemented(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/cli/tasks/cancel", nil)
-	w := httptest.NewRecorder()
-	handleTaskCancel(w, r)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("handleTaskCancel: expected 501, got %d", w.Code)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Wave 78: additional coverage paths for real handlers (DB required)
+// Wave 78: coverage paths for real handlers (DB required)
 // ---------------------------------------------------------------------------
 
 func TestW78_HandleSystemHealth_WithDB(t *testing.T) {

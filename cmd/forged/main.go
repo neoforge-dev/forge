@@ -226,26 +226,12 @@ func CLIRouter(mux *http.ServeMux) {
 	mux.HandleFunc("/cli/task/list", handleTaskList)
 	mux.HandleFunc("/cli/task/show", handleTaskShow)
 	mux.HandleFunc("/cli/task/logs", handleTaskLogs)
-	mux.HandleFunc("/cli/task/cancel", handleTaskCancel)
-
 	// Agent commands
 	mux.HandleFunc("/cli/agent/list", handleAgentList)
-	mux.HandleFunc("/cli/agent/spawn", handleAgentSpawn)
-	mux.HandleFunc("/cli/agent/stop", handleAgentStop)
 	mux.HandleFunc("/cli/agent/status", handleAgentStatus)
 
 	// System commands
-	mux.HandleFunc("/cli/system/patrol", handleSystemPatrol)
 	mux.HandleFunc("/cli/system/health", handleSystemHealth)
-	mux.HandleFunc("/cli/system/metrics", handleSystemMetrics)
-
-	// Git commands
-	mux.HandleFunc("/cli/git/guard", handleGitGuard)
-	mux.HandleFunc("/cli/git/status", handleGitStatus)
-
-	// Fleet commands
-	mux.HandleFunc("/cli/fleet/status", handleFleetStatus)
-	mux.HandleFunc("/cli/fleet/topology", handleFleetTopology)
 
 	// Queue commands
 	mux.HandleFunc("/cli/queue/depth", handleQueueDepth)
@@ -352,11 +338,7 @@ func handleTaskLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleTaskCancel(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "task cancel not yet implemented", http.StatusNotImplemented)
-}
-
-// --- CLI Agent/Fleet/System/Git/Queue Handlers (stubs with basic wiring) ---
+// --- CLI Agent/Fleet/System/Git/Queue Handlers ---
 
 func handleAgentList(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
@@ -368,14 +350,6 @@ func handleAgentList(w http.ResponseWriter, r *http.Request) {
 	if err := WriteOutputWithFlag(w, format, agents); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-}
-
-func handleAgentSpawn(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "agent spawn not yet implemented", http.StatusNotImplemented)
-}
-
-func handleAgentStop(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "agent stop not yet implemented", http.StatusNotImplemented)
 }
 
 func handleAgentStatus(w http.ResponseWriter, r *http.Request) {
@@ -395,10 +369,6 @@ func handleAgentStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleSystemPatrol(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "system patrol via HTTP not yet implemented", http.StatusNotImplemented)
-}
-
 func handleSystemHealth(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 	rr := &responseRecorder{header: http.Header{}}
@@ -411,26 +381,6 @@ func handleSystemHealth(w http.ResponseWriter, r *http.Request) {
 	if err := WriteOutputWithFlag(w, format, json.RawMessage(rr.body)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-}
-
-func handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "system metrics via HTTP not yet implemented", http.StatusNotImplemented)
-}
-
-func handleGitGuard(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "git guard via HTTP not yet implemented", http.StatusNotImplemented)
-}
-
-func handleGitStatus(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "git status via HTTP not yet implemented", http.StatusNotImplemented)
-}
-
-func handleFleetStatus(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "fleet status via HTTP not yet implemented", http.StatusNotImplemented)
-}
-
-func handleFleetTopology(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "fleet topology via HTTP not yet implemented", http.StatusNotImplemented)
 }
 
 func handleQueueDepth(w http.ResponseWriter, r *http.Request) {
@@ -1026,34 +976,17 @@ func main() {
 	var database *sql.DB
 	var err error
 
-	if false && os.Getenv("DB_TYPE") == "postgres" {
-		// PostgreSQL mode disabled temporarily (missing db package)
-		/*
-			pgCfg := db.DefaultPostgresConfig()
-			pgDB, err := db.NewPostgresDB(pgCfg)
-			if err != nil {
-				log.Fatalf("failed to open postgres database: %v", err)
-			}
-			database = pgDB.DB
-
-			// Start connection pool monitor
-			db.StartConnectionPoolMonitor(pgDB, 60*time.Second)
-			defer pgDB.Close()
-			log.Println("using PostgreSQL database")
-		*/
-	} else {
-		// Use SQLite
-		dbPath := os.Getenv("DB_PATH")
-		if dbPath == "" {
-			dbPath = defaultDBPath
-		}
-		database, err = OpenDB(dbPath)
-		if err != nil {
-			log.Fatalf("failed to open database: %v", err)
-		}
-		defer database.Close()
-		log.Printf("DB: %s", dbPath)
+	// Use SQLite
+	dbPath = os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = defaultDBPath
 	}
+	database, err = OpenDB(dbPath)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
+	log.Printf("DB: %s", dbPath)
 
 	// Run migrations
 	if err := MigrateUp(database); err != nil {
@@ -1422,12 +1355,18 @@ func main() {
 	mux.HandleFunc("/api/status", statusHandler)
 	mux.HandleFunc("/api/nodes/health", nodesHealthHandler)
 	mux.HandleFunc("/api/patrols", patrolsHandler)
+	mux.HandleFunc("/api/patrols/", patrolRunHandler)
 	mux.HandleFunc("/api/patrol-executions", patrolExecutionsHandler)
 	mux.HandleFunc("/dash", dashHandler)
+	mux.HandleFunc("/ui/patrol/", uiPatrolDrillDownHandler)
 	mux.HandleFunc("/ui", uiFleetHandler)
 	mux.HandleFunc("/api/fleet/snapshot", fleetSnapshotHandler)
 	mux.HandleFunc("/api/fleet/recommendations", fleetRecommendationsHandler)
 	mux.HandleFunc("/api/fleet/summary", fleetSummaryHandler)
+	mux.HandleFunc("/api/blueprints", blueprintsHandler)
+	mux.HandleFunc("/api/blueprints/runs", blueprintRunsHandler)
+	mux.HandleFunc("/api/blueprints/runs/", blueprintRunByIDHandler)
+	mux.HandleFunc("/api/routing/resolve", routingResolveHandler)
 	mux.HandleFunc("/api/lead-state", leadStateHandler)
 	mux.HandleFunc("/api/messages", messagesHandler)
 	mux.HandleFunc("/api/messages/", messageByIDHandler)
@@ -1577,6 +1516,9 @@ func main() {
 
 	// Dispatch API
 	mux.HandleFunc("/api/dispatch", dispatchHandler)
+
+	// GitHub webhook (no auth required — GitHub calls this externally)
+	mux.HandleFunc("/api/github/webhook", githubWebhookHandler)
 
 	// Lanes API
 	mux.HandleFunc("/api/lanes", lanesHandler)

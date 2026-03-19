@@ -121,21 +121,6 @@ func TestW74_OpenclawEventsHandler_CancelledContext(t *testing.T) {
 	}
 }
 
-func TestW74_OpenclawEventsHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	setDBConn(db)
-	defer setDBConn(nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/events", nil)
-	w := httptest.NewRecorder()
-	openclawEventsHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // handlers_ui.go: uiFleetHandler — 50%
 // ---------------------------------------------------------------------------
@@ -156,21 +141,6 @@ func TestW74_UIFleetHandler_GET(t *testing.T) {
 	ct := w.Header().Get("Content-Type")
 	if ct == "" {
 		t.Error("expected Content-Type header")
-	}
-}
-
-func TestW74_UIFleetHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	setDBConn(db)
-	defer setDBConn(nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/ui", nil)
-	w := httptest.NewRecorder()
-	uiFleetHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 

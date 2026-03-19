@@ -15,32 +15,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// setupContextSyncDB creates an in-memory SQLite DB with context_envelopes table.
-func setupContextSyncDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:?_journal_mode=WAL")
-	if err != nil {
-		t.Fatalf("open sqlite3: %v", err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE context_envelopes (
-			id         TEXT PRIMARY KEY,
-			agent_id   TEXT NOT NULL,
-			domain     TEXT NOT NULL,
-			project    TEXT NOT NULL DEFAULT '',
-			task_id    TEXT NOT NULL DEFAULT '',
-			summary    TEXT,
-			content    TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			expires_at TIMESTAMP NOT NULL DEFAULT (datetime('now','+1 day'))
-		)
-	`)
-	if err != nil {
-		t.Fatalf("create table: %v", err)
-	}
-	return db
-}
-
 // insertEnvelope inserts a minimal row into context_envelopes.
 func insertEnvelope(t *testing.T, db *sql.DB, id, domain, project string, content string) {
 	t.Helper()
@@ -51,23 +25,6 @@ func insertEnvelope(t *testing.T, db *sql.DB, id, domain, project string, conten
 	if err != nil {
 		t.Fatalf("insert envelope: %v", err)
 	}
-}
-
-// buildCS returns a ContextSync with a temp context directory and test DB.
-func buildCS(t *testing.T, db *sql.DB) (*ContextSync, string) {
-	t.Helper()
-	tmpDir := t.TempDir()
-	contextDir := filepath.Join(tmpDir, "context")
-	if err := os.MkdirAll(contextDir, 0755); err != nil {
-		t.Fatalf("mkdir contextDir: %v", err)
-	}
-	cm := &ContextManager{db: db, contextDir: contextDir}
-	cs, err := NewContextSync(cm, db, contextDir)
-	if err != nil {
-		t.Fatalf("NewContextSync: %v", err)
-	}
-	t.Cleanup(cs.Stop)
-	return cs, contextDir
 }
 
 // TestContextSyncCoverage_parseMarkdownDecisions verifies bullet lines become Decision records.

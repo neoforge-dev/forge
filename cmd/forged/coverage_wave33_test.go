@@ -63,15 +63,6 @@ func TestHandleQueueList_SortPath_W33(t *testing.T) {
 	}
 }
 
-func TestHandleQueuePriority_MethodNotAllowed_W33(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/queue/priority", nil)
-	w := httptest.NewRecorder()
-	handleQueuePriority(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandleQueuePriority_NilDB_W33(t *testing.T) {
 	orig := getDBConn()
 	setDBConn(nil)

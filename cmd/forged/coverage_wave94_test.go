@@ -127,27 +127,8 @@ func TestWave94_GetAgentID_FromTMUX(t *testing.T) {
 }
 
 // handlers_plan.go: pauseTaskHandler, resumeTaskHandler — method-not-allowed
-func TestWave94_PauseTaskHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	r := httptest.NewRequest(http.MethodGet, "/api/tasks/wave94-task/pause", nil)
-	w := httptest.NewRecorder()
-	pauseTaskHandler(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("pauseTaskHandler GET: got %d", w.Code)
-	}
-}
-
-func TestWave94_ResumeTaskHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	r := httptest.NewRequest(http.MethodGet, "/api/tasks/wave94-task/resume", nil)
-	w := httptest.NewRecorder()
-	resumeTaskHandler(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("resumeTaskHandler GET: got %d", w.Code)
-	}
-}
+// Note: TestWave94_PauseTaskHandler_MethodNotAllowed and TestWave94_ResumeTaskHandler_MethodNotAllowed
+// moved to handler_method_validation_test.go
 
 // sendBlockerAlert — test with no webhook (env not set)
 func TestWave94_SendBlockerAlert_NoWebhook(t *testing.T) {

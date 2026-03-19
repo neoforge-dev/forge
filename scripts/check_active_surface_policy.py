@@ -20,6 +20,8 @@ ACTIVE_SURFACE_DOCS = [
     REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "CONTRIBUTING.md",
     REPO_ROOT / "docs" / "GETTING_STARTED.md",
+    REPO_ROOT / "docs" / "ACTIVE_SURFACES.md",
+    REPO_ROOT / "docs" / "README.md",
     REPO_ROOT / "docs" / "runbooks" / "CANONICAL_WORKFLOW.md",
     REPO_ROOT / "docs" / "runbooks" / "LEGACY_TOOLING_POLICY.md",
 ]
@@ -39,6 +41,7 @@ BANNED_PATTERNS = [
     (re.compile(r"/home/openclaw/"), "absolute private home path"),
     (re.compile(r"\$HOME/work/FORGE"), "hardcoded FORGE_ROOT assumption"),
     (re.compile(r"http://prya:8081"), "direct private URL (use DefaultControlPlaneURL constant)"),
+    (re.compile(r"\bcmd/forge-v3\b"), "daemon renamed to forged (use cmd/forged/)"),
 ]
 
 

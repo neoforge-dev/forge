@@ -1,0 +1,45 @@
+name: update-docs-timestamps
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**/*.md"
+      - "**/CLAUDE.md"
+      - "AGENTS.md"
+      - "PLAN.md"
+      - "HANDOVER.md"
+  workflow_dispatch: {}
+
+jobs:
+  update-timestamps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update doc timestamps
+        run: |
+          chmod +x scripts/update-doc-timestamps.sh
+          ./scripts/update-doc-timestamps.sh
+
+      - name: Commit timestamp updates
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            git add -A
+            git commit -m "docs: update document timestamps [skip ci]"
+            git push
+          else
+            echo "No timestamp updates needed"
+          fi

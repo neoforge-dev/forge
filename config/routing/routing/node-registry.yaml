@@ -1,0 +1,102 @@
+# Node Registry — machine-readable routing policy
+# Maintained by: prya-lead (Claude Code)
+# Read by: Trinity (dispatcher), forge fleet commands
+# Last updated: 2026-03-08 S86
+
+nodes:
+  prya:
+    role: orchestrator
+    ram_gb: 16
+    cpu_cores: 4
+    class: light
+    allowed_workloads:
+      - dispatch
+      - monitoring
+      - docs
+      - small-edits
+      - api-calls
+      - daemon-ops
+      - schema-changes
+    forbidden_workloads:
+      - go-test          # burns 1-2 cores for 90s, kills other agents
+      - coverage-waves   # always route to sati/nova
+      - heavy-builds     # go build ./... ok, go test ./... forbidden
+      - ml-inference
+      - ios-builds
+    max_agents: 2
+    notes: "Orchestrator hub. CC + v3 daemon run here. CPU headroom is scarce."
+
+  sati:
+    role: worker
+    ram_gb: 64
+    cpu_cores: 32
+    class: heavy
+    allowed_workloads:
+      - go-test
+      - coverage-waves
+      - heavy-builds
+      - ml-inference
+      - complex-reasoning
+      - opencode
+      - kilo
+    forbidden_workloads: []
+    max_agents: 12
+    notes: "Primary compute node. All 10+ fleet agents run here."
+
+  nova:
+    role: worker
+    ram_gb: 48
+    cpu_cores: 16
+    class: heavy
+    allowed_workloads:
+      - go-test
+      - coverage-waves
+      - ios-builds
+      - heavy-builds
+      - research
+    forbidden_workloads: []
+    max_agents: 4
+    notes: "Secondary compute + iOS builds (Sonoma SDK). No permanent agents — used for overflow."
+
+  vega:
+    role: auxiliary
+    ram_gb: 16
+    cpu_cores: 8
+    class: light
+    allowed_workloads:
+      - docs
+      - small-edits
+      - api-calls
+    forbidden_workloads:
+      - ios-builds       # macOS Ventura — too old
+      - heavy-builds
+      - go-test
+    max_agents: 2
+    notes: "Auxiliary only. No iOS (Ventura). Off-hours preferred."
+
+  gaea:
+    role: auxiliary
+    ram_gb: 16
+    cpu_cores: 8
+    class: light
+    allowed_workloads:
+      - docs
+      - small-edits
+      - api-calls
+      - ios-builds       # M1 Pro — can do iOS
+    forbidden_workloads:
+      - heavy-builds
+      - go-test
+    max_agents: 2
+    notes: "M1 Pro laptop. Off-hours only."
+
+# Routing rules (evaluated in order)
+routing_rules:
+  - if: workload in [go-test, coverage-waves, heavy-builds]
+    then: prefer sati, fallback nova, deny prya
+  - if: workload == ios-builds
+    then: prefer nova, fallback gaea, deny prya vega
+  - if: workload in [docs, small-edits, dispatch]
+    then: any node ok, prefer prya agents if context < 30%
+  - if: agent in [opencode, kilo]
+    then: sati only — never prya vega gaea

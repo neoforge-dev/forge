@@ -498,7 +498,7 @@ func TestWave103_GenerateEnvelope_StorePaths(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	// First call creates the envelope
 	env1, err := cm.GenerateEnvelope(context.Background(), "wave103-agent", "codeswiftr", "proj", "task-1", "first")
@@ -558,27 +558,21 @@ func TestWave103_AgentTelemetryHandler_InvalidJSON(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// patrol.go: fleetScaleRecommend — 67.6%
+// fleet_scaler.go: fleetScaleRecommendPatrol — replaces deleted fleetScaleRecommend
 // ---------------------------------------------------------------------------
 
-func TestWave103_FleetScaleRecommend_Handler(t *testing.T) {
+func TestWave103_FleetScaleRecommendPatrol_Handler(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 	setDBConn(db)
 	defer setDBConn(nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/fleet/scale-recommend", nil)
-	rr := httptest.NewRecorder()
-	// fleetScaleRecommend is a patrol function, not directly an HTTP handler
-	// Call it directly
-	err := fleetScaleRecommend(context.Background(), db)
+	err := fleetScaleRecommendPatrol(context.Background(), db)
 	if err != nil {
-		t.Logf("fleetScaleRecommend: err=%v", err)
+		t.Logf("fleetScaleRecommendPatrol: err=%v", err)
 	} else {
-		t.Logf("fleetScaleRecommend: ok")
+		t.Logf("fleetScaleRecommendPatrol: ok")
 	}
-	_ = req
-	_ = rr
 }
 
 // ---------------------------------------------------------------------------

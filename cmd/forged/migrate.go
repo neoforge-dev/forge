@@ -50,6 +50,9 @@ const (
 
 // detectDBType determines if the database is SQLite or PostgreSQL
 func detectDBType(db *sql.DB) DBType {
+	if db == nil {
+		return SQLite
+	}
 	// Try PostgreSQL first
 	var version string
 	err := db.QueryRow("SELECT version()").Scan(&version)
@@ -394,6 +397,9 @@ func MigrateDown(db *sql.DB, steps int) error {
 }
 
 func ensureMigrationsTable(db *sql.DB, dbType DBType) error {
+	if db == nil {
+		return fmt.Errorf("database connection required")
+	}
 	var err error
 
 	if dbType == PostgreSQL {

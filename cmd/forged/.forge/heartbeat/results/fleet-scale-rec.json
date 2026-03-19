@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-03-09T10:27:36Z",
-  "action": "maintain",
-  "reason": "queue and agents balanced",
-  "urgency": "low",
-  "queued_tasks": 0,
+  "timestamp": "2026-03-09T11:40:21Z",
+  "action": "scale-up",
+  "reason": "10 tasks queued vs 0 active agents; 12095MB RAM available",
+  "urgency": "high",
+  "queued_tasks": 10,
   "active_agents": 0,
   "idle_agents": 0,
-  "ram_avail_mb": 57714,
+  "ram_avail_mb": 12095,
   "note": "ADR-034 Phase 1: recommendation only — no autonomous action taken"
 }

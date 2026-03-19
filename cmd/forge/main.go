@@ -16,30 +16,12 @@ var (
 	outputFormat string
 )
 
-// Config represents the forge configuration (legacy, used by worker/control-plane)
+// Config represents the forge configuration
 type Config struct {
-	ControlPlane ControlPlaneConfig `yaml:"control_plane,omitempty" mapstructure:"control_plane"`
-	Worker       WorkerConfig       `yaml:"worker,omitempty" mapstructure:"worker"`
-	APIURL       string             `yaml:"api_url,omitempty" mapstructure:"api_url"`
-	NodeID       string             `yaml:"node_id,omitempty" mapstructure:"node_id"`
-	Domain       string             `yaml:"domain,omitempty" mapstructure:"domain"`
-	LogLevel     string             `yaml:"log_level,omitempty" mapstructure:"log_level"`
-}
-
-// ControlPlaneConfig holds control-plane specific settings
-type ControlPlaneConfig struct {
-	Host     string `yaml:"host,omitempty" mapstructure:"host"`
-	Port     int    `yaml:"port,omitempty" mapstructure:"port"`
-	DataDir  string `yaml:"data_dir,omitempty" mapstructure:"data_dir"`
-	Database string `yaml:"database,omitempty" mapstructure:"database"`
-}
-
-// WorkerConfig holds worker-specific settings
-type WorkerConfig struct {
-	ID            string   `yaml:"id,omitempty" mapstructure:"id"`
-	ControlPlane  string   `yaml:"control_plane,omitempty" mapstructure:"control_plane"`
-	Capabilities  []string `yaml:"capabilities,omitempty" mapstructure:"capabilities"`
-	MaxConcurrent int      `yaml:"max_concurrent,omitempty" mapstructure:"max_concurrent"`
+	APIURL   string `yaml:"api_url,omitempty" mapstructure:"api_url"`
+	NodeID   string `yaml:"node_id,omitempty" mapstructure:"node_id"`
+	Domain   string `yaml:"domain,omitempty" mapstructure:"domain"`
+	LogLevel string `yaml:"log_level,omitempty" mapstructure:"log_level"`
 }
 
 func main() {
@@ -66,6 +48,9 @@ func main() {
 }
 
 func init() {
+	// versionCmd and completionCmd are useful but secondary — keep visible
+	// selfUpdateCmd stays hidden (risky auto-update)
+	selfUpdateCmd.Hidden = true
 	cobra.OnInitialize(initConfig)
 
 	// Global flags
@@ -121,6 +106,9 @@ func init() {
 	// Self-update: rebuild the forge CLI binary in-place
 	rootCmd.AddCommand(selfUpdateCmd)
 
+	// Message — cross-node git-based message bus
+	rootCmd.AddCommand(messageCmd)
+
 	// Heartbeat — top-level convenience command (replaces hb-loop bash script)
 	rootCmd.AddCommand(heartbeatCmd)
 
@@ -129,10 +117,6 @@ func init() {
 
 	// Lock — multi-scope file lock manager (ports .forge/scripts/git-lock.sh)
 	rootCmd.AddCommand(lockCmd)
-
-	// Legacy commands (control-plane, worker) - keep for backwards compatibility
-	rootCmd.AddCommand(controlPlaneCmd)
-	rootCmd.AddCommand(workerCmd)
 
 	cobra.EnableCommandSorting = false
 }
@@ -203,11 +187,6 @@ func initConfig() {
 	viper.AutomaticEnv()
 
 	// 2. Set defaults
-	viper.SetDefault("control_plane.host", "0.0.0.0")
-	viper.SetDefault("control_plane.port", 8080)
-	viper.SetDefault("control_plane.data_dir", ".forge/data")
-	viper.SetDefault("control_plane.database", "sqlite")
-	viper.SetDefault("worker.max_concurrent", 5)
 	viper.SetDefault("api_url", "http://localhost:8081")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("format", "table")
@@ -289,36 +268,18 @@ var rootCmd = &cobra.Command{
 ╚════════════════════════════════════════════════════════════════╝
 
 QUICK START:
-  forge status                    # Check system health
-  forge task list                 # List all tasks
-  forge task create --title "..." # Create a new task
+  forge status                    # Fleet health snapshot
+  forge task list                 # See all tasks
+  forge task create --title "..." # Create a task
   forge agent list                # List connected agents
-  forge daemon status             # Check daemon status
-
-CORE NOUNS:
-  task         Manage tasks (create, list, update, delete, claim, complete)
-  agent        Manage agents (list, show, tasks)
-  dispatch     Send work to agents (send, show)
-  domain       Manage domains (list, show, create)
-  project      Manage projects (list, show, create)
-  context      Manage knowledge contexts (list, show, create, envelope)
-  approval     Manage approvals (list, show, decide)
-  lane         Manage Dark Factory lanes (list, show, promote)
-  config       Manage configuration (get, set, list)
-  daemon       Manage daemon (start, stop, status)
-  plugin       Manage CLI plugins (list, install, remove, info)
-  node         Manage XNode mesh nodes (list, status)
-
-PLUGINS:
-  Any forge-<noun> binary in $PATH or ~/.forge/plugins/ is callable as:
-    forge <noun> [args]    →    forge-<noun> [args]
+  forge daemon status             # Check daemon health
 
 GLOBAL FLAGS:
   --format=table    Output format (table, json, csv, quiet)
   --config          Config file path
   -l, --log-level   Log level (debug, info, warn, error)
 
-Use "forge <noun> --help" for more information about a command.
+Use "forge advanced --help" to see all available commands.
 `,
 	SilenceUsage: true,
 	Run: func(cmd *cobra.Command, args []string) {

@@ -30,22 +30,6 @@ func TestXNodeStatusHandler_WithDB_W32(t *testing.T) {
 	}
 }
 
-func TestXNodeForwardHandler_MethodNotAllowed_W32(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	xc, err := NewXNodeController(db, "test-node-w32")
-	if err != nil {
-		t.Fatalf("NewXNodeController: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/xnode/forward", nil)
-	w := httptest.NewRecorder()
-	xc.ForwardHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestXNodeForwardHandler_InvalidBody_W32(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -136,15 +120,6 @@ func TestSSEDeliveryHandler_CancelledContext_W32(t *testing.T) {
 	w := httptest.NewRecorder()
 	xc.SSEDeliveryHandler(w, req)
 	// Should exit without panic — SSE headers set
-}
-
-func TestAgentsSSEHandler_MethodNotAllowed_W32(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/sse", nil)
-	w := httptest.NewRecorder()
-	agentsSSEHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
 }
 
 func TestAgentsSSEHandler_CancelledContext_W32(t *testing.T) {

@@ -466,8 +466,9 @@ func TestPatrolLogic(t *testing.T) {
 
 	task2 := &Task{ID: "NONEXISTENT"}
 	c2 := calculateConfidenceScore(ctx, db, task2)
-	if c2 != 0.7 { // defaultScore
-		t.Errorf("expected default confidence for missing results, got %f", c2)
+	// P0 fix (34e78f66): no quality gate data → 0.0 (fail-closed, requires human review)
+	if c2 != 0.0 {
+		t.Errorf("expected 0.0 (fail-closed) for missing quality gate results, got %f", c2)
 	}
 
 	// 3. extractResultSummary
@@ -714,6 +715,7 @@ func TestMorePatrols(t *testing.T) {
 		status TEXT,
 		state TEXT,
 		assigned_to TEXT,
+		lane TEXT,
 		updated_at TEXT,
 		started_at TEXT,
 		created_at TEXT,
@@ -737,8 +739,9 @@ func TestMorePatrols(t *testing.T) {
 		t.Errorf("handleTimedOutTasks failed: got %s", status)
 	}
 
-	// 3. dataRetentionPatrol — abandons stale queued tasks (not task_events)
-	_, _ = db.Exec("INSERT INTO tasks (id, status, created_at) VALUES ('T-OLD', 'queued', datetime('now','-8 days'))")
+	// 3. dataRetentionPatrol — abandons stale orphaned tasks (no lane, no agent)
+	// lane=NULL required: migration 012 sets DEFAULT 'dev' so must override (P0 fix preserves lane tasks)
+	_, _ = db.Exec("INSERT INTO tasks (id, status, lane, created_at) VALUES ('T-OLD', 'queued', NULL, datetime('now','-8 days'))")
 	dataRetentionPatrol(ctx, db)
 	_ = db.QueryRow("SELECT status FROM tasks WHERE id = 'T-OLD'").Scan(&status)
 	if status != "abandoned" {
@@ -770,8 +773,8 @@ func TestFleetScalePatrol(t *testing.T) {
 	_, _ = db.Exec(`CREATE TABLE agent_heartbeats (agent_id TEXT PRIMARY KEY, status TEXT, last_seen TEXT)`)
 	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, last_seen) VALUES ('A-STALE', 'idle', datetime('now'))`)
 
-	// fleetDeflatePatrol was removed; test fleetScaleRecommend instead
-	fleetScaleRecommend(ctx, db)
+	// fleetScaleRecommend deleted (f715a295) — use fleetScaleRecommendPatrol
+	fleetScaleRecommendPatrol(ctx, db)
 }
 
 // --- validation.go tests ---

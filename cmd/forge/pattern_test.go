@@ -49,7 +49,7 @@ func TestPatternShow(t *testing.T) {
 	runner := NewTestRunner(t)
 
 	// Test show pattern
-	_, err := runner.Execute("pattern", "show", "fastapi-endpoint")
+	_, err := runner.Execute("pattern", "show", "api_endpoint:simple")
 	if err != nil {
 		t.Errorf("pattern show failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestPatternShowJsonFormat(t *testing.T) {
 	runner := NewTestRunner(t)
 
 	// Test show with json format
-	_, err := runner.Execute("pattern", "show", "fastapi-endpoint", "--format", "json")
+	_, err := runner.Execute("pattern", "show", "api_endpoint:simple", "--format", "json")
 	if err != nil {
 		t.Errorf("pattern show --format json failed: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestPatternShowQuietFormat(t *testing.T) {
 	runner := NewTestRunner(t)
 
 	// Test show with quiet format
-	_, err := runner.Execute("pattern", "show", "fastapi-endpoint", "--format", "quiet")
+	_, err := runner.Execute("pattern", "show", "api_endpoint:simple", "--format", "quiet")
 	if err != nil {
 		t.Errorf("pattern show --format quiet failed: %v", err)
 	}

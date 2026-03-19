@@ -150,17 +150,6 @@ func TestWave90b_AgentFleetSummaryHandler_V2_Success(t *testing.T) {
 	}
 }
 
-func TestWave90b_AgentFleetSummaryHandler_V2_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	r := httptest.NewRequest(http.MethodPost, "/api/fleet/summary", nil)
-	w := httptest.NewRecorder()
-	agentFleetSummaryHandler_V2(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("agentFleetSummaryHandler_V2 POST: got %d", w.Code)
-	}
-}
-
 // handleQueueStatus
 func TestWave90b_HandleQueueStatus_Success(t *testing.T) {
 	cleanup := setupHandlerTest(t)
@@ -201,53 +190,6 @@ func TestWave90b_FleetAutoDeflatePatrol_NoDrainingAgents(t *testing.T) {
 	err := fleetAutoDeflatePatrol(context.Background(), db)
 	if err != nil {
 		t.Logf("fleetAutoDeflatePatrol no agents: %v", err)
-	}
-}
-
-// NotImplemented stubs
-func TestWave90b_HandleAgentSpawn_NotImplemented(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	r := httptest.NewRequest(http.MethodPost, "/agents/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Logf("handleAgentSpawn: got %d", w.Code)
-	}
-}
-
-func TestWave90b_HandleAgentStop_NotImplemented(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	r := httptest.NewRequest(http.MethodPost, "/agents/stop", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Logf("handleAgentStop: got %d", w.Code)
-	}
-}
-
-func TestWave90b_NotImplementedHandlers(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	handlers := []struct {
-		name string
-		h    http.HandlerFunc
-	}{
-		{"handleGitGuard", handleGitGuard},
-		{"handleGitStatus", handleGitStatus},
-		{"handleFleetStatus", handleFleetStatus},
-		{"handleFleetTopology", handleFleetTopology},
-		{"handleSystemPatrol", handleSystemPatrol},
-		{"handleSystemMetrics", handleSystemMetrics},
-	}
-	for _, tc := range handlers {
-		r := httptest.NewRequest(http.MethodGet, "/stub", nil)
-		w := httptest.NewRecorder()
-		tc.h(w, r)
-		if w.Code != http.StatusNotImplemented {
-			t.Logf("%s: got %d (expected 501)", tc.name, w.Code)
-		}
 	}
 }
 

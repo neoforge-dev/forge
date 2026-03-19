@@ -67,14 +67,17 @@ func (ps *PatrolSystem) AddContextPatrol(p ContextAwarePatrol) {
 	ps.contextPatrols = append(ps.contextPatrols, p)
 }
 
-// StandardPatrols returns the 6 standard patrols
+// StandardPatrols returns the standard patrols. Overlapping patrols have been
+// consolidated into wrapper functions to reduce log spam and cognitive load.
+// Original count: 30. Current count: 25.
 func StandardPatrols() []Patrol {
 	return []Patrol{
+		// --- Agent health (merged: health-check + heartbeat-ttl + agent-liveness) ---
 		{
-			ID:       "health-check",
-			Name:     "Agent Health Check",
-			Schedule: 60 * time.Second,
-			Action:   checkAgentHealth,
+			ID:       "agent-health",
+			Name:     "Agent Health (health-check + heartbeat-ttl + agent-liveness)",
+			Schedule: 2 * time.Minute,
+			Action:   agentHealthPatrol,
 		},
 		{
 			ID:       "task-timeout",
@@ -119,12 +122,6 @@ func StandardPatrols() []Patrol {
 			Action:   computeMetricsRollups,
 		},
 		{
-			ID:       "heartbeat-ttl",
-			Name:     "Agent Heartbeat TTL (ADR-027)",
-			Schedule: 2 * time.Minute,
-			Action:   markStaleHeartbeatsOffline,
-		},
-		{
 			ID:       "auto-requeue",
 			Name:     "Auto-Requeue Retriable Tasks",
 			Schedule: 2 * time.Minute,
@@ -136,11 +133,12 @@ func StandardPatrols() []Patrol {
 			Schedule: 5 * time.Minute,
 			Action:   autoPromoteCompletedTasksInLane,
 		},
+		// --- Result file processing (merged: result-monitor + result-ingest) ---
 		{
 			ID:       "result-monitor",
-			Name:     "Result File Monitor (ADR-033)",
+			Name:     "Result File Monitor (result-monitor + result-ingest)",
 			Schedule: 2 * time.Minute,
-			Action:   monitorResultFiles,
+			Action:   resultMonitorPatrol,
 		},
 		{
 			ID:       "confidence-approve",
@@ -150,15 +148,16 @@ func StandardPatrols() []Patrol {
 		},
 		{
 			ID:       "binary-freshness",
-			Name:     "Binary Freshness Check",
-			Schedule: 15 * time.Minute,
+			Name:     "Binary Freshness — auto-rebuild + restart on source change",
+			Schedule: 5 * time.Minute,
 			Action:   checkBinaryFreshness,
 		},
+		// --- Fleet scaling (merged: fleet-scale-recommend + fleet-deflate-recommend) ---
 		{
-			ID:       "fleet-scale-recommend",
-			Name:     "Fleet Scale Recommender (ADR-034)",
+			ID:       "fleet-scale",
+			Name:     "Fleet Scale (scale-recommend + deflate-recommend)",
 			Schedule: 2 * time.Minute,
-			Action:   fleetScaleRecommendPatrol,
+			Action:   fleetScalePatrol,
 		},
 		{
 			ID:       "token-budget",
@@ -167,34 +166,17 @@ func StandardPatrols() []Patrol {
 			Action:   tokenBudgetCooldownResetPatrol,
 		},
 		{
-			ID:       "agent-liveness",
-			Name:     "Agent Liveness / Zombie Detection (ADR-035 P1)",
-			Schedule: 5 * time.Minute,
-			Action:   agentLivenessPatrol,
-		},
-		{
-			ID:       "fleet-deflate-recommend",
-			Name:     "Fleet Deflate Recommender (ADR-035 P2)",
-			Schedule: 5 * time.Minute,
-			Action:   fleetDeflateRecommendPatrol,
-		},
-		{
 			ID:       "council-cleanup",
 			Name:     "Council TTL Cleanup (ADR-035 P2)",
 			Schedule: 2 * time.Minute,
 			Action:   councilCleanupPatrol,
 		},
+		// --- Fleet execution (merged: fleet-auto-exec + fleet-auto-deflate) ---
 		{
-			ID:       "fleet-auto-exec",
-			Name:     "Fleet Auto-Execute (ADR-036 P3)",
+			ID:       "fleet-auto",
+			Name:     "Fleet Auto (auto-exec + auto-deflate)",
 			Schedule: 2 * time.Minute,
-			Action:   fleetAutoExecutePatrol,
-		},
-		{
-			ID:       "fleet-auto-deflate",
-			Name:     "Fleet Auto-Deflate (ADR-036 P3)",
-			Schedule: 2 * time.Minute,
-			Action:   fleetAutoDeflatePatrol,
+			Action:   fleetAutoPatrol,
 		},
 		{
 			ID:       "work-strategy",
@@ -227,12 +209,6 @@ func StandardPatrols() []Patrol {
 			Action:   dispatchTimeoutPatrol,
 		},
 		{
-			ID:       "result-ingest",
-			Name:     "Fleet Result File Detector",
-			Schedule: 15 * time.Minute,
-			Action:   resultIngestPatrol,
-		},
-		{
 			ID:       "daily-digest",
 			Name:     "Daily Digest Generator",
 			Schedule: 24 * time.Hour,
@@ -249,6 +225,36 @@ func StandardPatrols() []Patrol {
 			Name:     "XNode Retry Serializer (ADR-023)",
 			Schedule: 5 * time.Minute,
 			Action:   xnodeRetrySerializerPatrol,
+		},
+		{
+			ID:       "orchestrator-auto",
+			Name:     "Orchestrator Auto-Dispatch (heartbeat + dispatch + requeue + openclaw-route)",
+			Schedule: 60 * time.Second,
+			Action:   orchestratorAutoDispatch,
+		},
+		{
+			ID:       "message-relay",
+			Name:     "Cross-Node Message Relay (git-based, no HTTP required)",
+			Schedule: 60 * time.Second,
+			Action:   messageRelayPatrol,
+		},
+		{
+			ID:       "agent-ttl-cleanup",
+			Name:     "Agent TTL Cleanup (24h stale removal)",
+			Schedule: 6 * time.Hour,
+			Action:   agentTTLCleanup,
+		},
+		{
+			ID:       "doc-drift",
+			Name:     "Doc Drift — key docs staleness check (hygiene)",
+			Schedule: 6 * time.Hour,
+			Action:   docDriftPatrol,
+		},
+		{
+			ID:       "dispatch-hygiene",
+			Name:     "Dispatch Hygiene — archive stale dispatch and result files (Council S118)",
+			Schedule: 24 * time.Hour,
+			Action:   dispatchHygienePatrol,
 		},
 	}
 }
@@ -324,23 +330,42 @@ func checkAgentHealth(ctx context.Context, db *sql.DB) error {
 }
 
 // markStaleHeartbeatsOffline marks agents in agent_heartbeats as offline if they
-// haven't sent a heartbeat in > 5 minutes. This is the ADR-027 heartbeat TTL patrol
+// haven't sent a heartbeat in > 10 minutes. This is the ADR-027 heartbeat TTL patrol
 // and complements checkAgentHealth which targets the legacy agents table.
 func markStaleHeartbeatsOffline(ctx context.Context, db *sql.DB) error {
-	fiveMinutesAgo := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+	tenMinutesAgo := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 
 	result, err := db.ExecContext(ctx, `
 		UPDATE agent_heartbeats
 		SET status = 'offline'
 		WHERE last_seen < ?
 		AND status != 'offline'
-	`, fiveMinutesAgo)
+	`, tenMinutesAgo)
 	if err != nil {
 		return fmt.Errorf("mark stale heartbeats offline: %w", err)
 	}
 
 	if rows, _ := result.RowsAffected(); rows > 0 {
-		log.Printf("[Patrol:heartbeat-ttl] Marked %d stale agents offline (no heartbeat > 5min)", rows)
+		log.Printf("[Patrol:heartbeat-ttl] Marked %d stale agents offline (no heartbeat > 10min)", rows)
+	}
+
+	return nil
+}
+
+// agentTTLCleanup deletes stale (non-online) agents from agent_heartbeats that
+// have not been seen in more than 24 hours. Runs every 6 hours.
+func agentTTLCleanup(ctx context.Context, db *sql.DB) error {
+	result, err := db.ExecContext(ctx, `
+		DELETE FROM agent_heartbeats
+		WHERE status != 'online'
+		AND last_seen < datetime('now', '-24 hours')
+	`)
+	if err != nil {
+		return fmt.Errorf("agent-ttl-cleanup: %w", err)
+	}
+
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		log.Printf("[Patrol:agent-ttl-cleanup] Deleted %d stale agents (non-online, last_seen > 24h)", rows)
 	}
 
 	return nil
@@ -891,6 +916,23 @@ func (ps *PatrolSystem) ListPatrols() []Patrol {
 	return ps.patrols
 }
 
+// RunPatrolByID runs a single patrol by ID once (for "Run Now" from UI). Returns true if the patrol was found and executed.
+func (ps *PatrolSystem) RunPatrolByID(id string) bool {
+	for _, p := range ps.patrols {
+		if p.ID == id {
+			ps.executePatrol(p)
+			return true
+		}
+	}
+	for _, cp := range ps.contextPatrols {
+		if cp.ID == id {
+			ps.executeContextPatrol(cp)
+			return true
+		}
+	}
+	return false
+}
+
 // autoPromoteCompletedTasksInLane advances tasks that are COMPLETED in a lane
 // to the next lane via ProgressTask(). Runs every 5 minutes. If gates fail,
 // ProgressTask returns an error — this patrol just calls it and logs.
@@ -1266,7 +1308,9 @@ func dataRetentionPatrol(ctx context.Context, db *sql.DB) error {
 
 // checkBinaryFreshness compares the mtime of the running daemon binary vs.
 // the newest Go source file in cmd/forged/. If the binary is more than
-// 30 minutes stale it writes an alert result file so operators know to rebuild.
+// 2 minutes stale it rebuilds via `go build` and restarts the daemon using
+// `forge daemon restart`. The threshold is short so code changes are picked
+// up automatically without manual intervention.
 func checkBinaryFreshness(ctx context.Context, db *sql.DB) error {
 	root := forgeRoot()
 	binaryPath := filepath.Join(root, "cmd", "forged", "forged")
@@ -1293,20 +1337,54 @@ func checkBinaryFreshness(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
-	if newestSrc.IsZero() || !newestSrc.After(binaryMtime.Add(30*time.Minute)) {
-		return nil // binary is fresh or no source found
+	// No source change detected — nothing to do.
+	if newestSrc.IsZero() || !newestSrc.After(binaryMtime.Add(2*time.Minute)) {
+		return nil
 	}
 
-	staleness := newestSrc.Sub(binaryMtime).Round(time.Minute)
-	msg := fmt.Sprintf("# Binary Freshness Alert\n\n⚠️  BINARY STALE by %s\n- Binary built: %s\n- Newest source: %s\n\nAction:\n```bash\ncd cmd/forged && go build -o forged . && pkill forged\n./forged --port 8081 --ws-port 8082 --db .forge/forge-v3.db &\n```\n",
-		staleness, binaryMtime.Format(time.RFC3339), newestSrc.Format(time.RFC3339))
+	staleness := newestSrc.Sub(binaryMtime).Round(time.Second)
+	log.Printf("[Patrol:binary-freshness] source newer than binary by %s — rebuilding", staleness)
 
-	resultPath := filepath.Join(root, ".forge", "heartbeat", "results", "binary-stale-alert.md")
-	if writeErr := os.WriteFile(resultPath, []byte(msg), 0644); writeErr != nil {
-		log.Printf("[Patrol:binary-freshness] failed to write alert: %v", writeErr)
-	} else {
-		log.Printf("[Patrol:binary-freshness] ALERT: binary stale by %s", staleness)
+	// Build new binary inside cmd/forged/. Use a context with generous timeout
+	// so slow machines don't abort mid-compile.
+	buildCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	// Build to a temp file first — never overwrite the running binary directly.
+	// This prevents the daemon from being killed mid-build by an overwritten executable.
+	tmpBinary := binaryPath + ".new"
+	buildCmd := exec.CommandContext(buildCtx, "go", "build", "-o", tmpBinary, ".")
+	buildCmd.Dir = srcDir
+	if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
+		log.Printf("[Patrol:binary-freshness] build FAILED: %v\n%s", buildErr, out)
+		_ = os.Remove(tmpBinary) // clean up failed build artifact
+		msg := fmt.Sprintf("# Build Failure Alert\n\nbuild failed after detecting stale binary (+%s):\n```\n%s\n```\n", staleness, out)
+		resultPath := filepath.Join(root, ".forge", "heartbeat", "results", "binary-build-failure.md")
+		_ = os.WriteFile(resultPath, []byte(msg), 0644)
+		return nil // build failure is logged; don't fail the patrol
 	}
+
+	// Atomic rename: replace running binary only after successful build.
+	if err := os.Rename(tmpBinary, binaryPath); err != nil {
+		log.Printf("[Patrol:binary-freshness] rename %s → %s failed: %v", tmpBinary, binaryPath, err)
+		_ = os.Remove(tmpBinary)
+		return nil
+	}
+
+	log.Printf("[Patrol:binary-freshness] build succeeded — triggering daemon restart via forge CLI")
+
+	// Delegate the actual stop+restart to `forge daemon restart --skip-build`
+	// (binary is already fresh). Run fire-and-forget in a goroutine so this
+	// patrol function returns before the process is replaced.
+	go func() {
+		time.Sleep(500 * time.Millisecond) // let patrol goroutine clean up
+		restartCmd := exec.Command("forge", "daemon", "restart", "--skip-build")
+		restartCmd.Dir = root
+		if out, restartErr := restartCmd.CombinedOutput(); restartErr != nil {
+			log.Printf("[Patrol:binary-freshness] restart failed: %v\n%s", restartErr, out)
+		}
+	}()
+
 	return nil
 }
 
@@ -1317,16 +1395,16 @@ func checkBinaryFreshness(ctx context.Context, db *sql.DB) error {
 // Phase 2 P1 action: mark zombie status in agent_heartbeats + log.
 // Phase 2 P2 (future): auto-deflate and respawn via deflation compound gate.
 func agentLivenessPatrol(ctx context.Context, db *sql.DB) error {
-	fiveMinutesAgo := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+	tenMinutesAgo := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 
-	// Find agents that are non-offline but haven't sent a heartbeat in >5min.
+	// Find agents that are non-offline but haven't sent a heartbeat in >10min.
 	rows, err := db.QueryContext(ctx, `
 		SELECT agent_id, node, status, last_seen, current_task_id
 		FROM agent_heartbeats
 		WHERE last_seen < ?
 		AND status != 'offline'
 		AND status != 'zombie'
-	`, fiveMinutesAgo)
+	`, tenMinutesAgo)
 	if err != nil {
 		return fmt.Errorf("agentLiveness query: %w", err)
 	}
@@ -1851,5 +1929,211 @@ func xnodeRetrySerializerPatrol(ctx context.Context, db *sql.DB) error {
 	if retried > 0 {
 		log.Printf("[Patrol:xnode-retry] reserialized %d unacked messages", retried)
 	}
+	return nil
+}
+
+// ─── Consolidated patrol wrappers ────────────────────────────────────────────
+// Each wrapper calls the original patrol functions in sequence.
+// If the first call returns an error it is logged but execution continues so
+// the remaining functions always run.
+
+// agentHealthPatrol merges health-check + heartbeat-ttl + agent-liveness.
+// Schedule: 2 min (matches former heartbeat-ttl cadence).
+func agentHealthPatrol(ctx context.Context, db *sql.DB) error {
+	if err := checkAgentHealth(ctx, db); err != nil {
+		log.Printf("[Patrol:agent-health] checkAgentHealth: %v", err)
+	}
+	if err := markStaleHeartbeatsOffline(ctx, db); err != nil {
+		log.Printf("[Patrol:agent-health] markStaleHeartbeatsOffline: %v", err)
+	}
+	return agentLivenessPatrol(ctx, db)
+}
+
+// resultMonitorPatrol merges result-monitor + result-ingest.
+// Schedule: 2 min (matches former result-monitor cadence).
+func resultMonitorPatrol(ctx context.Context, db *sql.DB) error {
+	if err := monitorResultFiles(ctx, db); err != nil {
+		log.Printf("[Patrol:result-monitor] monitorResultFiles: %v", err)
+	}
+	return resultIngestPatrol(ctx, db)
+}
+
+// fleetScalePatrol merges fleet-scale-recommend + fleet-deflate-recommend.
+// Schedule: 2 min (matches former fleet-scale-recommend cadence).
+func fleetScalePatrol(ctx context.Context, db *sql.DB) error {
+	if err := fleetScaleRecommendPatrol(ctx, db); err != nil {
+		log.Printf("[Patrol:fleet-scale] fleetScaleRecommendPatrol: %v", err)
+	}
+	return fleetDeflateRecommendPatrol(ctx, db)
+}
+
+// fleetAutoPatrol merges fleet-auto-exec + fleet-auto-deflate.
+// Schedule: 2 min (unchanged — both ran at 2 min).
+func fleetAutoPatrol(ctx context.Context, db *sql.DB) error {
+	if err := fleetAutoExecutePatrol(ctx, db); err != nil {
+		log.Printf("[Patrol:fleet-auto] fleetAutoExecutePatrol: %v", err)
+	}
+	return fleetAutoDeflatePatrol(ctx, db)
+}
+
+// docDriftPatrol checks key documentation files for staleness (last modified
+// older than 14 days). Stale files are reported in .forge/reports/doc-drift.md.
+// Returns nil even when stale files are found — the report file is the artifact.
+// Schedule: 6 hours (group: hygiene).
+func docDriftPatrol(ctx context.Context, db *sql.DB) error {
+	const staleThreshold = 14 * 24 * time.Hour
+
+	root := forgeRoot()
+
+	// Canonical set of documentation files to monitor for drift.
+	keyDocs := []string{
+		"docs/PROMPT.md",
+		"CLAUDE.md",
+		"AGENTS.md",
+		"docs/PLAN.md",
+		"config/portfolio/portfolio-state.yaml",
+	}
+
+	now := time.Now()
+	type staleEntry struct {
+		Path    string
+		DaysOld int
+		ModTime time.Time
+	}
+
+	var stale []staleEntry
+	var missing []string
+
+	for _, rel := range keyDocs {
+		full := filepath.Join(root, rel)
+		info, err := os.Stat(full)
+		if err != nil {
+			// File absent — record but do not abort.
+			missing = append(missing, rel)
+			continue
+		}
+		age := now.Sub(info.ModTime())
+		if age > staleThreshold {
+			stale = append(stale, staleEntry{
+				Path:    rel,
+				DaysOld: int(age.Hours() / 24),
+				ModTime: info.ModTime(),
+			})
+		}
+	}
+
+	// Build report markdown.
+	var sb strings.Builder
+	sb.WriteString("# Doc Drift Report\n\n")
+	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", now.UTC().Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Threshold: %d days\n\n", int(staleThreshold.Hours()/24)))
+
+	if len(stale) == 0 && len(missing) == 0 {
+		sb.WriteString("All key documentation files are up to date.\n")
+	} else {
+		if len(stale) > 0 {
+			sb.WriteString(fmt.Sprintf("## Stale Files (%d)\n\n", len(stale)))
+			for _, e := range stale {
+				sb.WriteString(fmt.Sprintf("- `%s` — %d days old (last modified: %s)\n",
+					e.Path, e.DaysOld, e.ModTime.UTC().Format("2006-01-02")))
+			}
+			sb.WriteString("\n")
+		}
+		if len(missing) > 0 {
+			sb.WriteString(fmt.Sprintf("## Missing Files (%d)\n\n", len(missing)))
+			for _, p := range missing {
+				sb.WriteString(fmt.Sprintf("- `%s`\n", p))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Write report to .forge/reports/doc-drift.md.
+	reportDir := filepath.Join(root, ".forge", "reports")
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return fmt.Errorf("doc-drift mkdir: %w", err)
+	}
+	reportPath := filepath.Join(reportDir, "doc-drift.md")
+	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("doc-drift write: %w", err)
+	}
+
+	staleCount := len(stale)
+	if staleCount > 0 || len(missing) > 0 {
+		log.Printf("[Patrol:doc-drift] stale=%d missing=%d — report: %s", staleCount, len(missing), reportPath)
+	} else {
+		log.Printf("[Patrol:doc-drift] all %d key docs up to date", len(keyDocs))
+	}
+
+	return nil
+}
+
+// dispatchHygienePatrol archives .md files older than 7 days from the
+// .forge/dispatches/ and .forge/heartbeat/results/ directories. Archived files
+// are moved into an archive/ subdirectory within each directory. Missing
+// directories are not treated as errors — the patrol is a best-effort hygiene
+// task. Schedule: 24 hours.
+func dispatchHygienePatrol(ctx context.Context, db *sql.DB) error {
+	const staleAge = 7 * 24 * time.Hour
+
+	root := forgeRoot()
+	now := time.Now()
+
+	archiveDir := func(dir string) (int, error) {
+		archivePath := filepath.Join(dir, "archive")
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return 0, nil
+			}
+			return 0, fmt.Errorf("read dir %s: %w", dir, err)
+		}
+
+		var archived int
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if filepath.Ext(entry.Name()) != ".md" {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				log.Printf("[Patrol:dispatch-hygiene] stat %s: %v", entry.Name(), err)
+				continue
+			}
+			if now.Sub(info.ModTime()) < staleAge {
+				continue
+			}
+			// Ensure archive directory exists (lazy creation on first match).
+			if err := os.MkdirAll(archivePath, 0755); err != nil {
+				return archived, fmt.Errorf("mkdir archive %s: %w", archivePath, err)
+			}
+			src := filepath.Join(dir, entry.Name())
+			dst := filepath.Join(archivePath, entry.Name())
+			if err := os.Rename(src, dst); err != nil {
+				log.Printf("[Patrol:dispatch-hygiene] move %s -> %s: %v", src, dst, err)
+				continue
+			}
+			archived++
+		}
+		return archived, nil
+	}
+
+	dispatchDir := filepath.Join(root, ".forge", "dispatches")
+	resultsDir := filepath.Join(root, ".forge", "heartbeat", "results")
+
+	dispatchArchived, err := archiveDir(dispatchDir)
+	if err != nil {
+		return fmt.Errorf("dispatch-hygiene dispatches: %w", err)
+	}
+
+	resultsArchived, err := archiveDir(resultsDir)
+	if err != nil {
+		return fmt.Errorf("dispatch-hygiene results: %w", err)
+	}
+
+	log.Printf("[Patrol:dispatch-hygiene] archived=%d dispatches, %d results", dispatchArchived, resultsArchived)
 	return nil
 }

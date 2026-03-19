@@ -516,6 +516,7 @@ Examples:
 }
 
 func init() {
+	// nodeCmd visible — node management is user-facing
 	nodeCmd.AddCommand(nodeListCmd)
 	nodeCmd.AddCommand(nodeStatusCmd)
 	nodeCmd.AddCommand(nodeJoinCmd)

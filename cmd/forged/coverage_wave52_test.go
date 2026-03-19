@@ -34,23 +34,6 @@ func TestXNodeListAcksHandler_Empty_W52(t *testing.T) {
 
 // ─── XNodeController.RegisterHandler ─────────────────────────────────────
 
-func TestXNodeRegisterHandler_MethodNotAllowed_W52(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	xc, err := NewXNodeController(db, "test-node-w52")
-	if err != nil {
-		t.Fatalf("NewXNodeController: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/xnode/nodes/register", nil)
-	w := httptest.NewRecorder()
-	xc.RegisterHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestXNodeRegisterHandler_InvalidJSON_W52(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()

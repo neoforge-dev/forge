@@ -205,11 +205,48 @@ func TestCLIHandlers(t *testing.T) {
 		t.Errorf("handleSystemHealth returned %d", w.Code)
 	}
 
-	// Test handleGitStatus — stub returns 501 Not Implemented
-	req = httptest.NewRequest(http.MethodGet, "/cli/git/status", nil)
-	w = httptest.NewRecorder()
-	handleGitStatus(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("handleGitStatus returned %d, want 501", w.Code)
+}
+
+// TestHandleTaskLogs_WithID exercises the path where a task ID is provided.
+func TestHandleTaskLogs_WithID(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/cli/task/logs?id=nonexistent-task-id", nil)
+	w := httptest.NewRecorder()
+	handleTaskLogs(w, req)
+	// A non-existent task ID may return 404 or 200 with empty events — just verify no panic.
+	_ = w.Code
+}
+
+// TestHandleSystemHealth_JSONFormat verifies handleSystemHealth with format=json.
+func TestHandleSystemHealth_JSONFormat(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/cli/system/health?format=json", nil)
+	w := httptest.NewRecorder()
+	handleSystemHealth(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for handleSystemHealth?format=json, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestHandleQueueDepth_JSONFormat verifies handleQueueDepth with format=json when queue is set.
+func TestHandleQueueDepth_JSONFormat(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	q, err := NewTaskQueueFromDB(db)
+	if err != nil {
+		t.Fatalf("NewTaskQueueFromDB: %v", err)
+	}
+	orig := taskQueue
+	taskQueue = q
+	defer func() { taskQueue = orig }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/queue/depth?format=json", nil)
+	w := httptest.NewRecorder()
+	handleQueueDepth(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -107,7 +108,7 @@ func TestContextThresholdHook_AboveThreshold_WithDB(t *testing.T) {
 		t.Fatalf("MigrateUp: %v", err)
 	}
 
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 	h := &ContextThresholdHook{cm: cm}
 	event := HookEvent{
@@ -135,7 +136,7 @@ func TestContextThresholdHook_AboveThreshold_DefaultMetadata(t *testing.T) {
 		t.Fatalf("MigrateUp: %v", err)
 	}
 
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 	h := &ContextThresholdHook{cm: cm}
 	event := HookEvent{
@@ -162,4 +163,98 @@ func (c *callbackHook) Name() string { return "callback-hook" }
 func (c *callbackHook) Trigger(_ context.Context, _ HookEvent) error {
 	c.fn()
 	return nil
+}
+
+// Wave 145: syncRoyalJelly uncovered branches
+// Target: patrol.go syncRoyalJelly
+
+// TestWave145_SyncRoyalJelly_NoDirReturnsNil verifies that syncRoyalJelly
+// returns nil when the .forge/context directory does not exist.
+func TestWave145_SyncRoyalJelly_NoDirReturnsNil(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Point FORGE_ROOT to a temp dir that has NO .forge/context directory.
+	root := t.TempDir()
+	t.Setenv("FORGE_ROOT", root)
+
+	ctx := context.Background()
+	err := syncRoyalJelly(ctx, db)
+	if err != nil {
+		t.Errorf("expected nil when context dir missing, got: %v", err)
+	}
+}
+
+// TestWave145_SyncRoyalJelly_WithNonDirEntry covers the !e.IsDir() skip branch.
+// A regular file is placed directly in .forge/context — it should be skipped.
+func TestWave145_SyncRoyalJelly_WithNonDirEntry(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	contextDir := filepath.Join(root, ".forge", "context")
+	if err := os.MkdirAll(contextDir, 0755); err != nil {
+		t.Fatalf("mkdir context: %v", err)
+	}
+	// Place a regular file (not a directory) in the context dir.
+	if err := os.WriteFile(filepath.Join(contextDir, "not-a-dir.md"), []byte("content"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	t.Setenv("FORGE_ROOT", root)
+	ctx := context.Background()
+	err := syncRoyalJelly(ctx, db)
+	if err != nil {
+		t.Errorf("expected nil when context dir has only non-dir entries, got: %v", err)
+	}
+}
+
+// TestWave145_SyncRoyalJelly_WithContextPctFile covers the loop body:
+// a domain directory with a context_pct file triggers the agent update.
+func TestWave145_SyncRoyalJelly_WithContextPctFile(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	domainDir := filepath.Join(root, ".forge", "context", "forge")
+	if err := os.MkdirAll(domainDir, 0755); err != nil {
+		t.Fatalf("mkdir domain: %v", err)
+	}
+	// Write context_pct file with a valid float.
+	if err := os.WriteFile(filepath.Join(domainDir, "context_pct"), []byte("42.5\n"), 0644); err != nil {
+		t.Fatalf("write context_pct: %v", err)
+	}
+
+	t.Setenv("FORGE_ROOT", root)
+	ctx := context.Background()
+	// The UPDATE may affect 0 rows (no agent named "forge" in test DB), but
+	// it should not error — the function just skips if no rows match.
+	err := syncRoyalJelly(ctx, db)
+	if err != nil {
+		t.Errorf("expected nil with valid domain+pct file, got: %v", err)
+	}
+}
+
+// TestWave145_SyncRoyalJelly_InvalidPctFile covers the Sscanf error skip:
+// a context_pct file with non-numeric content → loop continues.
+func TestWave145_SyncRoyalJelly_InvalidPctFile(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	domainDir := filepath.Join(root, ".forge", "context", "myagent")
+	if err := os.MkdirAll(domainDir, 0755); err != nil {
+		t.Fatalf("mkdir domain: %v", err)
+	}
+	// Non-numeric content → Sscanf fails → continue.
+	if err := os.WriteFile(filepath.Join(domainDir, "context_pct"), []byte("not-a-number"), 0644); err != nil {
+		t.Fatalf("write context_pct: %v", err)
+	}
+
+	t.Setenv("FORGE_ROOT", root)
+	ctx := context.Background()
+	err := syncRoyalJelly(ctx, db)
+	if err != nil {
+		t.Errorf("expected nil with invalid pct file, got: %v", err)
+	}
 }

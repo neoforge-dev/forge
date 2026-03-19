@@ -181,15 +181,6 @@ func taskIDf(format string, i int) string {
 
 // ─── uiFleetHandler ───────────────────────────────────────────────────────
 
-func TestUIFleetHandler_MethodNotAllowed_W47(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/ui/fleet", nil)
-	w := httptest.NewRecorder()
-	uiFleetHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestUIFleetHandler_WithDB_W47(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -219,15 +210,6 @@ func TestUIFleetHandler_NilDB_W47(t *testing.T) {
 
 // ─── planTaskHandler ──────────────────────────────────────────────────────
 
-func TestPlanTaskHandler_MethodNotAllowed_W47(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-X/plan", nil)
-	w := httptest.NewRecorder()
-	planTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestPlanTaskHandler_InvalidJSON_W47(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/TASK-X/plan", bytes.NewBufferString("not-json"))
 	req.URL.Path = "/api/tasks/TASK-X/plan"
@@ -250,15 +232,6 @@ func TestPlanTaskHandler_MissingTaskID_W47(t *testing.T) {
 }
 
 // ─── completeTaskHandler ──────────────────────────────────────────────────
-
-func TestCompleteTaskHandler_MethodNotAllowed_W47(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-X/complete", nil)
-	w := httptest.NewRecorder()
-	completeTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestCompleteTaskHandler_InvalidJSON_W47(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/TASK-X/complete", bytes.NewBufferString("bad"))

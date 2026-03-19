@@ -392,6 +392,52 @@ func TestGitGuardIdempotency_ExecuteCommit(t *testing.T) {
 	}
 }
 
+func TestGitGuardIdempotency_ExecuteCommit_WrongResultType(t *testing.T) {
+	store, cleanup := setupIdempotencyDB(t)
+	defer cleanup()
+	createIdempotencyTableSQLite(t, store)
+
+	g := NewGitGuardIdempotency(store)
+
+	payload := CommitPayload{
+		RepoPath:    "/tmp/wrong-type-repo",
+		Message:     "feat: wrong type test",
+		Files:       []string{"main.go"},
+		AuthorName:  "Test",
+		AuthorEmail: "test@example.com",
+	}
+
+	// Pre-compute the hash that ExecuteCommit will look up.
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	hash := hashPayload("git_commit", payloadBytes)
+
+	// Store a row whose result is a JSON object (not a bare string).
+	// When ExecuteCommit hits the cache and calls json.Unmarshal into interface{},
+	// it gets map[string]interface{} — not string — so the type assertion fails.
+	action := &IdempotentAction{
+		ID:          "wrong-type-id",
+		Type:        "git_commit",
+		PayloadHash: hash,
+		ExecutedAt:  time.Now().UTC(),
+		Result:      json.RawMessage(`{"not": "a string"}`),
+	}
+	if err := store.Store(action); err != nil {
+		t.Fatalf("Store pre-seeded action: %v", err)
+	}
+
+	fn := func() (string, error) {
+		return "should-not-be-called", nil
+	}
+
+	_, err = g.ExecuteCommit(payload, fn)
+	if err == nil {
+		t.Error("ExecuteCommit with wrong cached result type should return error, got nil")
+	}
+}
+
 func TestCreateIdempotencyTable(t *testing.T) {
 	dbPath := filepath.Join(os.TempDir(), "idem_create_"+time.Now().Format("20060102150405")+".db")
 	db, err := OpenDB(dbPath)

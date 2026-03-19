@@ -1,0 +1,359 @@
+# FORGE Daily Digest — 2026-03-08
+
+**Generated:** 2026-03-08 20:17 UTC
+
+## Tasks (24h)
+- Completed: 0
+- Failed/Abandoned: 0
+
+## Patrols
+- Errors: 0
+
+## Recent Commits
+- a00baaef feat(forge): port forge-node-join.sh → forge node join
+- 497a3806 docs: update CLAUDE.md for forged daemon rename and CLI consolidation
+- beb35d51 refactor(forge): consolidate to single Go CLI + forged daemon
+- 924480fb chore: daemon rename forge-v3 -> forged (worktree staging)
+- 24dc8976 feat(forge-v3): ADR-023 xnode ack-processor + retry-serializer patrols
+- e9fbf2d9 docs(adr): ADR-014 COMPLETE — 8/8 groups native, Python harness deletable
+- e6328998 fix(forge-v3): add down migration for relay_deliveries (048)
+- 1f32ed35 docs(adr): update INDEX.md for S89 — ADR-038 complete, coverage 80.1%
+- 489bf724 fix(forge-v3): initialize xnodeCtx in StartHeartbeatMonitor
+- f1c4b6e1 feat(forge-v3): ADR-038 node self-registration on startup
+- 7d35c916 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 2146b0b6 test(v3/coverage): wave106 — CLI cmds, node metrics, fleet aggregate, openclaw, context sync
+- bb261746 test(v3/coverage): wave105 — state machine hooks, EventBus, approval handler paths
+- a6ecdb16 feat(forge-v3): ADR-014 relay delivery endpoints
+- 6cfa1b51 test(v3/coverage): wave104 — handler method-not-allowed and nil-db branches
+- 3a7ca470 test(forge-v3): wave103 — fleet_scaler patrols, gitguard success, TUI, syncRoyalJelly Phase2
+- a3283bc6 test(forge-v3): wave102 — gitguard, handlers, dashboard, patrol branch coverage
+- 38bf49fb test(forge-v3): wave101 coverage tests — fleet_scaler, migrate, patrol, handlers
+- 19ac2797 test(forge-v3): wave100 coverage tests — 209 tests targeting 82%+ milestone
+- 4c267670 test(v3/coverage): wave99 — main.go handler branches, queue status/list/cancel/priority, task logs, findDomainForAgent
+- f2c02ea8 test(v3/coverage): wave98 — lease conflict/release/renew/recover, approvals, handoffs, dashboard views
+- 5cc7da01 docs(context): update forge lead-context — 80% coverage milestone achieved
+- d8466bf0 test(v3/coverage): wave97 — additional coverage tests
+- 044fe24c fix(v3/tests): wave96 — fix FK constraint and schema in dispatch/patrol tests
+- e9f713ad docs(prompt): 80% coverage milestone achieved — update PROMPT.md
+- 5ff2895f test(v3/coverage): waves 95-96 — Hijack success, tickCmd closure, Update views, OpenDB branches, Enqueue multi-dep — reach 80.1%
+- 80661363 test(v3/coverage): waves 90-94 — TUI handlers, worktree manager, plan manager, event bus, state machine, coord alerts
+- 11ae5337 test(v3/coverage): wave90 — auto-approve, lintScore-clamp, readLiveRAMMB-cache, responseWriter, handleQueueDepth
+- df8c376d test commit
+- c74922b9 test(v3/coverage): wave87+88 — writeJSON/withDB/sendBlockerAlert/syncRoyalJelly/dispatchHandler/uiFleet
+- 135e0305 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 78071990 test(forge-v3): waves 75+78 — executeCommit, fleet handlers, stub endpoints
+- 1f77c1f7 test(v3/coverage): wave86 — readLiveRAMMB/loadAverage/agentList/openclawEvents/confidenceApprove/fleetAutoExecute
+- 3ebf44d9 test(v3/coverage): wave85 — queue depth patrol, SSE handlers, coordination dashboard
+- 66b52cfa test(v3/coverage): waves 83b/84 — confidence approve, fleet scale, deflate, tui, SSE
+- e4c4bb7a test commit
+- a1300fee Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 7cbb7b8a test(v3/coverage): wave83 — dispatch, handlers, tui, patrol, approvals expansion
+- d64c5375 test(forge-v3): wave 74 coverage + fix gitguard hardcoded path
+- ff988a1d Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 00e4793c test(v3/coverage): waves 80c/81/82 — node metrics, workers, tui, agent, fleet handlers
+- dd68e67b docs(claude): document three dispatch paths + S89 dispatch fix
+- 57ba241a docs(claude): add agent capability table + hotswap convention (P4)
+- 5d5b9395 test(v3/coverage): waves 78-80 — protocol validator, event bus, patrol functions
+- b7ea9945 feat(cli/dispatch): add tmux notification to forge dispatch send
+- 6fdfacb3 test(v3/coverage): waves 74+76+77 — approvals, xnode, state machine, tui
+- 34328391 test(forge-v3): wave 73 extended coverage + misc wave72 auth fixes
+- 0415219f test(forge-v3): wave 75 coverage — StateMachine/XNode/TUI/TokenBudget/ContextSync
+- 33f3ead9 test commit
+- 626dea5e test commit
+- 95dad457 test commit
+- 1dd4a5a9 test commit
+- 66933c8e test commit
+- dce999a9 test commit
+- e6595ea3 test commit
+- 1a2ab5a3 test commit
+- 0bc9f436 test commit
+- 7839aef5 test commit
+- a7ba0d16 test commit
+- 36bb26d6 test commit
+- c0ff2dd9 test commit
+- 5f13583a test commit
+- 29baf698 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 0b3c0cc3 test(forge-v3): wave 70 coordination test additions + docs updates
+- df2f8d8c chore: add routing envelope for wave69 coverage
+- 0b391857 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 90de937e test(forge-v3): wave 70 — context_sync, coordination, completion branches
+- 4944b325 feat: trinity dispatcher implementation + handlers_openclaw updates
+- 8dd564f2 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 1fe10776 test(forge-v3): wave 70 — context.go GenerateEnvelope/loadFromFilesystem/EnvelopesHandler
+- 40029fe9 feat: handlers_openclaw and trinity CLI updates
+- 4dda763c test(forge-v3): wave 69 — approval_integration, handoffs, websocket branches
+- f2c966f8 test(forge-v3): wave 68 cont2 — event_bus, handlers_lane, tui_dashboard
+- 8c6049fd Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 08e1d535 test(forge-v3): wave 68 cont — fleet_scaler + registry coverage
+- 502a191d docs: update task-envelope-v1.yaml with completion signaling convention
+- 6a513817 chore: add routing registry configs
+- c462682a test(forge-v3): wave 68 — tui_dashboard fetchData + view branches
+- 85afbec3 test(forge-v3): wave 67 — startDrain, runTestSuite, queue/handler branches
+- 85f66270 docs: update agent cheatsheet, onboarding, quick-start for hub-first config
+- 4a409ece test(forge-v3): wave 66 — coverage +0.6pp → 75.6%
+- 83d13012 docs(forge-cli): update backlog, plan, cheat-sheet for control-plane refactor
+- 33647b5c fix(forge-v3): fix nil dereference in parseContextFromDomain when dir missing
+- fd9b90a0 merge: resolve main.go conflict — accept remote
+- 6a2ca6b6 docs(ios): Forge Terminal v1.0 — all features complete, tests passing
+- 1849db7d docs: PROMPT.md - 75% coverage target ACHIEVED
+- 9ca128be docs(sessions): S82 node-3 session log — 75% coverage milestone, waves 61-65
+- ada8e58b Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 6f427104 docs(prompt): 75% coverage milestone ACHIEVED — waves 61-65 complete, node-3 S82 session
+- 6ef0d42d docs: update PROMPT.md
+- 5041a498 test(v3): waves 64+65 — expanded wave64 + 18 tui_dashboard.Update tests (tickMsg, dataMsg, keyMsgs, showQuick, AgentsView, AgentDetailView)
+- 50ec3abf test(v3): coverage wave64 — 20 tests targeting ApprovalStore list methods, authTokensHandler, createApproval (+0.4pp → 75% target)
+- f35a0180 test(v3): wave63 expanded — 41 tests total, added writeJSON, sql.NullString, tui_dashboard branches
+- bb09cda7 test(v3): coverage wave63 — 21 tests targeting getPlanHistoryHandler, nodesHealthHandler, isTerminal, SyncEnvelopesToFilesystem, dependenciesComplete (+0.5pp est → 75%)
+- e1fcabcc test(v3): coverage wave62 — 23 tests targeting resumeTaskHandler, GetDashboard, BootstrapHandler, CheckGates (+0.6pp est)
+- a5ced9e7 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 2df7de70 fix(v3/test): init xnodeCtx before StartHeartbeatMonitor in xnode test — prevents nil panic
+- d2822937 docs: update PROMPT.md coverage to 74.4%
+- a449d890 test(v3): coverage wave61 — 22 tests targeting ClaimTask, ForwardHandler, queueTaskHandler, handleQueueCancel, getModifiedFiles (+0.9pp est)
+- c9679f76 refactor(v3/tests): consolidation pass 1 — merge 10 wave files into module tests
+- a6edcd68 docs(prompt): update coverage measurement — 74.1% (node-3 11:08), 0.9pp to 75%
+- f8c2c6ad test(v3): add coverage wave 60 tests
+- 6c42caff test(v3): add coverage wave 59 tests
+- 99d1aa3e docs(adr): ADR-036 complete — tier auto-execution was already implemented
+- 9336e64b test(v3): add coverage wave 58 tests
+- 7598f9ae docs(adr): supersede ADR-025, adopt council S82 coverage policy
+- 506b1159 fix(v3): remove duplicate /api/handoffs + /api/messages route registrations
+- c792e444 test(v3): coverage wave 57 test updates
+- 39e2a5f6 test(v3): add coverage wave 57 tests
+- 9562b8fe test(v3): add coverage wave 56 tests
+- 9edd0cbe docs(adr): ADR-014 7/8 complete — handoffs+messages now wired natively in v3
+- 610a7e69 test(v3): add coverage wave 55 tests
+- 520d4225 feat(v3/adr-014): wire /api/messages — 8/8 ADR-014 endpoint groups now present
+- a38c8fdb feat(v3/adr-014): wire /api/handoffs — HandoffHandler.RegisterRoutes() was built, never wired
+- 636afcdd docs: update PROMPT.md - S88 coverage 74.0%
+- c13c04ba test(v3): worker disconnect test updates
+- 3ef66321 test(v3): worker disconnect test refinements
+- 3e58e674 test(v3): worker disconnect test updates
+- 8e3f11f5 chore: update portfolio submodules
+- 42031b3e test(v3): coverage wave 22 minimax test updates
+- 19832127 chore: Sync submodule pointers
+- 04b0066b Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 9e115264 chore: add c.out to .gitignore (coverage artifact)
+- fb7ea93f test(v3): add coverage wave 54 tests
+- 341f8f73 docs(prompt): S82 node-3 session complete — 65% milestone achieved, merged S87
+- cefc3ecc merge: integrate node-2 S87 progress — coverage 63.8% → 73.8% (+10pp)
+- f5e6d22b test(v3): add coverage wave 53 tests
+- 415eac9e refactor(v3): delete WSHandler dead code — redundant wrapper for WebSocketHandler
+- cf381864 test(v3): add coverage wave 52 tests
+- a8211183 test(v3): coverage wave 51 test improvements
+- 33b95cf6 test(v3): coverage wave 51 test refinements
+- 4926123d test(v3): coverage wave 51 test updates
+- b20cd648 docs: S87 complete - coverage 73.8%
+- a34e0355 test(v3): add coverage wave 51 tests
+- ec0cceb2 test(v3): coverage wave 50 test refinements
+- dcc014aa test(v3): coverage wave 50 test updates
+- e2f62cf5 test(v3): add coverage wave 50 tests
+- 8b20e9d3 test(v3): coverage wave 49 test updates
+- 12fbd876 test(v3): add coverage wave 49 tests
+- 9b575eb1 test(v3): add coverage wave 48 tests
+- bb0b9b51 test(v3): add coverage wave 47 tests
+- 82ff653b test(v3): add coverage wave 46 tests
+- 17497893 test(v3): add coverage wave 45 tests
+- 54552683 test(v3): add coverage wave 44 tests
+- 408cebb8 test(forge-v3): wave43 — handleTaskList/Show/Logs, handleAgentList format, validateCustomRule, checkCircular
+- 710b96b9 test(v3): add coverage wave 42 tests
+- 9a135b06 docs: S86 complete - coverage 72.8%
+- b5baf8f2 test(v3): add coverage wave 41 tests
+- 9ea2c90c test(v3): add coverage wave 40 tests
+- 4697d821 test(forge-v3): wave39 — orchestratorWorkStrategyPatrol idle agent paths + catalog
+- a5a53c95 test(forge-v3): wave38 — getAgentID paths, uiFleetHandler, handleQueueDepth format
+- ded70cb3 test(forge-v3): wave37 — TUI.GetDashboard, draining agent schema, orchestrator with tasks
+- 3c5028ac test(v3): add coverage wave 36 tests
+- ce01ad72 docs(prompt): S82 handoff 09:10 — coverage 64.4%, 0.6pp to target
+- c8373ef0 test(forge-v3): wave35 — CheckpointGateExecutor, CoordinationDashboard, ProtocolValidator
+- d9013818 test(v3): wave15 final additions — queue/openclaw/priority edge cases (glm wave16)
+- b908e9c4 test(v3): add coverage wave 34 tests
+- ab81ad04 docs: S85 complete - session log updated
+- 03d71b1c docs: S85 complete - coverage 70.8%
+- 3989a5d8 test(forge-v3): wave33 — handleQueuePriority, handleQueueStatus, sort path, fleet aggregate
+- 703cc1bd test(v3): add coverage wave 32 tests
+- ee2d0628 test(forge-v3): wave31 — fleetAggregateHandler, handleQueueList, handleQueueDepth coverage
+- bbe6e280 test(forge-v3): wave30f — fix nil DB panics in agent/task handler tests
+- d0ce8ab7 test(v3): add coverage wave 30f tests
+- 86b7f2ca test(v3): coverage wave 30e — system health, fleet handlers, patrol metrics, validation
+- 0aa1093a test(v3): add coverage wave 30d tests + xnode updates
+- 38c80353 test(v3): add coverage wave 30c tests
+- 1b41f179 test(v3): coverage wave 30b — StopXNode + initXNodeContext (0% → 100%)
+- 3066babe refactor(v3): xnode.go updates
+- d50bb372 test(v3): lease test updates
+- aa1a8c9e refactor(v3): main.go and xnode.go updates
+- 34641943 test(v3): add coverage wave 29 tests + metrics updates
+- a5926185 test(v3): skip InitMetrics test to prevent goroutine leak
+- 63e56e84 test(v3): handlers_node_metrics test updates
+- 6f3a7cf7 test(v3): add coverage wave 28 tests + e2e updates
+- 1810f089 test(v3): add coverage wave 27 tests
+- 7af03d01 docs: start S85 - coverage 70.4%
+- de2d2860 test(v3): coverage wave 22 minimax test updates
+- ab0efe0f test(v3): add coverage wave 26 tests
+- 7179c136 test(v3): coverage wave 25c — tui_dashboard fetchData + Update
+- d61d6f95 docs: update PROMPT.md for S84c status
+- 7fd437ee test(v3): coverage wave 25 — fleet_scaler patrol functions
+- c794dd13 test(v3): add wave 24c and 25b coverage tests
+- ad5727d2 test(v3): coverage wave 24c — lease.go functions
+- b36d7ba9 fix(v3/tests): skip goroutine-leaking tests in wave22 minimax
+- 81e1237d test(v3): context test refinements
+- ceb10220 test(v3): context test updates
+- e67df01a fix(v3/tests): add missing cm.Stop() + db cleanup calls to prevent goroutine leaks
+- fb1f6b1e test(v3): coverage wave 21 test updates
+- 1ea71feb fix(v3): context.go updates + coverage wave 20 test improvements
+- 21bf2784 fix(v3): add State check to claim handler + wave 24b gitguard tests
+- 13f6a94a test(v3): coverage wave 24b — gitguard functions
+- e5a20d80 test(v3): add coverage wave 24 tests
+- 03a47818 docs: update PROMPT.md for S84b
+- 050d0318 docs: update session notes
+- d6c58893 docs: update session notes for S84
+- e1e2674e test(v3): coverage wave 23c — tui_dashboard helpers and model
+- 1969f823 refactor(v3): begin status/state merge - remove dual writes
+- 7793c7bf test(v3): coverage wave 23 — PatrolSystem Start/Stop/runPatrol
+- febe580d test(v3): coverage wave 23b — ForgeError methods (errors.go)
+- a80f26f0 test(v3): add coverage tests for ADR-038
+- 2bc2ca98 feat: workflow and xnode updates
+- 9166dba7 test(v3): add coverage wave 22 minimax tests
+- ade2448d test(v3): add coverage wave 22 tests
+- 9133fe06 test(v3): add coverage auth tests
+- 8f352584 test(v3): coverage wave 21 test updates
+- 176c4a93 test(v3): coverage wave 21 test enhancements
+- 88293038 test(v3): coverage wave 21 test updates
+- 57436f7e test(v3): coverage wave 21 test refinements
+- 7d9b2e9a test(v3): coverage wave 21 final — 68.4% total
+- 12df6a84 test(v3): coverage wave 21 test updates
+- fbc14545 test(v3): add coverage wave 21 tests
+- ec75e949 docs: update session notes for 2026-03-08
+- c1f92a37 test(v3): coverage wave 20 test updates
+- 48783d1d feat(v3): handlers_agent updates
+- 4a692d70 test(v3): coverage wave 20 test updates
+- 98d3c265 test(v3): coverage wave 20 test refinements
+- ccfdb4ab test(v3): coverage wave 20 test updates
+- 5495464a test(v3): coverage wave 20 test improvements
+- dd8ae61c test(v3): coverage wave 20 test enhancements
+- 94682939 test(v3): coverage wave 20 test refinements
+- 89ee12e0 test(v3): coverage wave 20 test updates
+- a99afaf5 test(v3): coverage wave 20 test improvements
+- a8a783cd test(v3): update coverage wave 20 tests
+- 355f305e test(v3): add coverage wave 20 tests
+- 4477cd92 test(v3): coverage wave 17 updates
+- c2d68523 fix(forge-cli): context_pct float unmarshal + dispatch backlog cleanup
+- 3d0bc0fc chore: update portfolio submodules
+- a35d63eb docs(adr): S82 session 2 — ADR-026 auth endpoints added, coverage 65.1%
+- 9856d692 docs: add S78 handoff docs and operator playbook
+- 6b6e44de merge(v3/s82): integrate coverage waves 16-18 + ADR-014 auth/lead-state endpoints
+- fdc66171 docs(adr): update INDEX.md — coverage 65.0% S82 target achieved
+- 871bf04b feat(v3/s82): coverage wave 16 + ADR-014 endpoints — 65.1% coverage achieved
+- 45cd4391 test(v3/coverage): wave 18 — reach 65.0% coverage (S82 target)
+- 6b67b63d fix(forge-v3): resolve handoff time scan + nil context in wave16/17 tests
+- b19edf4c docs(prompt): S82 handoff at 03:27 — coverage ~62.6%, 3 agents active
+- 76f5a83e feat(v3): wire handoff system + PWA dashboard handler in main
+- 64b669c7 fix(v3): nil stat panic + test correctness fixes (glm wave16)
+- d7ac480e test(v3): wave15 additions + migrate/utils coverage (glm wave16)
+- 71d48b3f fix(v3/tests): use UnixNano+PID for fsm_wiring temp DB names
+- 98b65fcb fix(v3/tests): use unique DB path with PID+nanoseconds for queue test
+- fdd71f9e fix(v3): trigger edge case + utility tests + patrol DB collision fix
+- d9148185 feat(v3): bidirectional status/state sync trigger + patrol coverage tests
+- 39ed8386 chore(merge): resolve event_store_test conflict — keep remote _Extended variant
+- d22a3a52 fix(v3): event_store test payload + pwa bridge nil guards + import fix
+- a5ae2c1c docs(adr): update ADR-034 status — kimi audit finds merge HIGH risk
+- ce73bd18 test(v3): add PWA bridge tests + handoffs test + lead_state migration
+- 61264c5f feat(v3): PWA bridge handlers + fleet summary migration (glm wave16)
+- a266e0d3 fix(v3/tests): fix event_store_test payload NOT NULL constraint
+- 3d9fc4bc docs(prompt): S82 state — coverage 62.6%, 3 agents dispatched
+- 8275ee70 feat(v3): add handoffs system + PWA messages handler + coverage wave15
+- 987c7469 test(v3): fix duplicate test name + add event store coverage tests
+- 74a53a84 docs(adr): update INDEX.md — S82 honest status, ADR-023 Tailscale fix noted
+- bf9f733a feat(v3): handoffs.go + migration 043 — agent session transition CRUD
+- d4956880 Merge remote-tracking branch 'origin/main'
+- 3eef9bed fix(tests): add Hub.Stop() to task update/delete test cleanup
+- dfe6a2f2 fix(v3): node auto-detect Tailscale IP + NODE_ID from hostname + fleet agent handlers
+- e1a4ad9f docs(handoff): S81 02:50 context clear — 62.5% coverage, glm wave 15 in progress
+- f2ad1e69 fix(v3/tests): hub.Stop() in 3 more test setup/teardown functions
+- 4817a0fd fix(v3/tests): add defer hub.Stop() to all WebSocket tests (goroutine leak)
+- 613b25b8 docs(adr): INDEX.md updates — coverage 62.5%, ADR-014 proxy catch-all, stale ref fix
+- fee30026 docs(claude): fix fleet-dispatch.md refs → dispatch-decision.md (file was renamed)
+- a0ca2ce4 fix(v3+cli): hardcoded path fix + daemon restart build-by-default
+- 7d8560eb fix(v3): generateID uniqueness + FORGE_ROOT node detection + ADR-038
+- 7adc125d docs(s81): CC bridge discovery — proxy already built in handlers_proxy.go
+- d97b5f83 docs(claude): codex audit fixes — add codex startup cmd, fix CLI_INVENTORY ref, forge env
+- 00e4b5cc docs(s81): update PROMPT.md — coverage 62.5%, fleet status, wave 15 dispatched
+- 39dd11a5 fix(v3/tests): resolve merge conflict in wave6 openclaw tests
+- 10868c8c fix(v3/tests): fix hanging SSE test + dead-code stub test failures
+- 94f80269 fix(test): fix SSE test hang — openclawEventsHandler GET enters infinite loop
+- 68e6d02d Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 7c215446 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- edf5db8a fix(v3): nodeID defaults to os.Hostname(), address uses Tailscale IP
+- 88cb6fd9 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- dc7a4f2e fix(v3): add WebSocketHub.Stop() to fix goroutine leak in tests
+- 63c9f137 fix(v3/xnode): replace hardcoded 'node-2' fallback + respect NODE_ADDR
+- 7d168503 chore: Sync submodule pointers
+- 444595af fix(bin): forge-node-join.sh - fix bash 3.2 compatibility
+- 2cfb4961 feat(infra): forge-node-join.sh — one command to connect any node
+- a90f1612 feat(cli): inject NODE_ID + FORGE_LEAD_URL into daemon from forge config
+- 10c40e4c fix(v3): restore priorityToInt in util_misc.go (broken by dead code cleanup)
+- 5f718ab0 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 4711cd50 fix(v3/tests): remove orphaned populate_tasks_test.go after dead code cleanup
+- 2a24df6f Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- fd4e3bbc docs(council): TC-S82 reality audit — 6 ADRs honestly partial, 3 P0 bugs identified
+- cf87dcad fix(v3/tests): remove duplicate test declarations across coverage wave files
+- 238f9460 feat(v3): wire FSM audit trail for task creation (ADR-028)
+- 0cb72b00 chore(v3): delete populate_tasks.go + populate_dispatches.go (dead code)
+- 974c8431 chore(submodules): advance portfolio submodule pointers to fleet agent commits
+- dd99bb8c feat(v3): ADR-014 Option C — CC reverse proxy + test dedup fixes
+- 80293bd7 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- ae8ec46d chore(git): ignore SQLite backup WAL files + test(v3): coverage wave 6 pattern handlers
+- 5b1eaf17 docs(dispatch): rename fleet-dispatch.md → dispatch-decision.md + expand
+- 04464003 docs(sessions): Add S81 session log
+- 3f040304 docs(s81): PROMPT.md — honest ADR audit, CC retirement gap, S81 priorities
+- 81944fc2 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 99e9a6d1 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- bebbfb04 docs(adr): honest S81 audit — ADR-014/026/036 downgraded to partial
+- 96770c52 chore: disable all GitHub Actions workflows (stop CI email flooding)
+- 74be1a96 docs(s81): PROMPT.md — S81 state, fleet dispatched, honest ADR status
+- 9cc07222 fix(infra): orchestrator-heartbeat.sh — remove set -e, fix coverage path
+- 949a5e18 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- b5327faf feat(infra): codex in AGENTS.md + qmd PATH fix + orchestrator heartbeat script
+- aeb3fbdd chore: Sync submodule pointers
+- 08ddfeb4 test(v3): coverage sprint S80 — 55.5% → 60.2%
+- 1d5e21de docs(s80): PROMPT.md — 60% coverage ACHIEVED (61.0%), iOS complete, S80 milestone
+- 196da252 fix(v3): add setupWave5 alias so wave10-14 tests compile + update BACKLOG/PLAN
+- 11b2a82d docs(s80): update PROMPT.md — S80 state, 55.1% coverage, iOS commits, all dispatches
+- cdc25ead merge: keep comprehensive coverage_wave5_test.go (local wins over remote shorter version)
+- 0cc5c053 chore(v3): apply node-2 merge — patrol updates, integration test cleanup, wave5 conflict resolved
+- b1a85a60 merge: integrate node-2 S80 work — token_budget tests, patrol updates, heartbeat endpoint
+- 291fade1 test(v3): coverage wave 14 — dispatch, pattern, agent, lane, fleet (+0.8pp → 60.1%)
+- 9e983596 test(v3): coverage wave 13 — completion, migrate, registry cleanup, hijack (+0.4pp → 59.3%)
+- eff63b6a test(v3): coverage wave 12 — quality gates, royal jelly, state sync, token budget, worktree (+0.5pp → 58.9%)
+- 9e0e037d test(v3): coverage wave 11 — contexts, ui, resume, xnode handlers (+0.3pp → 58.4%)
+- 8632186a test(v3): coverage wave 10 — queue/task handlers, agent telemetry (+0.6pp → 58.1%)
+- 7e036dc9 test(v3): coverage wave 9 — protocol validator, quality gates (+0.3pp → 57.5%)
+- c82995b8 test(v3): coverage wave 8 — plan/replan/extend-lease/queue/pause handlers, priorityToInt (+0.3pp → 57.2%)
+- b3289c6d test(v3): coverage wave 7 — output formatters, migrate, handler helpers, patrol setters, gitguard (+0.9pp → 56.9%)
+- 16ab1da9 test(v3): coverage wave 6 — lease, context, metrics, handler tests (+0.7pp → 56%)
+- 4a0e78c2 feat(s80): fleet agent results — registry tests + handler/output tests + adr index S80
+- a5485740 feat(ios): Mosh relay bridge + SFTP pubkey auth + SSH agent forwarding
+- 86a07b8d test(v3): coverage wave 5 — 54.4% → 55.1% (+0.7pp)
+- 52ff7ddb test(v3): add token budget tests
+- aee9dc2b chore: cleanup council markers and sync submodules
+- 6ca5f59a feat(forge): add heartbeat endpoint and wiring
+- 3cf720ec chore: Sync submodules + council markers
+- ed843d8b docs(v3): add query param documentation for patrolExecutionsHandler
+- 13d4868f feat(v3): add task title quality gate to createTaskHandler
+- 6c8f1aac test(v3): coverage waves 5a+5b — gitguard_idempotency + pattern handlers (54.3% → 55.3%)
+- 746821ab test(v3): add TestResultIngestPatrol + TestDailyDigestPatrol
+- cec90f3a feat(v3+cli): forge status standup + result-ingest + daily-digest patrols (S79)
+- bbc58c0f docs: update PROMPT.md to S79 — coverage 54.4%, all 21 ADRs ✅, human gates
+- 7e77cfc5 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 3c3feb29 test(v3): coverage waves 3+4 — 46.3% → 54.4% (+8.1pp)
+- f18f4c1b docs(s78d): update PROMPT.md + lead-context.md to S78d state
+- 16875084 feat(v3/fleet): nPatrol soft-fail + agent/task metrics + fleet-autostart.sh
+- 0132171a Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 702d5d87 refactor(v3): remove dead MsgPong application-level handler (council approved)
+- 8c2713a5 docs(adr): S79 INDEX update — ADR-027 ✅, forge PATH fixed, CC not running
+- 8baacbdc docs(adr): merge S78d+S79 INDEX — ADR-027 ✅, coverage 52.2%, 26 patrols
+- d9617506 docs(adr): ADR-027 → ✅ + delete orphaned dispatch-decision module
+- ce587211 docs: Add ADR-036 implementation plan with delegation strategy
+- ea90d231 docs(forge): S79 royal jelly — ADR-027 complete, fleet dispatched, coverage 52.6%
+- 7c014fd7 feat(v3): ADR-027 — cross-node fleet aggregate endpoint (GET /api/fleet/aggregate)
+- c0785ece docs(adr): S78d — ADR-027 ✅, coverage 52.2%, syncRoyalJelly schema fix
+- 8aa647a3 fix(forge): work --daemon claims requested tasks

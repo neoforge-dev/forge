@@ -61,11 +61,12 @@ Examples:
 		Short: "Dispatch to best agent by task type",
 		Long: `Smart agent selection by task type. Reads agent list from daemon and sends dispatch.
 
-Task type routing: coverage|test→kimi*, research|audit|analysis→gemini*, refactor|multi-file|feature→codex*,
-docs|content|runbook→minimax*, edit|format|quick→glm*, plan|recommend→pi*. Default: first available.`,
+Task type routing: coverage|test→kimi*, research|audit|analysis|plan→gemini*, refactor|multi-file|feature→claude,
+docs|content|runbook→minimax*, implementation|scaffold→glm*, edit|format|quick|triage→pi*. Default: first available.`,
 		RunE: runDispatchAuto,
 	}
 	autoCmd.Flags().String("task-type", "", "Task type hint for agent selection (coverage, research, refactor, docs, edit, plan, etc.)")
+	autoCmd.Flags().String("domain", "", "Domain name for portfolio-stage-aware routing (reads portfolio-state.yaml)")
 
 	statusCmd := &cobra.Command{
 		Use:   "status",
@@ -93,11 +94,48 @@ Moves files to .forge/dispatches/archive/ directory.`,
 	}
 	cleanCmd.Flags().Bool("dry-run", false, "Show what would be archived without moving files")
 
+	checkResultsCmd := &cobra.Command{
+		Use:   "check-results",
+		Short: "Quality-gate result files: flag empty, tiny, or structure-missing files",
+		Long: `Scan .forge/heartbeat/results/ and flag files that fail quality checks:
+  - Too small (below --min-bytes, default 100)
+  - Missing status indicator (## Status:, Status:, ✅, ❌, COMPLETE, BLOCKED, FAILED)
+  - Exits with code 1 if any files fail (useful in CI / patrol)
+
+Examples:
+  forge dispatch check-results
+  forge dispatch check-results --min-bytes 50
+  forge dispatch check-results --since 2h`,
+		RunE: runDispatchCheckResults,
+	}
+	checkResultsCmd.Flags().Int("min-bytes", 100, "Minimum file size in bytes")
+	checkResultsCmd.Flags().Duration("since", 0, "Only check files newer than this duration (e.g. 2h, 30m)")
+
+	reassignCmd := &cobra.Command{
+		Use:   "reassign-stale",
+		Short: "Re-dispatch tasks whose dispatch files have no result after the timeout",
+		Long: `Find .forge/dispatches/*.md files older than --timeout with no result file,
+then re-dispatch each to a new agent via 'forge dispatch auto'.
+Archives the old dispatch file after reassignment.
+
+Use --dry-run to see what would be reassigned without making changes.
+
+Examples:
+  forge dispatch reassign-stale
+  forge dispatch reassign-stale --timeout 1h
+  forge dispatch reassign-stale --dry-run`,
+		RunE: runDispatchReassignStale,
+	}
+	reassignCmd.Flags().Duration("timeout", 2*time.Hour, "Reassign dispatches with no result after this duration")
+	reassignCmd.Flags().Bool("dry-run", false, "Show what would be reassigned without making changes")
+
 	dispatch.AddCommand(sendCmd)
 	dispatch.AddCommand(autoCmd)
 	dispatch.AddCommand(statusCmd)
 	dispatch.AddCommand(showCmd)
 	dispatch.AddCommand(cleanCmd)
+	dispatch.AddCommand(checkResultsCmd)
+	dispatch.AddCommand(reassignCmd)
 	return dispatch
 }
 
@@ -106,19 +144,77 @@ func taskTypeToAgentPrefix(taskType string) string {
 	switch strings.ToLower(strings.TrimSpace(taskType)) {
 	case "coverage", "test":
 		return "kimi"
-	case "research", "audit", "analysis":
+	case "research", "audit", "analysis", "plan":
 		return "gemini"
 	case "refactor", "multi-file", "feature":
-		return "codex"
+		return "claude"
 	case "docs", "content", "runbook":
 		return "minimax"
-	case "edit", "format", "quick":
+	case "edit", "format", "quick", "triage":
+		return "pi"
+	case "implementation", "scaffold":
 		return "glm"
-	case "plan", "recommend":
+	case "recommend":
 		return "pi"
 	default:
 		return ""
 	}
+}
+
+// lookupPortfolioStage reads portfolio-state.yaml and returns the stage for the
+// given domain. Returns "" if domain is empty, file is missing, or domain not found.
+func lookupPortfolioStage(domain string) string {
+	if domain == "" {
+		return ""
+	}
+	root := os.Getenv("FORGE_ROOT")
+	if root == "" {
+		root = "."
+	}
+	data, err := os.ReadFile(filepath.Join(root, "config", "portfolio", "portfolio-state.yaml"))
+	if err != nil {
+		return ""
+	}
+	// Simple YAML scan for portfolio-state.yaml list format:
+	//   products:
+	//     - key: "voice-coach"
+	//       stage: "deploy"
+	// Find a line containing `key: "domain"` or `key: domain`, then grab the
+	// next `stage:` line in the same list item.
+	lines := strings.Split(string(data), "\n")
+	inEntry := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Detect entry start: `- key: "voice-coach"` or `key: voice-coach`
+		keyLine := trimmed
+		if strings.HasPrefix(keyLine, "- ") {
+			keyLine = strings.TrimSpace(strings.TrimPrefix(keyLine, "- "))
+		}
+		if strings.HasPrefix(keyLine, "key:") {
+			val := strings.TrimSpace(strings.TrimPrefix(keyLine, "key:"))
+			val = strings.Trim(val, "\"'")
+			if val == domain {
+				inEntry = true
+				continue
+			}
+			// Different key — exit any previous entry
+			inEntry = false
+			continue
+		}
+		if inEntry {
+			if strings.HasPrefix(trimmed, "stage:") {
+				parts := strings.SplitN(trimmed, ":", 2)
+				if len(parts) == 2 {
+					return strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+				}
+			}
+			// New list item (starts with "- ") → exit entry
+			if strings.HasPrefix(trimmed, "- ") {
+				inEntry = false
+			}
+		}
+	}
+	return ""
 }
 
 // parseAgentID normalizes "forge:kimi" or "kimi" to "kimi".
@@ -328,7 +424,11 @@ func runDispatchAuto(cmd *cobra.Command, args []string) error {
 	}
 	message := strings.Join(args, " ")
 	taskType, _ := cmd.Flags().GetString("task-type")
+	domain, _ := cmd.Flags().GetString("domain")
 	tmuxSession := "forge"
+
+	// Look up portfolio stage for the given domain (for stage-aware routing).
+	portfolioStage := lookupPortfolioStage(domain)
 
 	client := internal.NewClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -342,20 +442,66 @@ func runDispatchAuto(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no agents available (daemon returned empty list)")
 	}
 
-	prefix := taskTypeToAgentPrefix(taskType)
+	// Try YAML-backed routing engine first (POST /api/routing/resolve).
+	// Falls back to legacy prefix matching if endpoint is unavailable.
 	var agentID string
-	if prefix != "" {
-		for _, a := range agentList.Agents {
-			// Prefer online/idle; accept any status so we have a fallback
-			if strings.HasPrefix(strings.ToLower(a.ID), prefix) {
-				agentID = a.ID
-				break
+	var routingReason string
+	var requiredTier string
+	if routeResp, routeErr := client.Post(ctx, "/api/routing/resolve", map[string]interface{}{
+		"task_type":        taskType,
+		"weight":           "light",
+		"forbidden_nodes":  []string{},
+		"portfolio_stage":  portfolioStage,
+	}); routeErr == nil && routeResp != nil {
+		defer routeResp.Body.Close()
+		if routeResp.StatusCode == http.StatusOK {
+			var resolved struct {
+				Agent        string `json:"agent"`
+				Node         string `json:"node"`
+				Reason       string `json:"reason"`
+				RequiredTier string `json:"required_tier"`
+			}
+			if json.NewDecoder(routeResp.Body).Decode(&resolved) == nil && resolved.Agent != "" {
+				// Verify the resolved agent is in the live agent list.
+				for _, a := range agentList.Agents {
+					if strings.EqualFold(a.ID, resolved.Agent) || strings.HasPrefix(strings.ToLower(a.ID), strings.ToLower(resolved.Agent)) {
+						agentID = a.ID
+						routingReason = resolved.Reason
+						requiredTier = resolved.RequiredTier
+						break
+					}
+				}
+			}
+		}
+	}
+	if agentID == "" {
+		// Legacy fallback: prefix match from CLAUDE.md capability table.
+		prefix := taskTypeToAgentPrefix(taskType)
+		if prefix != "" {
+			for _, a := range agentList.Agents {
+				if strings.HasPrefix(strings.ToLower(a.ID), prefix) {
+					agentID = a.ID
+					break
+				}
 			}
 		}
 	}
 	if agentID == "" {
 		agentID = agentList.Agents[0].ID
 	}
+
+	// Stage gate: deploy-stage domains require human notification before dispatch.
+	out := io.Writer(os.Stdout)
+	if root := cmd.Root(); root != nil {
+		out = root.OutOrStdout()
+	}
+	if requiredTier == "phone" {
+		fmt.Fprintf(out, "[GATE] domain=%s stage=deploy requires human approval (tier=phone)\n", domain)
+		fmt.Fprintf(out, "       Review and approve via: forge approval list\n")
+		fmt.Fprintf(out, "       Routing: agent=%s reason=%s\n", agentID, routingReason)
+		fmt.Fprintf(out, "       Proceeding with dispatch — create approval record after task creation.\n")
+	}
+	_ = routingReason
 
 	subject := message
 	if len(subject) > 200 {
@@ -383,10 +529,6 @@ func runDispatchAuto(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "[warn] tmux notify failed: %v\n", err)
 	}
 
-	out := io.Writer(os.Stdout)
-	if root := cmd.Root(); root != nil {
-		out = root.OutOrStdout()
-	}
 	format, _ := cmd.Flags().GetString("format")
 	formatter := internal.NewFormatter(format, out)
 	if format == "json" {
@@ -408,6 +550,103 @@ type dispatchStatusRow struct {
 	Message string
 	Status  string
 	Sent    time.Time
+}
+
+// pendingDispatchRow is one row from the .forge/dispatches/ directory scan.
+type pendingDispatchRow struct {
+	File      string
+	Agent     string
+	TaskID    string
+	Age       time.Duration
+	HasResult bool
+}
+
+// parseDispatchFilename extracts agent and taskID from a dispatch filename (no extension).
+// Strips trailing -YYYY-MM-DD date suffix when present.
+func parseDispatchFilename(base string) (agent, taskID string) {
+	// Strip -YYYY-MM-DD (11 chars: dash + 10-char date)
+	if len(base) > 11 {
+		suffix := base[len(base)-11:]
+		if suffix[0] == '-' {
+			datelike := true
+			for i, c := range []byte(suffix[1:]) {
+				if i == 4 || i == 7 {
+					if c != '-' {
+						datelike = false
+						break
+					}
+				} else if c < '0' || c > '9' {
+					datelike = false
+					break
+				}
+			}
+			if datelike {
+				base = base[:len(base)-11]
+			}
+		}
+	}
+	parts := strings.SplitN(base, "-", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return base, ""
+}
+
+// readPendingDispatches scans .forge/dispatches/ for *.md files and checks if a
+// corresponding result file exists in .forge/heartbeat/results/.
+func readPendingDispatches(forgeRoot string) ([]pendingDispatchRow, error) {
+	dispDir := filepath.Join(forgeRoot, ".forge", "dispatches")
+	resultsDir := filepath.Join(forgeRoot, ".forge", "heartbeat", "results")
+
+	entries, err := os.ReadDir(dispDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	skipDirs := map[string]bool{
+		"archive": true, "idle": true,
+		"batch1": true, "batch2": true,
+		"v3-implementation": true, "v3-phase1-implementation": true,
+	}
+
+	now := time.Now()
+	var rows []pendingDispatchRow
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		if skipDirs[e.Name()] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+
+		base := strings.TrimSuffix(e.Name(), ".md")
+		agent, taskID := parseDispatchFilename(base)
+
+		// Check for result file: AGENT-TASKID.md in results dir.
+		hasResult := false
+		if taskID != "" {
+			resultName := agent + "-" + taskID + ".md"
+			if _, serr := os.Stat(filepath.Join(resultsDir, resultName)); serr == nil {
+				hasResult = true
+			}
+		}
+
+		rows = append(rows, pendingDispatchRow{
+			File:      e.Name(),
+			Agent:     agent,
+			TaskID:    taskID,
+			Age:       now.Sub(info.ModTime()),
+			HasResult: hasResult,
+		})
+	}
+	return rows, nil
 }
 
 func runDispatchStatus(cmd *cobra.Command, args []string) error {
@@ -541,7 +780,60 @@ func runDispatchStatus(cmd *cobra.Command, args []string) error {
 		sentStr := formatRelativeTime(r.Sent)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.Agent, r.TaskID, msg, r.Status, sentStr)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	// Dispatch files section: .forge/dispatches/*.md with result status.
+	dispFiles, err := readPendingDispatches(forgeRoot)
+	if err != nil {
+		fmt.Fprintf(out, "\n[dispatch files] error reading dispatches: %v\n", err)
+		return nil
+	}
+	if agentFilter != "" {
+		var filtered []pendingDispatchRow
+		for _, r := range dispFiles {
+			if strings.EqualFold(r.Agent, agentFilter) {
+				filtered = append(filtered, r)
+			}
+		}
+		dispFiles = filtered
+	}
+
+	fmt.Fprintf(out, "\nDISPATCH FILES (%d)\n", len(dispFiles))
+	if len(dispFiles) == 0 {
+		fmt.Fprintln(out, "  (none)")
+	} else {
+		const timeoutThreshold = 2 * time.Hour
+		dw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(dw, "FILE\tAGENT\tTASK-ID\tAGE\tRESULT")
+		for _, r := range dispFiles {
+			resultStr := "✗ pending"
+			if r.HasResult {
+				resultStr = "✓ done"
+			} else if r.Age > timeoutThreshold {
+				resultStr = "⚠ TIMEOUT"
+			}
+			fmt.Fprintf(dw, "%s\t%s\t%s\t%s\t%s\n",
+				r.File, r.Agent, r.TaskID, formatDuration(r.Age), resultStr)
+		}
+		_ = dw.Flush()
+	}
+	return nil
+}
+
+// formatDuration formats a duration as a human-readable age string.
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
 
 func formatRelativeTime(t time.Time) string {
@@ -577,6 +869,111 @@ func runDispatchShow(cmd *cobra.Command, args []string) error {
 	}
 	formatter := internal.NewFormatter(format, out)
 	return formatter.FormatTask(task)
+}
+
+// resultQualityIssue describes one quality problem found in a result file.
+type resultQualityIssue struct {
+	File   string
+	Reason string
+}
+
+// statusIndicators are patterns that indicate a well-formed result file.
+var statusIndicators = []string{
+	"## Status", "Status:", "COMPLETE", "BLOCKED", "FAILED",
+	"✅", "❌", "## Summary", "## Deliverables",
+	"Generated:", "## Tasks", "## Digest", "# FORGE",
+}
+
+// checkResultFile returns a non-empty reason string if the file fails quality checks.
+func checkResultFile(path string, minBytes int) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "unreadable"
+	}
+	if info.Size() < int64(minBytes) {
+		return fmt.Sprintf("too small (%d bytes < %d)", info.Size(), minBytes)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "unreadable"
+	}
+	content := string(data)
+	for _, indicator := range statusIndicators {
+		if strings.Contains(content, indicator) {
+			return "" // passes
+		}
+	}
+	return "missing status indicator (## Status / COMPLETE / BLOCKED / FAILED / ✅ / ❌)"
+}
+
+func runDispatchCheckResults(cmd *cobra.Command, args []string) error {
+	minBytes, _ := cmd.Flags().GetInt("min-bytes")
+	since, _ := cmd.Flags().GetDuration("since")
+
+	forgeRoot := os.Getenv("FORGE_ROOT")
+	if forgeRoot == "" {
+		forgeRoot = "."
+	}
+	resultsDir := filepath.Join(forgeRoot, ".forge", "heartbeat", "results")
+
+	entries, err := os.ReadDir(resultsDir)
+	if os.IsNotExist(err) {
+		fmt.Fprintln(os.Stdout, "No results directory found — nothing to check.")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read results dir: %w", err)
+	}
+
+	var cutoff time.Time
+	if since > 0 {
+		cutoff = time.Now().Add(-since)
+	}
+
+	out := io.Writer(os.Stdout)
+	if root := cmd.Root(); root != nil {
+		out = root.OutOrStdout()
+	}
+
+	var issues []resultQualityIssue
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		fpath := filepath.Join(resultsDir, e.Name())
+		if since > 0 {
+			info, err := e.Info()
+			if err != nil || !info.ModTime().After(cutoff) {
+				continue
+			}
+		}
+		checked++
+		if reason := checkResultFile(fpath, minBytes); reason != "" {
+			issues = append(issues, resultQualityIssue{File: e.Name(), Reason: reason})
+		}
+	}
+
+	fmt.Fprintf(out, "Checked %d result file(s)", checked)
+	if since > 0 {
+		fmt.Fprintf(out, " (last %s)", since)
+	}
+	fmt.Fprintln(out)
+
+	if len(issues) == 0 {
+		fmt.Fprintln(out, "✅ All files pass quality checks.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "FILE\tISSUE")
+	for _, iss := range issues {
+		fmt.Fprintf(w, "%s\t%s\n", iss.File, iss.Reason)
+	}
+	_ = w.Flush()
+	fmt.Fprintf(out, "\n❌ %d file(s) failed quality checks.\n", len(issues))
+	return fmt.Errorf("%d result file(s) failed quality checks", len(issues))
 }
 
 func runDispatchClean(cmd *cobra.Command, args []string) error {
@@ -735,4 +1132,93 @@ func runDispatchClean(cmd *cobra.Command, args []string) error {
 		formatter.Printf("  (dry-run - no files moved)\n")
 	}
 	return nil
+}
+
+func runDispatchReassignStale(cmd *cobra.Command, args []string) error {
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	forgeRoot := os.Getenv("FORGE_ROOT")
+	if forgeRoot == "" {
+		forgeRoot = "."
+	}
+
+	// Read pending dispatch files.
+	dispFiles, err := readPendingDispatches(forgeRoot)
+	if err != nil {
+		return fmt.Errorf("read dispatches: %w", err)
+	}
+
+	archiveDir := filepath.Join(forgeRoot, ".forge", "dispatches", "archive")
+
+	out := io.Writer(os.Stdout)
+	if root := cmd.Root(); root != nil {
+		out = root.OutOrStdout()
+	}
+
+	reassigned := 0
+	for _, r := range dispFiles {
+		if r.HasResult || r.Age <= timeout {
+			continue
+		}
+
+		dispPath := filepath.Join(forgeRoot, ".forge", "dispatches", r.File)
+		msgBytes, err := os.ReadFile(dispPath)
+		if err != nil {
+			fmt.Fprintf(out, "  skip %s: cannot read (%v)\n", r.File, err)
+			continue
+		}
+		// Extract first non-empty line as the re-dispatch message.
+		msg := extractFirstLine(string(msgBytes))
+		if msg == "" {
+			msg = fmt.Sprintf("Re-dispatch: %s (timed out after %s)", r.File, formatDuration(r.Age))
+		}
+
+		fmt.Fprintf(out, "  reassign: %s (agent=%s, age=%s)\n", r.File, r.Agent, formatDuration(r.Age))
+		fmt.Fprintf(out, "    message: %s\n", msg)
+
+		if !dryRun {
+			// Re-dispatch to best agent (excluding the original timed-out agent).
+			reCmd := exec.Command("forge", "dispatch", "auto", msg)
+			reCmd.Stdout = out
+			reCmd.Stderr = os.Stderr
+			if rerr := reCmd.Run(); rerr != nil {
+				fmt.Fprintf(out, "    ⚠ redispatch failed: %v\n", rerr)
+				continue
+			}
+
+			// Archive old dispatch file.
+			if merr := os.MkdirAll(archiveDir, 0o755); merr == nil {
+				dest := filepath.Join(archiveDir, r.File)
+				_ = os.Rename(dispPath, dest)
+			}
+		}
+		reassigned++
+	}
+
+	if reassigned == 0 {
+		fmt.Fprintln(out, "No stale dispatches found.")
+	} else {
+		if dryRun {
+			fmt.Fprintf(out, "\n%d stale dispatch(es) found (dry-run — no changes made).\n", reassigned)
+		} else {
+			fmt.Fprintf(out, "\n%d dispatch(es) reassigned.\n", reassigned)
+		}
+	}
+	return nil
+}
+
+// extractFirstLine returns the first non-empty, non-comment line from text.
+func extractFirstLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "---") {
+			// Truncate to reasonable message length.
+			if len(line) > 120 {
+				line = line[:117] + "..."
+			}
+			return line
+		}
+	}
+	return ""
 }

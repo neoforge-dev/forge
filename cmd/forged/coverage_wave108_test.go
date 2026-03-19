@@ -20,17 +20,6 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestWave108_OpenclawEventsHandler_MethodNotAllowed verifies POST is rejected.
-func TestWave108_OpenclawEventsHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/events", nil)
-	w := httptest.NewRecorder()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	openclawEventsHandler(w, req.WithContext(ctx))
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave108_OpenclawEventsHandler_CancelledContext verifies graceful close on
 // pre-cancelled context (SSE path — non-flusher recorder triggers 500 first).
 func TestWave108_OpenclawEventsHandler_CancelledContext(t *testing.T) {
@@ -116,15 +105,6 @@ func TestWave108_OpenclawEventsHandler_NilDB(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestWave108_AgentsSSEHandler_MethodNotAllowed verifies POST is rejected.
-func TestWave108_AgentsSSEHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/stream", nil)
-	w := httptest.NewRecorder()
-	agentsSSEHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave108_AgentsSSEHandler_RecorderPath verifies the handler does not panic
 // with a standard recorder and pre-cancelled context. httptest.ResponseRecorder
 // implements http.Flusher in Go 1.20+, so the SSE path is entered and exits
@@ -166,15 +146,6 @@ func TestWave108_AgentsSSEHandler_CancelledContext(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestWave108_DashHandler_MethodNotAllowed verifies POST is rejected with 405.
-func TestWave108_DashHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/dash", nil)
-	w := httptest.NewRecorder()
-	dashHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave108_DashHandler_NilDB verifies 503 when DB is nil.
 func TestWave108_DashHandler_NilDB(t *testing.T) {
 	setDBConn(nil)

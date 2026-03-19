@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -25,7 +24,7 @@ func TestWave87_NewContextSync_ConstructAndStop(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
@@ -46,7 +45,7 @@ func TestWave87_SyncEnvelopesToFilesystem_WithEnvelopes(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
@@ -91,7 +90,7 @@ func TestWave87_SyncEnvelopesToFilesystem_EmptyDB(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
@@ -113,7 +112,7 @@ func TestWave87_SyncDomainToFilesystem_NoRows(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
@@ -131,7 +130,7 @@ func TestWave87_SyncDomainToFilesystem_WithEnvelope(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
@@ -342,37 +341,18 @@ func TestWave87_FleetAutoExecutePatrol_NoPendingRecs(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// patrol.go: fleetScaleRecommend — 67.6%
-// Exercise queue depth threshold check at > 10 tasks.
-// ---------------------------------------------------------------------------
+// fleetScaleRecommend deleted (f715a295) — test replaced with fleetScaleRecommendPatrol.
 
-func TestWave87_FleetScaleRecommend_OverThreshold(t *testing.T) {
+func TestWave87_FleetScaleRecommendPatrol_OverThreshold(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
 	db := getDBConn()
 	ctx := context.Background()
 
-	tmpDir := t.TempDir()
-	resultsDir := filepath.Join(tmpDir, ".forge", "heartbeat", "results")
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
-	prevRoot := os.Getenv("FORGE_ROOT")
-	os.Setenv("FORGE_ROOT", tmpDir)
-	defer func() {
-		if prevRoot == "" {
-			os.Unsetenv("FORGE_ROOT")
-		} else {
-			os.Setenv("FORGE_ROOT", prevRoot)
-		}
-	}()
-
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Insert many requested tasks (uses 'requested' status, which also counts)
+	// Insert many requested tasks to trigger scale-up logic
 	for i := 0; i < 15; i++ {
 		_, _ = db.Exec(`INSERT INTO tasks
 			(id, domain, project, type, priority, status, state, title, created_at, updated_at)
@@ -381,9 +361,9 @@ func TestWave87_FleetScaleRecommend_OverThreshold(t *testing.T) {
 			5, "requested", "QUEUED", "Requested Task", now, now)
 	}
 
-	err := fleetScaleRecommend(ctx, db)
+	err := fleetScaleRecommendPatrol(ctx, db)
 	if err != nil {
-		t.Logf("fleetScaleRecommend over threshold: %v", err)
+		t.Logf("fleetScaleRecommendPatrol over threshold: %v", err)
 	}
 }
 
@@ -398,7 +378,7 @@ func TestWave87_CheckContextThreshold_WithRoyalJelly(t *testing.T) {
 
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	// Insert agents at >= 50% context
 	now := time.Now().UTC().Format(time.RFC3339)

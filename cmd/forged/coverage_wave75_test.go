@@ -815,19 +815,6 @@ func TestW75_UiFleetHandler_WithData(t *testing.T) {
 }
 
 // TestW75_UiFleetHandler_MethodNotAllowed tests uiFleetHandler with POST.
-func TestW75_UiFleetHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/ui", nil)
-	rr := httptest.NewRecorder()
-	uiFleetHandler(rr, req)
-
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("uiFleetHandler POST: expected 405, got %d", rr.Code)
-	}
-}
-
 // TestW75_UiFleetHandler_WithPatrols tests with patrol execution data.
 func TestW75_UiFleetHandler_WithPatrols(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
@@ -1092,19 +1079,6 @@ func TestW75_GetTaskStoreForCLI_WithDB(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestW75_OpenclawEventsHandler_MethodNotAllowed tests that POST returns 405.
-func TestW75_OpenclawEventsHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/events", nil)
-	rr := httptest.NewRecorder()
-	openclawEventsHandler(rr, req)
-
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("openclawEventsHandler POST: expected 405, got %d", rr.Code)
-	}
-}
-
 // TestW75_OpenclawEventsHandler_ContextCancel tests that the SSE handler
 // exits when the request context is cancelled.
 func TestW75_OpenclawEventsHandler_ContextCancel(t *testing.T) {
@@ -1271,19 +1245,6 @@ func TestW75_AgentTelemetrySummaryHandler_Basic(t *testing.T) {
 }
 
 // TestW75_AgentTelemetrySummaryHandler_MethodNotAllowed tests POST.
-func TestW75_AgentTelemetrySummaryHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/telemetry/summary", nil)
-	rr := httptest.NewRecorder()
-	agentTelemetrySummaryHandler(rr, req)
-
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("agentTelemetrySummaryHandler POST: expected 405, got %d", rr.Code)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // handler_helpers.go: writeJSON — test normal path via a handler
 // ---------------------------------------------------------------------------

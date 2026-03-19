@@ -182,22 +182,6 @@ func TestWave64_HandleApprovalCount_GET(t *testing.T) {
 	}
 }
 
-func TestWave64_HandleApprovalCount_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	svc := NewApprovalService(NewApprovalStore(db))
-	h := NewApprovalHandler(svc)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/approvals/count", nil)
-	w := httptest.NewRecorder()
-	h.handleApprovalCount(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("handleApprovalCount POST: expected 405, got %d", w.Code)
-	}
-}
-
 // ─── createApproval handler ───────────────────────────────────────────────────
 
 func TestWave64_CreateApproval_InvalidJSON(t *testing.T) {
@@ -262,22 +246,6 @@ func TestWave64_CreateApproval_MissingTaskID(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "task_id") {
 		t.Logf("body: %s", w.Body.String())
-	}
-}
-
-func TestWave64_HandleApprovals_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	svc := NewApprovalService(NewApprovalStore(db))
-	h := NewApprovalHandler(svc)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/approvals", nil)
-	w := httptest.NewRecorder()
-	h.handleApprovals(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("handleApprovals DELETE: expected 405, got %d", w.Code)
 	}
 }
 

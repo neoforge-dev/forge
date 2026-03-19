@@ -8,8 +8,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// patrolRunHandler handles POST /api/patrols/{id}/run — run a patrol once ("Run Now" from UI).
+func patrolRunHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/patrols/")
+	path = strings.Trim(path, "/")
+	if path == "" || !strings.HasSuffix(path, "/run") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	patrolID := strings.TrimSuffix(path, "/run")
+	patrolID = strings.Trim(patrolID, "/")
+	if patrolID == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if globalPatrolSystem == nil {
+		http.Error(w, "patrol system unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !globalPatrolSystem.RunPatrolByID(patrolID) {
+		http.Error(w, "patrol not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "patrol_id": patrolID})
+}
 
 // patrolEntry is the public shape returned by GET /api/patrols.
 type patrolEntry struct {
@@ -461,8 +493,21 @@ func patrolExecutionsHandler(w http.ResponseWriter, r *http.Request) {
 		if completedAt.Valid {
 			e.CompletedAt = &completedAt.String
 			// Calculate duration in ms
-			if start, err1 := time.Parse("2006-01-02 15:04:05", e.StartedAt); err1 == nil {
-				if end, err2 := time.Parse("2006-01-02 15:04:05", completedAt.String); err2 == nil {
+			parseTime := func(s string) (time.Time, error) {
+				t, err := time.Parse("2006-01-02 15:04:05", s)
+				if err == nil {
+					return t, nil
+				}
+				// Try RFC3339
+				if t, err := time.Parse(time.RFC3339, s); err == nil {
+					return t, nil
+				}
+				// Try SQLite compact format if needed
+				return time.Parse("2006-01-02T15:04:05", s)
+			}
+
+			if start, err1 := parseTime(e.StartedAt); err1 == nil {
+				if end, err2 := parseTime(completedAt.String); err2 == nil {
 					dur := end.Sub(start).Milliseconds()
 					e.DurationMs = &dur
 				}
@@ -528,8 +573,21 @@ func dashHandler(w http.ResponseWriter, r *http.Request) {
 		if completedAt.Valid {
 			e.CompletedAt = &completedAt.String
 			// Calculate duration in ms
-			if start, err1 := time.Parse("2006-01-02 15:04:05", e.StartedAt); err1 == nil {
-				if end, err2 := time.Parse("2006-01-02 15:04:05", completedAt.String); err2 == nil {
+			parseTime := func(s string) (time.Time, error) {
+				t, err := time.Parse("2006-01-02 15:04:05", s)
+				if err == nil {
+					return t, nil
+				}
+				// Try RFC3339
+				if t, err := time.Parse(time.RFC3339, s); err == nil {
+					return t, nil
+				}
+				// Try SQLite compact format if needed
+				return time.Parse("2006-01-02T15:04:05", s)
+			}
+
+			if start, err1 := parseTime(e.StartedAt); err1 == nil {
+				if end, err2 := parseTime(completedAt.String); err2 == nil {
 					dur := end.Sub(start).Milliseconds()
 					e.DurationMs = &dur
 				}

@@ -14,18 +14,7 @@ import (
 )
 
 // --- handlers_tui.go: planTaskHandler, replanTaskHandler ---
-
-func TestPlanTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-001/plan", nil)
-	w := httptest.NewRecorder()
-	planTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
+// Note: TestPlanTaskHandler_MethodNotAllowed moved to handler_method_validation_test.go
 
 func TestPlanTaskHandler_BadJSON(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -53,17 +42,7 @@ func TestPlanTaskHandler_EmptyTaskID(t *testing.T) {
 	}
 }
 
-func TestReplanTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-001/replan", nil)
-	w := httptest.NewRecorder()
-	replanTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
+// Note: TestReplanTaskHandler_MethodNotAllowed moved to handler_method_validation_test.go
 
 func TestReplanTaskHandler_BadJSON(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -92,18 +71,7 @@ func TestExtendLeaseHandler_BadJSON(t *testing.T) {
 }
 
 // --- handlers_plan.go: queueTaskHandler, pauseTaskHandler ---
-
-func TestQueueTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-001/queue", nil)
-	w := httptest.NewRecorder()
-	queueTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
+// Note: TestQueueTaskHandler_MethodNotAllowed moved to handler_method_validation_test.go
 
 func TestQueueTaskHandler_TaskNotFound(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -117,28 +85,7 @@ func TestQueueTaskHandler_TaskNotFound(t *testing.T) {
 	}
 }
 
-func TestPauseTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-001/pause", nil)
-	w := httptest.NewRecorder()
-	pauseTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
+// Note: TestPauseTaskHandler_MethodNotAllowed moved to handler_method_validation_test.go
 
 // --- handlers_dispatch.go: configHandler ---
-
-func TestConfigHandler_Delete_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/config", nil)
-	w := httptest.NewRecorder()
-	configHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("configHandler DELETE: expected 405, got %d", w.Code)
-	}
-}
+// Note: TestConfigHandler_Delete_MethodNotAllowed moved to handler_method_validation_test.go

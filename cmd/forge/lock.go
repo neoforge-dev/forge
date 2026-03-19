@@ -242,6 +242,7 @@ Examples:
 }
 
 func init() {
+	lockCmd.Hidden = true
 	lockCmd.AddCommand(lockAcquireCmd)
 	lockCmd.AddCommand(lockReleaseCmd)
 	lockCmd.AddCommand(lockStatusCmd)

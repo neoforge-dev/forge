@@ -34,10 +34,10 @@ Commands:
 
 // leadForwardPayload is the wire body for POST /api/xnode/forward.
 type leadForwardPayload struct {
-	ToNode  string `json:"to_node"`
-	TaskID  string `json:"task_id"`
-	Summary string `json:"summary"`
-	Durable bool   `json:"durable"`
+	TargetNode string `json:"target_node"`
+	TaskID     string `json:"task_id"`
+	Summary    string `json:"summary"`
+	Durable    bool   `json:"durable"`
 }
 
 // leadForwardResponse is the expected response from POST /api/xnode/forward.
@@ -90,10 +90,10 @@ Example:
 		defer cancel()
 
 		payload := &leadForwardPayload{
-			ToNode:  toNode,
-			TaskID:  taskID,
-			Summary: summary,
-			Durable: durable,
+			TargetNode: toNode,
+			TaskID:     taskID,
+			Summary:    summary,
+			Durable:    durable,
 		}
 
 		resp, err := client.Post(ctx, "/xnode/forward", payload)
@@ -370,6 +370,7 @@ Example:
 // ── init ──────────────────────────────────────────────────────────────────────
 
 func init() {
+	leadCmd.Hidden = true
 	leadCmd.AddCommand(leadSendCmd)
 	leadCmd.AddCommand(leadInboxCmd)
 	leadCmd.AddCommand(leadAckCmd)

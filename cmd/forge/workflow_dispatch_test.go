@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -259,5 +260,47 @@ func TestDispatchSendSubjectTruncation(t *testing.T) {
 	_, err := NewTestRunner(t).Execute("dispatch", "send", "forge:kimi", longMsg)
 	if err != nil {
 		t.Fatalf("dispatch send with long message failed: %v", err)
+	}
+}
+
+// TestLookupPortfolioStage verifies that lookupPortfolioStage reads the
+// portfolio-state.yaml from FORGE_ROOT and returns the stage for the domain.
+func TestLookupPortfolioStage(t *testing.T) {
+	dir := t.TempDir()
+	configDir := dir + "/config/portfolio"
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yaml := "products:\n  - key: voice-coach\n    stage: deploy\n  - key: interview-simulator\n    stage: measure\n"
+	if err := os.WriteFile(configDir+"/portfolio-state.yaml", []byte(yaml), 0644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	orig := os.Getenv("FORGE_ROOT")
+	os.Setenv("FORGE_ROOT", dir)
+	defer os.Setenv("FORGE_ROOT", orig)
+
+	if got := lookupPortfolioStage("voice-coach"); got != "deploy" {
+		t.Errorf("expected deploy, got %q", got)
+	}
+	if got := lookupPortfolioStage("interview-simulator"); got != "measure" {
+		t.Errorf("expected measure, got %q", got)
+	}
+	if got := lookupPortfolioStage("nonexistent"); got != "" {
+		t.Errorf("expected empty for unknown domain, got %q", got)
+	}
+	if got := lookupPortfolioStage(""); got != "" {
+		t.Errorf("expected empty for empty domain, got %q", got)
+	}
+}
+
+// TestLookupPortfolioStage_MissingFile verifies graceful handling of missing config.
+func TestLookupPortfolioStage_MissingFile(t *testing.T) {
+	orig := os.Getenv("FORGE_ROOT")
+	os.Setenv("FORGE_ROOT", "/nonexistent-wave139-test-dir")
+	defer os.Setenv("FORGE_ROOT", orig)
+
+	if got := lookupPortfolioStage("voice-coach"); got != "" {
+		t.Errorf("expected empty when file missing, got %q", got)
 	}
 }

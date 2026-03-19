@@ -104,7 +104,7 @@ func TestWave80b_CheckContextThreshold_WithHighContextAgent(t *testing.T) {
 		"wave80b-agent-high", "test-node", "busy", 80.0)
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	err := checkContextThreshold(context.Background(), db, cm, nil)
 	t.Logf("checkContextThreshold high context: %v", err)
 }

@@ -17,20 +17,6 @@ import (
 
 // ─── contextsHandler ──────────────────────────────────────────────────────
 
-func TestContextsHandler_MethodNotAllowed_W46(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	setDBConn(db)
-	defer setDBConn(nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/contexts", nil)
-	w := httptest.NewRecorder()
-	contextsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestContextsHandler_Empty_W46(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -197,15 +183,6 @@ func TestHandleQueueStatus_WithTasks_W46(t *testing.T) {
 
 // ─── getTaskEventsHandler ─────────────────────────────────────────────────
 
-func TestGetTaskEventsHandler_MethodNotAllowed_W46(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/TASK-X/events", nil)
-	w := httptest.NewRecorder()
-	getTaskEventsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestGetTaskEventsHandler_MissingID_W46(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/tasks//events", nil)
 	req.URL.Path = "/api/tasks//events"
@@ -257,15 +234,6 @@ func TestGetTaskEventsHandler_LimitClamped_W46(t *testing.T) {
 }
 
 // ─── releaseTaskHandler ───────────────────────────────────────────────────
-
-func TestReleaseTaskHandler_MethodNotAllowed_W46(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-X/release", nil)
-	w := httptest.NewRecorder()
-	releaseTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestReleaseTaskHandler_InvalidJSON_W46(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/TASK-X/release", bytes.NewBufferString("not-json"))

@@ -77,17 +77,25 @@ func TestIsAgentForbiddenOnNode(t *testing.T) {
 		nodeID    string
 		want      bool
 	}{
-		// opencode and kilo forbidden on prya, vega, gaea
+		// opencode and kilo forbidden on prya, vega, gaea (OOM risk)
 		{"opencode", "prya", true},
 		{"kilo", "prya", true},
 		{"opencode", "vega", true},
 		{"kilo", "gaea", true},
+		// T1 premium agents (claude/codex/cursor/amp) forbidden on constrained nodes
+		{"claude", "prya", true},
+		{"codex", "prya", true},
+		{"cursor", "prya", true},
+		{"amp", "prya", true},
+		{"claude", "vega", true},
+		{"claude", "gaea", true},
 		// Allowed on sati and nova
 		{"opencode", "sati", false},
 		{"kilo", "nova", false},
-		// All others allowed everywhere
+		{"claude", "sati", false},
+		// Lightweight agents allowed on prya
 		{"kimi", "prya", false},
-		{"claude", "vega", false},
+		{"glm", "prya", false},
 		// Unknown node - not forbidden
 		{"opencode", "unknown", false},
 	}
@@ -492,8 +500,9 @@ func TestCheckTokenBudgetGate_NoFile(t *testing.T) {
 	}
 
 	ok, reason := checkTokenBudgetGate("anthropic")
-	if !ok {
-		t.Errorf("checkTokenBudgetGate (no file) = false, want true; reason: %s", reason)
+	// P0 fix: fail-closed — no budget file → block spawn until file is restored.
+	if ok {
+		t.Errorf("checkTokenBudgetGate (no file) should return false (fail-closed), got true")
 	}
 	if reason == "" {
 		t.Error("checkTokenBudgetGate: expected non-empty reason")

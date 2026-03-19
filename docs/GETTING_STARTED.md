@@ -17,9 +17,9 @@ cp forge ~/.local/bin/forge
 Optional daemon build:
 
 ```bash
-cd ../forge-v3
-go build -o forge-v3 .
-cp forge-v3 ~/.local/bin/forge-v3
+cd ../forged
+go build -o forged .
+cp forged ~/.local/bin/forged
 ```
 
 ## Configure
@@ -60,13 +60,17 @@ forge dispatch send forge:kimi "Read .forge/dispatches/task.md — EXECUTE now"
 For a new node:
 
 ```bash
-cd /path/to/forge && bash bin/forge-node-join.sh
+cd /path/to/forge/cmd/forge
+go build -o forge .
+./forge node join
 ```
 
 ## What To Read Next
 
 - [README.md](../README.md)
 - [AGENTS.md](../AGENTS.md)
+- [FORGE_BIG_PICTURE.md](FORGE_BIG_PICTURE.md)
+- [FORGE_SIMPLIFICATION_PLAN.md](FORGE_SIMPLIFICATION_PLAN.md)
 - [CANONICAL_WORKFLOW.md](runbooks/CANONICAL_WORKFLOW.md)
 - [OPERATING_LOOP_V1.md](portfolio/OPERATING_LOOP_V1.md)
 

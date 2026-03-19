@@ -612,6 +612,7 @@ func queueFormatAge(d time.Duration) string {
 }
 
 func init() {
+	// queueCmd visible — queue management is user-facing
 	// queue list flags
 	queueListCmd.Flags().String("status", "", "Filter by status (queued, dispatched, running, completed, failed)")
 	queueListCmd.Flags().String("assignee", "", "Filter by assignee")

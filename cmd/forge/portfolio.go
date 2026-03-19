@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/neoforge-dev/forge/internal"
 	"github.com/spf13/cobra"
@@ -118,12 +122,152 @@ type portfolioStateYAML struct {
 	Products  []internal.PortfolioProduct `yaml:"products"`
 }
 
+var portfolioAdvanceCmd = &cobra.Command{
+	Use:   "advance <product-key>",
+	Short: "Advance a product to the next stage (or a specific stage)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		toStage, _ := cmd.Flags().GetString("to")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		state, err := loadPortfolioState()
+		if err != nil {
+			return err
+		}
+
+		key := args[0]
+		product, err := findPortfolioProduct(state.Products, key)
+		if err != nil {
+			return err
+		}
+
+		fromStage := product.Stage
+
+		var nextStage string
+		if toStage != "" {
+			// Validate the requested stage is known.
+			if portfolioStageIndex(toStage) >= len(portfolioStageOrder) {
+				return fmt.Errorf("unknown stage %q; valid stages: %s", toStage, strings.Join(portfolioStageOrder, ", "))
+			}
+			nextStage = toStage
+		} else {
+			idx := portfolioStageIndex(fromStage)
+			if idx >= len(portfolioStageOrder)-1 {
+				return fmt.Errorf("%s: already at final stage (%s)", key, fromStage)
+			}
+			nextStage = portfolioStageOrder[idx+1]
+		}
+
+		tier := stageTier(nextStage)
+
+		if dryRun {
+			fmt.Printf("[dry-run] %s  %s → %s\n", key, fromStage, nextStage)
+			fmt.Printf("  tier: %s\n", tier)
+			fmt.Println("  no changes written")
+			return nil
+		}
+
+		// Update in-memory slice.
+		for i := range state.Products {
+			if state.Products[i].Key == key {
+				state.Products[i].Stage = nextStage
+				break
+			}
+		}
+
+		// Write back to disk.
+		writePath, err := portfolioWritePath()
+		if err != nil {
+			return err
+		}
+
+		raw := portfolioStateYAML{
+			Version:   state.Version,
+			Updated:   time.Now().Format("2006-01-02"),
+			NorthStar: state.NorthStar,
+			Products:  state.Products,
+		}
+		data, err := yaml.Marshal(&raw)
+		if err != nil {
+			return fmt.Errorf("marshal portfolio state: %w", err)
+		}
+		if err := os.WriteFile(writePath, data, 0644); err != nil {
+			return fmt.Errorf("write portfolio state %s: %w", writePath, err)
+		}
+
+		fmt.Printf("%s  %s → %s\n", key, fromStage, nextStage)
+		fmt.Printf("  tier: %s  (tasks for this product now require async approval)\n", tier)
+		fmt.Printf("  updated %s\n", writePath)
+
+		// Best-effort: confirm routing recommendation for the new stage.
+		// Calls POST /api/routing/resolve and prints which agent/node will handle
+		// tasks at this stage. A failure here is non-fatal — the stage was already
+		// written.
+		if rec := queryRoutingForStage(nextStage); rec != "" {
+			fmt.Printf("  routing: %s\n", rec)
+		}
+		return nil
+	},
+}
+
+// queryRoutingForStage calls POST /api/routing/resolve with the given portfolio
+// stage and returns a human-readable recommendation string, or "" on any error.
+func queryRoutingForStage(stage string) string {
+	apiURL := os.Getenv("FORGE_API_URL")
+	if apiURL == "" {
+		apiURL = "http://localhost:8081"
+	}
+	apiKey := os.Getenv("FORGE_API_KEY")
+
+	body, _ := json.Marshal(map[string]string{"portfolio_stage": stage})
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		apiURL+"/api/routing/resolve", strings.NewReader(string(body)))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var result struct {
+		Agent  string `json:"agent"`
+		Node   string `json:"node"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+	if result.Agent == "" {
+		return ""
+	}
+	rec := fmt.Sprintf("agent=%s node=%s", result.Agent, result.Node)
+	if result.Reason != "" {
+		rec += fmt.Sprintf(" (%s)", result.Reason)
+	}
+	return rec
+}
+
 func init() {
+	// portfolioCmd visible — portfolio status is user-facing
 	portfolioListCmd.Flags().String("stage", "", "Filter products by stage")
+
+	portfolioAdvanceCmd.Flags().String("to", "", "Jump directly to a specific stage")
+	portfolioAdvanceCmd.Flags().Bool("dry-run", false, "Print what would change without writing")
 
 	portfolioCmd.AddCommand(portfolioStatusCmd)
 	portfolioCmd.AddCommand(portfolioListCmd)
 	portfolioCmd.AddCommand(portfolioShowCmd)
+	portfolioCmd.AddCommand(portfolioAdvanceCmd)
 }
 
 // portfolioStatePath is a candidate path for the portfolio state file, tagged with
@@ -314,6 +458,30 @@ func portfolioStageIndex(stage string) int {
 		}
 	}
 	return len(portfolioStageOrder) + 1
+}
+
+// stageTier returns the approval tier for a given stage.
+// Inlined from forged/approvals.go to avoid cross-binary imports.
+func stageTier(stage string) string {
+	switch stage {
+	case "deploy", "build", "monetize":
+		return "desktop"
+	case "validate", "measure", "scale":
+		return "phone"
+	default:
+		return "watch"
+	}
+}
+
+// portfolioWritePath returns the first portfolio-state candidate that already
+// exists on disk, which is the file we should write back to.
+func portfolioWritePath() (string, error) {
+	for _, c := range portfolioStateCandidates() {
+		if _, err := os.Stat(c.path); err == nil {
+			return c.path, nil
+		}
+	}
+	return "", fmt.Errorf("portfolio state file not found; cannot determine write path")
 }
 
 func dedupeStrings(values []string) []string {

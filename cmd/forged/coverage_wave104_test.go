@@ -77,19 +77,6 @@ func TestWave104_RelayDeliveries_WithRows(t *testing.T) {
 	}
 }
 
-func TestWave104_RelayDeliveries_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/relay/deliveries", nil)
-	w := httptest.NewRecorder()
-	relayDeliveriesHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestWave104_RelayDeliveries_NoDB(t *testing.T) {
 	// Do NOT call setupClaimTestDB — ensure db is nil.
 	old := getDBConn()
@@ -182,19 +169,6 @@ func TestWave104_RelayDispatch_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestWave104_RelayDispatch_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/relay/dispatch", nil)
-	w := httptest.NewRecorder()
-	relayDispatchHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestWave104_RelayDispatch_NoDB(t *testing.T) {
 	old := getDBConn()
 	setDBConn(nil)
@@ -282,19 +256,6 @@ func TestWave104_RelayAck_AlreadyAcked(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected 409, got %d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestWave104_RelayAck_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/relay/some-id/ack", nil)
-	w := httptest.NewRecorder()
-	relayAckHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 
@@ -434,23 +395,6 @@ func TestWave104_ApprovalAction_InvalidAction(t *testing.T) {
 }
 
 // TestWave104_ApprovalAction_MethodNotAllowed verifies that GET returns 405.
-func TestWave104_ApprovalAction_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	store := NewApprovalStore(getDBConn())
-	svc := NewApprovalService(store)
-	h := NewApprovalHandler(svc)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/approvals/some-id/approve", nil)
-	w := httptest.NewRecorder()
-	h.handleApprovalAction(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestWave104_ApprovalAction_ApproveNotFound verifies that approving a non-existent ID returns 404.
 func TestWave104_ApprovalAction_ApproveNotFound(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)

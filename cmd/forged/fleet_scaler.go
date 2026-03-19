@@ -34,10 +34,20 @@ var NodeHardCeilings = map[string]int{
 
 // ForbiddenAgentTypes maps node IDs to agent types that must never spawn there.
 // opencode (2.5GB) and kilo (1.4GB) cause OOM on 16GB nodes.
+// claude/codex/cursor/amp are T1 premium agents — manual-only, never auto-spawned.
 var ForbiddenAgentTypes = map[string]map[string]bool{
-	"prya": {"opencode": true, "kilo": true, "claude": true},
-	"vega": {"opencode": true, "kilo": true, "claude": true},
-	"gaea": {"opencode": true, "kilo": true, "claude": true},
+	"prya": {"opencode": true, "kilo": true, "claude": true, "codex": true, "cursor": true, "amp": true},
+	"vega": {"opencode": true, "kilo": true, "claude": true, "codex": true, "cursor": true, "amp": true},
+	"gaea": {"opencode": true, "kilo": true, "claude": true, "codex": true, "cursor": true, "amp": true},
+}
+
+// NoAutoSpawnNodes lists nodes where the fleet-auto-exec patrol is completely disabled.
+// On resource-constrained nodes (16GB RAM), all agent spawning must be manual.
+// fleet-scale-recommend may still create recommendations (for review), but nothing executes.
+var NoAutoSpawnNodes = map[string]bool{
+	"prya": true,
+	"vega": true,
+	"gaea": true,
 }
 
 // lightweightAgentTypes is the set of agent types that may be auto-approved
@@ -55,6 +65,11 @@ var lightweightAgentTypes = map[string]bool{
 var mediumTierAutoApproveNodes = map[string]bool{
 	"sati": true,
 }
+
+// spawnMu serialises the ceiling-check → spawn critical section so that two
+// concurrent patrol invocations cannot both pass the ceiling gate and both
+// spawn an agent before either has updated the tmux window list.
+var spawnMu sync.Mutex
 
 // agentTier returns "lightweight", "medium", or "heavy" for a given agent type.
 func agentTier(agentType string) string {
@@ -139,6 +154,13 @@ func ensureScaleRecommendationsTable(ctx context.Context, db *sql.DB) error {
 // auto_execute=1 for lightweight tier (requiresHumanApproval returns false).
 // fleetAutoExecutePatrol picks up these recommendations and spawns agents with circuit breakers.
 func fleetScaleRecommendPatrol(ctx context.Context, db *sql.DB) error {
+	// 0. Skip recommendation on no-auto-spawn nodes: nothing will execute them anyway,
+	// and stale recommendations cause spurious "HARD RULE VIOLATION" logs every 2 min.
+	localNodeCheck, _ := os.Hostname()
+	if NoAutoSpawnNodes[localNodeCheck] {
+		return nil
+	}
+
 	// 1. Create table if needed.
 	if err := ensureScaleRecommendationsTable(ctx, db); err != nil {
 		return err
@@ -412,6 +434,15 @@ func fleetDeflateRecommendPatrol(ctx context.Context, db *sql.DB) error {
 		WHERE action = 'deflate' AND status = 'pending' AND expires_at < ?
 	`, now); err != nil {
 		return fmt.Errorf("deflate: expire stale: %w", err)
+	}
+
+	// Vacuum old expired/applied rows older than 7 days.
+	cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM scale_recommendations
+		WHERE status IN ('expired', 'applied') AND expires_at < ?
+	`, cutoff); err != nil {
+		log.Printf("[Patrol:fleet-deflate] vacuum old recs: %v", err)
 	}
 
 	// Get all online agents grouped by node.
@@ -778,8 +809,15 @@ func findForgeRoot() string {
 
 // fleetAutoExecutePatrol is the ADR-036 Phase 3 patrol.
 // Reads auto_execute=1, status='pending' recommendations and spawns agents.
-// Runs every 2 minutes.
+// Runs every 2 minutes. Disabled on NoAutoSpawnNodes (prya/vega/gaea).
 func fleetAutoExecutePatrol(ctx context.Context, db *sql.DB) error {
+	// 0. NoAutoSpawnNodes: completely disable on resource-constrained nodes.
+	// All agent spawning on these nodes is manual-only.
+	localNodeCheck, _ := os.Hostname()
+	if NoAutoSpawnNodes[localNodeCheck] {
+		return nil
+	}
+
 	// 1. Circuit breaker gate.
 	if circuitBreakerTripped() {
 		log.Printf("[Patrol:fleet-auto-exec] CIRCUIT BREAKER OPEN — skipping cycle")
@@ -868,6 +906,10 @@ func fleetAutoExecutePatrol(ctx context.Context, db *sql.DB) error {
 		return nil
 	}
 
+	// 6–8. Ceiling check → spawn: held under spawnMu so two concurrent patrol
+	// invocations cannot both pass the ceiling gate before either has created
+	// its tmux window.
+	spawnMu.Lock()
 	// 6. Ceiling check: use LOCAL hostname (not recommendation's node_id which may be "unknown").
 	localNode, _ := os.Hostname()
 	if localNode == "" {
@@ -903,6 +945,7 @@ func fleetAutoExecutePatrol(ctx context.Context, db *sql.DB) error {
 	// Hard gate: total tmux windows (minus prya:1 = forge window) must be < ceiling
 	nonForgeWindows := tmuxWindowCount // tmux list-windows on forge session = all agent windows
 	if nonForgeWindows >= ceiling {
+		spawnMu.Unlock()
 		log.Printf("[Patrol:fleet-auto-exec] ceiling gate FAIL: node %s at %d/%d tmux windows",
 			localNode, nonForgeWindows, ceiling)
 		markRecDeferred(ctx, db, recID, "deferred-ceiling")
@@ -912,6 +955,7 @@ func fleetAutoExecutePatrol(ctx context.Context, db *sql.DB) error {
 	// Per-agent-type cap: max 1 of any type by default (prevents runaway kimi spawning)
 	maxPerType := 1
 	if agentTypeWindowCount >= maxPerType {
+		spawnMu.Unlock()
 		log.Printf("[Patrol:fleet-auto-exec] per-type cap FAIL: already %d %s window(s) running",
 			agentTypeWindowCount, agentType)
 		markRecDeferred(ctx, db, recID, "deferred-type-cap")
@@ -921,6 +965,7 @@ func fleetAutoExecutePatrol(ctx context.Context, db *sql.DB) error {
 	// 7. Token budget gate: check provider status.
 	provider := agentProvider(agentType)
 	if budgetOK, budgetReason := checkTokenBudgetGate(provider); !budgetOK {
+		spawnMu.Unlock()
 		log.Printf("[Patrol:fleet-auto-exec] budget gate FAIL: %s — %s", provider, budgetReason)
 		markRecDeferred(ctx, db, recID, "deferred-budget")
 		return nil
@@ -928,6 +973,7 @@ func fleetAutoExecutePatrol(ctx context.Context, db *sql.DB) error {
 
 	// 8. All gates passed — SPAWN.
 	windowName, err := spawnAgent(ctx, agentType, nodeID)
+	spawnMu.Unlock()
 	if err != nil {
 		log.Printf("[Patrol:fleet-auto-exec] SPAWN FAILED: %v", err)
 		recordSpawnFailure()
@@ -1042,6 +1088,12 @@ func markRecFailed(ctx context.Context, db *sql.DB, recID, errMsg string) {
 // fleetAutoDeflatePatrol manages the drain-kill lifecycle for deflation.
 // Runs every 2 minutes. Checks draining agents and kills them after timeout.
 func fleetAutoDeflatePatrol(ctx context.Context, db *sql.DB) error {
+	// 0. No auto-deflate on no-auto-spawn nodes: we don't auto-spawn, so nothing to auto-kill.
+	localNodeCheck, _ := os.Hostname()
+	if NoAutoSpawnNodes[localNodeCheck] {
+		return nil
+	}
+
 	// 1. Find agents in 'draining' state.
 	rows, err := db.QueryContext(ctx, `
 		SELECT agent_type, COALESCE(tmux_window,''), node_id, COALESCE(started_at, datetime('now','-20 minutes'))

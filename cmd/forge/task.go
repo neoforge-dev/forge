@@ -122,6 +122,7 @@ var taskCreateCmd = &cobra.Command{
 		lane, _ := cmd.Flags().GetString("lane")
 		metaSlice, _ := cmd.Flags().GetStringArray("metadata")
 		format, _ := cmd.Flags().GetString("format")
+		portfolioKey, _ := cmd.Flags().GetString("portfolio")
 
 		if title == "" {
 			return fmt.Errorf("--title is required")
@@ -144,6 +145,40 @@ var taskCreateCmd = &cobra.Command{
 				metadata = make(map[string]interface{})
 			}
 			metadata["lane"] = lane
+		}
+
+		// Resolve portfolio stage from product key, if provided.
+		var portfolioStage string
+		if portfolioKey != "" {
+			state, err := loadPortfolioState()
+			if err != nil {
+				// Non-fatal: warn and continue without stage routing.
+				fmt.Fprintf(os.Stderr, "[portfolio] warning: could not load portfolio state: %v\n", err)
+			} else {
+				product, err := findPortfolioProduct(state.Products, portfolioKey)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[portfolio] warning: product %q not found: %v\n", portfolioKey, err)
+				} else {
+					portfolioStage = product.Stage
+					// Resolve tier label for the user-facing message.
+					tierLabel := portfolioStage
+					switch strings.ToLower(portfolioStage) {
+					case "idea", "kill":
+						tierLabel += " (tier: watch)"
+					case "validate", "measure", "scale":
+						tierLabel += " (tier: phone)"
+					case "build", "deploy", "monetize":
+						tierLabel += " (tier: desktop)"
+					}
+					fmt.Fprintf(os.Stderr, "[portfolio] %s → stage: %s\n", portfolioKey, tierLabel)
+				}
+			}
+		}
+		if portfolioStage != "" {
+			if metadata == nil {
+				metadata = make(map[string]interface{})
+			}
+			metadata["portfolio_stage"] = portfolioStage
 		}
 
 		client := internal.NewClient()
@@ -544,6 +579,7 @@ func init() {
 	taskCreateCmd.Flags().String("type", "feature", "Task type")
 	taskCreateCmd.Flags().String("lane", "", "Lane to assign the task to")
 	taskCreateCmd.Flags().StringArray("metadata", nil, "Metadata key=value pairs (repeatable)")
+	taskCreateCmd.Flags().String("portfolio", "", "Portfolio product key (sets stage-aware routing)")
 
 	// task update flags
 	taskUpdateCmd.Flags().String("subject", "", "New subject/title")

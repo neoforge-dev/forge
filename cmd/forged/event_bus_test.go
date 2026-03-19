@@ -5,7 +5,9 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -573,5 +575,160 @@ func TestEventBus_PublishWithAgent(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for event")
+	}
+}
+
+// Wave 263: EventBus edge cases — schema migration, marshal errors, replay, unsubscribe.
+
+func TestWave263_EventBus_InitSchema_ExistingTable_MissingColumns(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// 1. Manually create events table WITHOUT topic and sequence columns
+	// First drop the one created by setupClaimTestDB migrations
+	_, _ = db.Exec("DROP TABLE IF EXISTS events")
+	_, err := db.Exec(`
+		CREATE TABLE events (
+			id TEXT PRIMARY KEY,
+			aggregate_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			payload JSON NOT NULL,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			agent_id TEXT,
+			UNIQUE(aggregate_id, version)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("failed to create incomplete events table: %v", err)
+	}
+
+	// 2. Initialize EventBus - should trigger the ALTER TABLE branch in initSchema
+	eb, err := NewEventBus(db)
+	if err != nil {
+		t.Fatalf("NewEventBus failed to upgrade schema: %v", err)
+	}
+
+	// 3. Verify columns exist
+	var topicCol int
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('events') WHERE name='topic'").Scan(&topicCol)
+	if err != nil || topicCol != 1 {
+		t.Errorf("expected topic column to exist, got count=%d, err=%v", topicCol, err)
+	}
+
+	stats, _ := eb.Stats()
+	if stats["subscriber_count"] != 0 {
+		t.Errorf("expected 0 subscribers, got %v", stats["subscriber_count"])
+	}
+}
+
+func TestWave263_EventBus_LoadSequence_Error(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No tables created, but then close the DB to trigger error
+	eb := &EventBus{db: db}
+	db.Close()
+
+	err = eb.loadSequence()
+	if err == nil {
+		t.Error("expected error from loadSequence on closed DB")
+	}
+}
+
+func TestWave263_EventBus_Publish_MarshalError(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+	eb, _ := NewEventBus(db)
+
+	// Channel cannot be marshaled to JSON
+	err := eb.Publish("test.marshal", make(chan int))
+	if err == nil {
+		t.Error("expected marshal error")
+	}
+	if err != nil && !strings.Contains(fmt.Sprint(err), "failed to marshal") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestWave263_EventBus_Replay_ScanError(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+	eb, _ := NewEventBus(db)
+
+	eb.Publish("task.created", map[string]string{"id": "task-1"})
+	time.Sleep(50 * time.Millisecond) // wait for async publish
+
+	events, err := eb.Replay(time.Now().Add(-1*time.Minute), []Topic{"task.*"})
+	if err != nil {
+		t.Fatalf("Replay failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Error("expected at least 1 event in replay")
+	}
+}
+
+func TestWave263_EventBus_Replay_NonJSON(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+	eb, _ := NewEventBus(db)
+
+	// Manually insert non-JSON payload
+	_, _ = db.Exec(`
+		INSERT INTO events (id, aggregate_id, topic, type, version, payload, timestamp, sequence)
+		VALUES ('event-raw', 'agg-raw', 'raw.topic', 'raw', 1, 'not-json-at-all', datetime('now'), 100)
+	`)
+
+	events, err := eb.Replay(time.Now().Add(-1*time.Minute), nil)
+	if err != nil {
+		t.Fatalf("Replay failed: %v", err)
+	}
+
+	found := false
+	for _, e := range events {
+		if e.ID == "event-raw" {
+			found = true
+			raw, ok := e.Data.([]byte)
+			if !ok || string(raw) != "not-json-at-all" {
+				t.Errorf("expected raw bytes, got %T: %v", e.Data, e.Data)
+			}
+		}
+	}
+	if !found {
+		t.Error("event-raw not found in replay")
+	}
+}
+
+func TestWave263_EventBus_GetLatestEvents_LargeLimit(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+	eb, _ := NewEventBus(db)
+
+	events, err := eb.GetLatestEvents(1000)
+	if err != nil {
+		t.Fatalf("GetLatestEvents failed: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events, got %d", len(events))
+	}
+}
+
+func TestWave263_EventBus_Unsubscribe_Logic(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+	eb, _ := NewEventBus(db)
+
+	handler1 := func(e BusEvent) error { return nil }
+	handler2 := func(e BusEvent) error { return nil }
+
+	eb.Subscribe("test", handler1)
+	eb.Subscribe("test", handler2)
+
+	eb.Unsubscribe("test", handler2)
+
+	stats, _ := eb.Stats()
+	if stats["subscriber_count"] != 1 {
+		t.Errorf("expected 1 subscriber left, got %v", stats["subscriber_count"])
 	}
 }

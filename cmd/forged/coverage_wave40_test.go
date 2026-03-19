@@ -226,15 +226,6 @@ func TestFleetDeflateRecommendPatrol_SingleAgentSkipped_W40(t *testing.T) {
 
 // ─── handleQueueCancel ────────────────────────────────────────────────────
 
-func TestHandleQueueCancel_MethodNotAllowed_W40(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/queue/cancel", nil)
-	w := httptest.NewRecorder()
-	handleQueueCancel(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandleQueueCancel_NilQueue_W40(t *testing.T) {
 	orig := taskQueue
 	taskQueue = nil

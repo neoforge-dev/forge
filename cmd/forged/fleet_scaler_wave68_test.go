@@ -115,12 +115,12 @@ func TestWave68_AgentProvider(t *testing.T) {
 	}
 }
 
-// TestWave68_CheckTokenBudgetGate_NoBudgetFile verifies the gate allows when no budget file.
+// TestWave68_CheckTokenBudgetGate_NoBudgetFile verifies the gate blocks when no budget file.
+// P0 fix: fail-closed — no budget file → block spawn until file is restored.
 func TestWave68_CheckTokenBudgetGate_NoBudgetFile(t *testing.T) {
-	// No budget file present in test env — should allow.
 	ok, reason := checkTokenBudgetGate("moonshot")
-	if !ok {
-		t.Errorf("expected gate to pass when no budget file, reason: %s", reason)
+	if ok {
+		t.Errorf("expected gate to block (fail-closed) when no budget file, got pass; reason: %s", reason)
 	}
 }
 
@@ -227,8 +227,9 @@ func TestWave68_CheckTokenBudgetGate_MalformedJSON(t *testing.T) {
 	defer os.Remove(budgetFile)
 
 	ok, reason := checkTokenBudgetGate("moonshot")
-	if !ok {
-		t.Errorf("expected gate to PASS on parse error, reason: %s", reason)
+	// P0 fix: fail-closed — malformed budget file → block spawn until file is valid.
+	if ok {
+		t.Errorf("expected gate to block (fail-closed) on malformed JSON, got pass; reason: %s", reason)
 	}
 }
 

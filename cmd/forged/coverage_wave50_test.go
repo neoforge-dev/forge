@@ -65,15 +65,6 @@ func TestConfidenceApproveCompletedTasks_NilStateMachine_W50(t *testing.T) {
 
 // ─── agentsSSEHandler (method not allowed) ───────────────────────────────
 
-func TestAgentsSSEHandler_MethodNotAllowed_W50(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/stream", nil)
-	w := httptest.NewRecorder()
-	agentsSSEHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestAgentsSSEHandler_SSE_W50(t *testing.T) {
 	// SSE handler loops — use cancelled context to exit immediately.
 	ctx, cancel := context.WithCancel(context.Background())

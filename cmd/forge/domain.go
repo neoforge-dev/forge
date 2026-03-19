@@ -194,6 +194,7 @@ func loadDomains() ([]internal.Domain, error) {
 }
 
 func init() {
+	// domainCmd visible — domain management is user-facing
 	// domain list flags
 	domainListCmd.Flags().Bool("active", false, "Show only active domains")
 

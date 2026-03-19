@@ -181,3 +181,26 @@ func TestDaemonRestart(t *testing.T) {
 		t.Logf("daemon restart: %v", err)
 	}
 }
+
+// TestFindDaemonBinaryPrefersForged verifies that forged is preferred over forge-v3
+// when both are present. This encodes the daemon naming decision (ADR-040).
+func TestFindDaemonBinaryPrefersForged(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create both binaries — forged should win.
+	forgedPath := filepath.Join(dir, "forged")
+	forgeV3Path := filepath.Join(dir, "forge-v3")
+	for _, p := range []string{forgedPath, forgeV3Path} {
+		if err := os.WriteFile(p, []byte("#!/bin/sh"), 0o755); err != nil {
+			t.Fatalf("create %s: %v", p, err)
+		}
+	}
+
+	t.Setenv("FORGED_BIN", forgedPath)
+	t.Setenv("FORGE_V3_BIN", forgeV3Path)
+
+	got := findDaemonBinary()
+	if got != forgedPath {
+		t.Errorf("findDaemonBinary() = %q, want %q (forged must be preferred over forge-v3)", got, forgedPath)
+	}
+}

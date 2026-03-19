@@ -23,20 +23,6 @@ import (
 
 // ─── resumeTaskHandler ───────────────────────────────────────────────────────
 
-func TestWave62_ResumeTaskHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	_ = db
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-W62-RESUME/resume", nil)
-	req.URL.Path = "/api/tasks/TASK-W62-RESUME/resume"
-	w := httptest.NewRecorder()
-	resumeTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestWave62_ResumeTaskHandler_EmptyTaskID(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()

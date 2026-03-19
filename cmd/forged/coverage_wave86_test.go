@@ -174,19 +174,6 @@ func TestWave86_GetAgentID_NoSource(t *testing.T) {
 // Test GET (flusher not supported path — httptest.Recorder doesn't implement Flusher).
 // ---------------------------------------------------------------------------
 
-func TestWave86_OpenclawEventsHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodPost, "/openclaw/events", nil)
-	w := httptest.NewRecorder()
-	openclawEventsHandler(w, r)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("openclawEventsHandler POST: got %d, want 405", w.Code)
-	}
-}
-
 func TestWave86_OpenclawEventsHandler_CancelledContext(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -361,33 +348,14 @@ func TestWave86_NodeMetricsPushPatrol_WithNodeID(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// patrol.go: fleetScaleRecommend — 67.6%
-// Additional test: exercise the queuedCount > threshold path with actual data.
-// ---------------------------------------------------------------------------
+// fleetScaleRecommend deleted (f715a295) — replaced with fleetScaleRecommendPatrol.
 
-func TestWave86_FleetScaleRecommend_WithLargeQueue(t *testing.T) {
+func TestWave86_FleetScaleRecommendPatrol_WithLargeQueue(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
 	db := getDBConn()
 	ctx := context.Background()
-
-	tmpDir := t.TempDir()
-	resultsDir := fmt.Sprintf("%s/.forge/heartbeat/results", tmpDir)
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
-	prevRoot := os.Getenv("FORGE_ROOT")
-	os.Setenv("FORGE_ROOT", tmpDir)
-	defer func() {
-		if prevRoot == "" {
-			os.Unsetenv("FORGE_ROOT")
-		} else {
-			os.Setenv("FORGE_ROOT", prevRoot)
-		}
-	}()
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
@@ -400,8 +368,8 @@ func TestWave86_FleetScaleRecommend_WithLargeQueue(t *testing.T) {
 			5, "queued", "QUEUED", "Fleet Scale Task", now, now)
 	}
 
-	err := fleetScaleRecommend(ctx, db)
+	err := fleetScaleRecommendPatrol(ctx, db)
 	if err != nil {
-		t.Logf("fleetScaleRecommend large queue: %v", err)
+		t.Logf("fleetScaleRecommendPatrol large queue: %v", err)
 	}
 }

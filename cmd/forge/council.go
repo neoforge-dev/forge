@@ -301,6 +301,7 @@ func councilMarkerDir() string {
 }
 
 func init() {
+	councilCmd.Hidden = true
 	councilCmd.AddCommand(councilStartCmd)
 	councilCmd.AddCommand(councilStatusCmd)
 	councilCmd.AddCommand(councilStopCmd)

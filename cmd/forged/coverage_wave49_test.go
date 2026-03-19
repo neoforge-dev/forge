@@ -114,23 +114,6 @@ func TestXNodeStatusHandler_W49(t *testing.T) {
 
 // ─── XNodeController.ForwardHandler ──────────────────────────────────────
 
-func TestXNodeForwardHandler_MethodNotAllowed_W49(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	xc, err := NewXNodeController(db, "test-node-w49")
-	if err != nil {
-		t.Fatalf("NewXNodeController: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/xnode/forward", nil)
-	w := httptest.NewRecorder()
-	xc.ForwardHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestXNodeForwardHandler_MissingTargetNode_W49(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -254,20 +237,6 @@ func TestCoordinationDashboard_ServeHTTP_APIPath_W49(t *testing.T) {
 }
 
 // ─── openclawEventsHandler ────────────────────────────────────────────────
-
-func TestOpenclawEventsHandler_MethodNotAllowed_W49(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-	setDBConn(db)
-	defer setDBConn(nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/events", nil)
-	w := httptest.NewRecorder()
-	openclawEventsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestOpenclawEventsHandler_SSE_W49(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)

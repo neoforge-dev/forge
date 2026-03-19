@@ -405,6 +405,7 @@ func helperTruncate(s string, maxLen int) string {
 }
 
 func init() {
+	patternCmd.Hidden = true
 	// Add flags
 	patternListCmd.Flags().String("category", "", "Filter by category")
 	patternListCmd.Flags().String("tag", "", "Filter by tag")

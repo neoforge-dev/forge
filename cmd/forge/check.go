@@ -2,9 +2,10 @@
 // Ports harness/forge_harness/cli_v2/check.py to Go.
 //
 // Three modes:
-//   --quick   lint only (ruff check, eslint)                  <30s
-//   default   standard (ruff check+format, eslint, tsc)       <2min
-//   --full    standard + tests (go test, pytest fast, vitest) <10min
+//
+//	--quick   lint only (ruff check, eslint)                  <30s
+//	default   standard (ruff check+format, eslint, tsc)       <2min
+//	--full    standard + tests (go test, pytest fast, vitest) <10min
 //
 // --fix:   run ruff format + ruff check --fix
 // --json:  output results as JSON
@@ -483,10 +484,13 @@ func math2Round(f float64) float64 {
 }
 
 func init() {
+	checkCmd.Hidden = true
 	checkCmd.Flags().BoolP("quick", "q", false, "Lint only (ruff check, eslint) — <30s")
 	checkCmd.Flags().BoolP("full", "f", false, "Standard + tests (go test, pytest fast, vitest) — <10min")
 	checkCmd.Flags().Bool("fix", false, "Auto-fix formatting and lint issues (ruff format + ruff check --fix)")
 	checkCmd.Flags().Bool("json", false, "Output results as JSON")
+	checkCmd.Flags().String("task", "", "Task ID for runtime compatibility (currently informational)")
+	checkCmd.Flags().Bool("post", false, "Run post-implementation checks (currently informational)")
 
 	rootCmd.AddCommand(checkCmd)
 }

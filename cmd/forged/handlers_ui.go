@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -256,10 +257,10 @@ func uiFleetHandler(w http.ResponseWriter, r *http.Request) {
 			pShort = pShort[:24] + "…"
 		}
 		fmt.Fprintf(w, `<tr>
-      <td>%s</td>
+      <td><a href="/ui/patrol/%s" style="color:#58a6ff;text-decoration:none">%s</a></td>
       <td class="grey" style="font-size:11px">%s</td>
       <td class="%s">%d</td>
-    </tr>`, pShort, p.LastRun, errColor, p.Errors)
+    </tr>`, p.PatrolID, pShort, p.LastRun, errColor, p.Errors)
 	}
 	fmt.Fprint(w, `</tbody></table></div>`)
 
@@ -301,4 +302,189 @@ func uiFleetHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, `</tbody></table></div>`)
 
 	fmt.Fprint(w, `</body></html>`)
+}
+
+// uiPatrolDrillDownHandler serves GET /ui/patrol/{id} — patrol execution drill-down.
+func uiPatrolDrillDownHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	patrolID := strings.TrimPrefix(r.URL.Path, "/ui/patrol/")
+	patrolID = strings.Trim(patrolID, "/")
+	if patrolID == "" {
+		http.Redirect(w, r, "/ui", http.StatusFound)
+		return
+	}
+
+	db := getDBConn()
+
+	// Patrol metadata: name and interval from configured system, else use ID
+	patrolName := patrolID
+	intervalSec := 0.0
+	if globalPatrolSystem != nil {
+		for _, p := range globalPatrolSystem.ListPatrols() {
+			if p.ID == patrolID {
+				patrolName = p.Name
+				intervalSec = p.Schedule.Seconds()
+				break
+			}
+		}
+		for _, cp := range globalPatrolSystem.contextPatrols {
+			if cp.ID == patrolID {
+				patrolName = cp.Name
+				intervalSec = cp.Schedule.Seconds()
+				break
+			}
+		}
+	}
+
+	// Summary from DB: status, last run
+	status := "unknown"
+	lastRun := ""
+	if db != nil {
+		var lastRunNull sql.NullString
+		_ = db.QueryRowContext(r.Context(), `
+			SELECT COALESCE(MAX(CASE WHEN status='running' THEN 'running' ELSE status END), 'unknown'), MAX(started_at)
+			FROM patrol_executions WHERE patrol_id = ?
+		`, patrolID).Scan(&status, &lastRunNull)
+		if lastRunNull.Valid && lastRunNull.String != "" {
+			lastRun = lastRunNull.String
+			if len(lastRun) > 19 {
+				lastRun = lastRun[:19]
+			}
+		}
+	}
+
+	// Last 10 executions
+	type execRow struct {
+		StartedAt   string
+		Duration   string
+		Status     string
+		ResultMsg  string
+	}
+	var executions []execRow
+	if db != nil {
+		rows, err := db.QueryContext(r.Context(), `
+			SELECT id, started_at, completed_at, status, result, error
+			FROM patrol_executions
+			WHERE patrol_id = ?
+			ORDER BY started_at DESC
+			LIMIT 10
+		`, patrolID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id, startedAt, statusVal string
+				var completedAt, result, errMsg sql.NullString
+				if err := rows.Scan(&id, &startedAt, &completedAt, &statusVal, &result, &errMsg); err != nil {
+					continue
+				}
+				dur := "-"
+				if completedAt.Valid && completedAt.String != "" {
+					if start, e1 := time.Parse("2006-01-02 15:04:05", startedAt); e1 == nil {
+						if end, e2 := time.Parse("2006-01-02 15:04:05", completedAt.String); e2 == nil {
+							ms := end.Sub(start).Milliseconds()
+							if ms < 1000 {
+								dur = fmt.Sprintf("%dms", ms)
+							} else {
+								dur = fmt.Sprintf("%.1fs", float64(ms)/1000)
+							}
+						}
+					}
+				}
+				msg := ""
+				if errMsg.Valid && errMsg.String != "" {
+					msg = errMsg.String
+				} else if result.Valid && result.String != "" {
+					msg = result.String
+				}
+				if len(startedAt) > 19 {
+					startedAt = startedAt[:19]
+				}
+				executions = append(executions, execRow{StartedAt: startedAt, Duration: dur, Status: statusVal, ResultMsg: msg})
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Reuse /ui styles; no auto-refresh on drill-down
+	fmt.Fprint(w, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Patrol: `+patrolID+`</title>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9;padding:16px}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:16px}
+    h1{color:#58a6ff;font-size:18px}
+    nav a{color:#58a6ff;text-decoration:none;font-size:13px;margin-right:12px;opacity:.7}
+    nav a:hover{opacity:1}
+    .section{background:#161b22;border:1px solid #30363d;border-radius:6px;margin-bottom:12px;overflow:hidden}
+    .section-hdr{background:#21262d;padding:8px 12px;font-size:12px;font-weight:600;text-transform:uppercase;color:#8b949e;letter-spacing:.05em}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:7px 12px;font-size:13px;text-align:left;border-bottom:1px solid #21262d}
+    th{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase}
+    .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+    .pill-completed{background:#1a3a24;color:#3fb950}
+    .pill-running{background:#3a2a1a;color:#d29922}
+    .pill-error{background:#3a1a1a;color:#f85149}
+    .grey{color:#8b949e}
+    .btn{display:inline-block;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none;text-decoration:none}
+    .btn-primary{background:#238636;color:#fff}
+    .btn-primary:hover{background:#2ea043}
+    .meta{margin-bottom:16px;font-size:13px}
+    .meta span{margin-right:16px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Patrol: `+patrolID+`</h1>
+  <nav><a href="/ui">← Back to Fleet</a></nav>
+</header>
+<div class="meta">
+  <span><strong>Name:</strong> `+patrolName+`</span>
+  <span><strong>Status:</strong> `+status+`</span>
+  <span><strong>Last run:</strong> `+lastRun+`</span>
+  <span><strong>Interval:</strong> `+fmt.Sprintf("%.0fs", intervalSec)+`</span>
+</div>
+<form method="POST" action="/api/patrols/`+patrolID+`/run" style="margin-bottom:16px">
+  <button type="submit" class="btn btn-primary">Run Now</button>
+</form>
+<div class="section">
+  <div class="section-hdr">Last 10 executions</div>
+  <table>
+    <thead><tr><th>Started</th><th>Duration</th><th>Status</th><th>Message</th></tr></thead>
+    <tbody>
+`)
+	if len(executions) == 0 {
+		fmt.Fprint(w, `<tr><td colspan="4" class="grey" style="text-align:center;padding:20px">No executions yet</td></tr>`)
+	}
+	for _, e := range executions {
+		pillClass := "pill-" + e.Status
+		if pillClass != "pill-completed" && pillClass != "pill-running" && pillClass != "pill-error" {
+			pillClass = "pill-error"
+		}
+		msgShort := e.ResultMsg
+		if len(msgShort) > 80 {
+			msgShort = msgShort[:80] + "…"
+		}
+		fmt.Fprintf(w, `<tr>
+      <td class="grey">%s</td>
+      <td>%s</td>
+      <td><span class="pill %s">%s</span></td>
+      <td style="font-size:12px">%s</td>
+    </tr>`, e.StartedAt, e.Duration, pillClass, e.Status, msgShort)
+	}
+	fmt.Fprint(w, `
+    </tbody>
+  </table>
+</div>
+</body>
+</html>`)
 }

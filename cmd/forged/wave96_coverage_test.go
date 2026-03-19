@@ -236,7 +236,7 @@ func TestWave96_ContextSync_Start_ProjectSubdirs(t *testing.T) {
 		}
 	}
 
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)

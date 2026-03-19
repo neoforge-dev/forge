@@ -1192,19 +1192,6 @@ func TestHandleTaskLogs_MissingID(t *testing.T) {
 	}
 }
 
-func TestHandleTaskCancel(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/cli/task/cancel?id=x", nil)
-	w := httptest.NewRecorder()
-	handleTaskCancel(w, req)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
 func TestHandleTaskCreate_InvalidMethod(t *testing.T) {
 	cleanup := setupHandlerTest(t)
 	defer cleanup()
@@ -1283,20 +1270,6 @@ func TestHandleQueueList_Success(t *testing.T) {
 	}
 }
 
-func TestHandleFleetTopology_NotImplemented(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/cli/fleet/topology", nil)
-	w := httptest.NewRecorder()
-	handleFleetTopology(w, req)
-
-	// Returns 501 (not yet implemented) — just verify it runs
-	if w.Code != http.StatusOK && w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 200 or 501, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
 // --- lanesHandler / contextsHandler ---
 
 func TestLanesHandler_Success(t *testing.T) {
@@ -1351,33 +1324,7 @@ func TestContextsHandler_InvalidMethod(t *testing.T) {
 	}
 }
 
-// --- handleSystemPatrol / handleSystemMetrics / handleQueuePriority / handleQueueCancel ---
-
-func TestHandleSystemPatrol(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/cli/system/patrol", nil)
-	w := httptest.NewRecorder()
-	handleSystemPatrol(w, req)
-
-	if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError && w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 200/500/501, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestHandleSystemMetrics(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/cli/system/metrics", nil)
-	w := httptest.NewRecorder()
-	handleSystemMetrics(w, req)
-
-	if w.Code != http.StatusOK && w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 200 or 501, got %d: %s", w.Code, w.Body.String())
-	}
-}
+// --- handleQueuePriority / handleQueueCancel ---
 
 func TestHandleQueuePriority_InvalidMethod(t *testing.T) {
 	cleanup := setupHandlerTest(t)
@@ -1418,34 +1365,7 @@ func TestHandleReplanTaskHandler_InvalidMethod(t *testing.T) {
 	}
 }
 
-// --- handleAgentSpawn / handleAgentStop / handleAgentStatus ---
-
-func TestHandleAgentSpawn(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/cli/agent/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, req)
-
-	// May return 501 (not implemented) or error
-	if w.Code == 0 {
-		t.Error("expected a response code")
-	}
-}
-
-func TestHandleAgentStop(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/cli/agent/stop?id=x", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, req)
-
-	if w.Code == 0 {
-		t.Error("expected a response code")
-	}
-}
+// --- handleAgentStatus ---
 
 func TestHandleAgentStatus(t *testing.T) {
 	cleanup := setupHandlerTest(t)
@@ -1918,5 +1838,564 @@ func TestGetAgentHealth_FoundWithCapabilities(t *testing.T) {
 	}
 	if len(hb.Capabilities) != 2 {
 		t.Errorf("expected 2 capabilities, got %d: %v", len(hb.Capabilities), hb.Capabilities)
+	}
+}
+
+// TestAgentTelemetryHandler_ClosedDB exercises the query-failed error path
+// in agentTelemetryHandler (handlers_agent.go:245.16,248.3).
+func TestAgentTelemetryHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agents/test-agent/telemetry", nil)
+	w := httptest.NewRecorder()
+	agentTelemetryHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB agentTelemetryHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentMetricsHandler_ClosedDB exercises the query-failed error path
+// in agentMetricsHandler (handlers_agent.go:326.16,329.3).
+func TestAgentMetricsHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agents/test-agent/metrics", nil)
+	w := httptest.NewRecorder()
+	agentMetricsHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB agentMetricsHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentTelemetrySummaryHandler_ClosedDB exercises the query-failed error path
+// in agentTelemetrySummaryHandler (handlers_agent.go:386.16,389.3).
+func TestAgentTelemetrySummaryHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agents/telemetry/summary", nil)
+	w := httptest.NewRecorder()
+	agentTelemetrySummaryHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB agentTelemetrySummaryHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleTaskLogs_ClosedDB exercises the rr.status >= 400 path in handleTaskLogs
+// (main.go:344.22,348.3) when getTaskEventsHandler returns an error due to a closed DB.
+func TestHandleTaskLogs_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Close the DB so getTaskEventsHandler returns an internal error.
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/logs?id=some-task-id", nil)
+	w := httptest.NewRecorder()
+	handleTaskLogs(w, req)
+
+	// getTaskEventsHandler should fail → status >= 400 passthrough path.
+	if w.Code < 400 {
+		t.Errorf("expected error status for closed-DB handleTaskLogs, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleQueuePriority_NotFound exercises the task-not-found 404 path
+// (main.go:633.14,635.3) in handleQueuePriority.
+func TestHandleQueuePriority_NotFound(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	payload := map[string]interface{}{
+		"id":       "nonexistent-task-for-priority",
+		"priority": "high",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/queue/priority", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handleQueuePriority(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for nonexistent task priority update, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleQueuePriority_InvalidPriority exercises the invalid priority 400 path
+// (main.go:619.3,621.3).
+func TestHandleQueuePriority_InvalidPriority(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	payload := map[string]interface{}{
+		"id":       "some-task",
+		"priority": "critical",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/queue/priority", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handleQueuePriority(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid priority value, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleQueueCancel_InvalidStatus exercises the bad-status 400 path
+// (main.go:690.3,693.3) in handleQueueCancel when task is in non-cancellable state.
+func TestHandleQueueCancel_InvalidStatus(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Enqueue and then claim the task as executing so it can't be cancelled.
+	task := enqueueTestTask(t, "cancel-executing-task")
+	ctx := context.Background()
+	if err := taskQueue.ClaimTask(ctx, task.ID, "test-agent"); err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+
+	payload := map[string]interface{}{
+		"id":     task.ID,
+		"reason": "attempt to cancel executing task",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/queue/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handleQueueCancel(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for cancelling executing task, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAbandonTaskHandler_ClosedDB exercises the db.Exec error path
+// (handlers_task.go:374.16,377.3) in abandonTaskHandler when the DB is closed.
+func TestAbandonTaskHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/some-task-id/abandon", nil)
+	w := httptest.NewRecorder()
+	abandonTaskHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB abandonTaskHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTaskHistoryHandler_ClosedDB exercises the store.GetTransitionHistory error path
+// (handlers_task.go:407.16,410.3) in taskHistoryHandler when the DB is closed.
+func TestTaskHistoryHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/some-task-id/history", nil)
+	w := httptest.NewRecorder()
+	taskHistoryHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB taskHistoryHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPruneTasksHandler_ClosedDB exercises the db.Exec error path
+// (handlers_task.go:438.16,441.3) in pruneTasksHandler when the DB is closed.
+func TestPruneTasksHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/prune", nil)
+	w := httptest.NewRecorder()
+	pruneTasksHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB pruneTasksHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestListTasksHandler_ClosedDB exercises the taskQueue error path
+// (handlers_task.go:497.16,500.3) in listTasksHandler when the DB is closed.
+func TestListTasksHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	w := httptest.NewRecorder()
+	listTasksHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB listTasksHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestClaimableTasksHandler_ClosedDB exercises the GetClaimableTasks error path
+// (handlers_task.go:854.16,857.3) in claimableTasksHandler when the DB is closed.
+func TestClaimableTasksHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/claimable", nil)
+	w := httptest.NewRecorder()
+	claimableTasksHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB claimableTasksHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTaskUpdateHandler_ClosedDB exercises the db.Exec error path
+// (handlers_task.go:705.41,708.4) in taskUpdateHandler when the DB is closed.
+func TestTaskUpdateHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	payload := map[string]interface{}{
+		"status": "assigned",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPut, "/api/tasks/some-task-id", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	taskUpdateHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB taskUpdateHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTaskDeleteHandler_ClosedDB exercises the db.Exec error path
+// (handlers_task.go:751.62,754.3) in taskDeleteHandler when the DB is closed.
+func TestTaskDeleteHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/tasks/some-task-id", nil)
+	w := httptest.NewRecorder()
+	taskDeleteHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB taskDeleteHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCompleteTaskWithApprovalHandler_InvalidBody exercises the json decode error path
+// (handlers_task.go:635.18,638.3) in completeTaskWithApprovalHandler.
+func TestCompleteTaskWithApprovalHandler_InvalidBody(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/test-task-id/complete-with-approval",
+		bytes.NewReader([]byte("not valid json")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	completeTaskWithApprovalHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid body in completeTaskWithApprovalHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAbandonTaskHandler_NotFound_Handlers exercises the n == 0 → 404 path
+// (handlers_task.go:379.8,382.3) in abandonTaskHandler when task is not found.
+func TestAbandonTaskHandler_NotFound_Handlers(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/nonexistent-task-xyz/abandon", nil)
+	w := httptest.NewRecorder()
+	abandonTaskHandler(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for nonexistent task in abandonTaskHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPatrolsHandler_ClosedDB exercises the DB query error path
+// (handlers_patrols.go:111.17,114.4) in patrolsHandler when DB is closed.
+func TestPatrolsHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/patrols", nil)
+	w := httptest.NewRecorder()
+	patrolsHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB patrolsHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestNodesHealthHandler_ClosedDB exercises the DB query error path
+// (handlers_patrols.go:201.16,204.3) in nodesHealthHandler when DB is closed.
+func TestNodesHealthHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/health", nil)
+	w := httptest.NewRecorder()
+	nodesHealthHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB nodesHealthHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPatrolRunHandler_EmptyPatrolID exercises the empty patrolID → 404 path
+// (handlers_patrols.go:29.20,32.3) in patrolRunHandler.
+func TestPatrolRunHandler_EmptyPatrolID(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Path that ends in /run but has no patrol ID before it.
+	req := httptest.NewRequest(http.MethodPost, "/api/patrols//run", nil)
+	w := httptest.NewRecorder()
+	patrolRunHandler(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for empty patrolID, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAgentsHealthHandler_ClosedDB exercises the getAllAgentsHealth error path
+// (handlers_agent.go:567.17,570.4) in agentsHealthHandler when DB is closed.
+func TestAgentsHealthHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	// Request /api/agents/ (empty path after prefix trim) → getAllAgentsHealth() path.
+	req := httptest.NewRequest(http.MethodGet, "/api/agents/", nil)
+	w := httptest.NewRecorder()
+	agentsHealthHandler(w, req)
+
+	// getAllAgentsHealth calls getDBConn() which returns the closed conn → error → 500.
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB agentsHealthHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestFleetMetricsHandler_ClosedDB exercises the DB query error path
+// (handlers_node_metrics.go:193.16,196.3) in fleetMetricsHandler when DB is closed.
+func TestFleetMetricsHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fleet/metrics", nil)
+	w := httptest.NewRecorder()
+	fleetMetricsHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB fleetMetricsHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestFleetAggregateHandler_ClosedDB exercises the node query error path
+// (handlers_node_metrics.go:279.16,282.3) in fleetAggregateHandler when DB is closed.
+func TestFleetAggregateHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fleet/aggregate", nil)
+	w := httptest.NewRecorder()
+	fleetAggregateHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for closed-DB fleetAggregateHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestEventsHandler_ClosedDB exercises the db==nil error path
+// (queue.go:986.15,989.3) in eventsHandler when the DB connection is nil.
+func TestEventsHandler_ClosedDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Nil out the DB connection to exercise the "database unavailable" path.
+	oldDB := getDBConn()
+	setDBConn(nil)
+	defer setDBConn(oldDB)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	w := httptest.NewRecorder()
+	eventsHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for nil-DB eventsHandler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCompleteTaskHandler_StateDispatchedPath claims a task (→ StateDispatched) then
+// completes it, covering the StateRunning/StateDispatched SM transition branch.
+func TestCompleteTaskHandler_StateDispatchedPath(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	task := Task{
+		ID: "complete-dispatched-001", Domain: "test", Project: "proj",
+		Type: TaskTypeFeature, Priority: 5, Status: TaskStatusQueued, Title: "dispatched test",
+	}
+	if err := taskQueue.Enqueue(context.Background(), task); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Claim → transitions to StateDispatched
+	claimBody := `{"agent_id":"test-agent-dispatch-001"}`
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/tasks/complete-dispatched-001/claim",
+		bytes.NewBufferString(claimBody))
+	claimRR := httptest.NewRecorder()
+	claimTaskHandler(claimRR, claimReq)
+	if claimRR.Code != http.StatusCreated {
+		t.Skipf("claim returned %d (not 201); skipping SM dispatched path test", claimRR.Code)
+	}
+
+	// Complete → SM.GetState returns StateDispatched → hits the StateRunning||StateDispatched branch
+	completeBody := `{"result":"done","status":"completed"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/complete-dispatched-001/complete",
+		bytes.NewBufferString(completeBody))
+	w := httptest.NewRecorder()
+	completeTaskHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("complete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCompleteTaskHandler_StatusFailed covers the targetState=StateFailed branch.
+func TestCompleteTaskHandler_StatusFailed_Path(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	task := Task{
+		ID: "complete-failed-001", Domain: "test", Project: "proj",
+		Type: TaskTypeFeature, Priority: 5, Status: TaskStatusExecuting, State: StateRunning,
+		Title: "failed test",
+	}
+	taskQueue.Enqueue(context.Background(), task)
+
+	body := `{"result":"failed result","status":"failed"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/complete-failed-001/complete",
+		bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	completeTaskHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for status=failed, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCompleteTaskHandler_LocalSMCreation covers the sm==nil&&db!=nil fallback
+// that creates a local state machine (handlers_task.go:285.28,288.3).
+func TestCompleteTaskHandler_LocalSMCreation(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Ensure the global stateMachine is nil so the local fallback path is taken.
+	oldSM := stateMachine
+	stateMachine = nil
+	defer func() { stateMachine = oldSM }()
+
+	task := Task{
+		ID: "sm-local-001", Domain: "test", Project: "proj",
+		Type: TaskTypeFeature, Priority: 5, Status: TaskStatusExecuting, State: StateRunning,
+		Title: "sm local test",
+	}
+	taskQueue.Enqueue(context.Background(), task)
+
+	body := `{"result":"done","status":"completed"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/sm-local-001/complete",
+		bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	completeTaskHandler(w, req)
+
+	// Accept any non-5xx response — the goal is to hit the sm-creation code path.
+	if w.Code >= 500 {
+		t.Errorf("unexpected server error in local SM path, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCompleteWithApprovalHandler_EmptyTaskID covers the taskID=="" → 400 branch.
+func TestCompleteWithApprovalHandler_EmptyTaskID(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Path that strips to empty taskID
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks//complete-with-approval",
+		bytes.NewBufferString(`{"task_id":"","result":"done"}`))
+	w := httptest.NewRecorder()
+	completeTaskWithApprovalHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty taskID, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCreateTaskHandler_EnqueueError covers the taskQueue.Enqueue failure → 500.
+func TestCreateTaskHandler_EnqueueError(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Close the DB so taskQueue.Enqueue fails.
+	getDBConn().Close()
+
+	body := `{"domain":"test","project":"proj","type":"feature","title":"enqueue error test","priority":5}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	createTaskHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for enqueue error, got %d: %s", w.Code, w.Body.String())
 	}
 }

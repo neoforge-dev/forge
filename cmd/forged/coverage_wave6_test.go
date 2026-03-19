@@ -259,18 +259,6 @@ func TestPatternsHandler_Post_BadJSON(t *testing.T) {
 }
 
 // TestPatternsHandler_MethodNotAllowed tests unsupported methods
-func TestPatternsHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/patterns", nil)
-	w := httptest.NewRecorder()
-	patternsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestListPatternsHandler_W6 tests list with no patterns
 func TestListPatternsHandler_W6(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -364,19 +352,6 @@ func TestPatternByIDOrRunsHandler_MissingID(t *testing.T) {
 }
 
 // TestPatternByIDOrRunsHandler_MethodNotAllowed tests POST on /api/patterns/:id
-func TestPatternByIDOrRunsHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/patterns/test-123", nil)
-	req.URL.Path = "/api/patterns/test-123"
-	w := httptest.NewRecorder()
-	patternByIDOrRunsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestGetPatternByIDHandler_Found tests successful pattern lookup
 func TestGetPatternByIDHandler_Found(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -449,18 +424,6 @@ func TestContextsHandler_Get_WithFilters(t *testing.T) {
 }
 
 // TestContextsHandler_MethodNotAllowed_W6 tests POST on /api/contexts
-func TestContextsHandler_MethodNotAllowed_W6(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/contexts", nil)
-	w := httptest.NewRecorder()
-	contextsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestContextByIDHandler tests GET /api/contexts/:id
 func TestContextByIDHandler_Get(t *testing.T) {
 	cleanup := setupWave5(t)
@@ -685,18 +648,6 @@ func TestTaskHistoryHandler_MissingID_W6(t *testing.T) {
 }
 
 // TestTaskHistoryHandler_MethodNotAllowed_W6 tests POST on history endpoint
-func TestTaskHistoryHandler_MethodNotAllowed_W6(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/tasks/test/history", nil)
-	w := httptest.NewRecorder()
-	taskHistoryHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ============================================================
 // handlers_task.go: pruneTasksHandler
 // ============================================================
@@ -715,36 +666,12 @@ func TestPruneTasksHandler_Post_W6(t *testing.T) {
 }
 
 // TestPruneTasksHandler_MethodNotAllowed_W6 tests GET on prune endpoint
-func TestPruneTasksHandler_MethodNotAllowed_W6(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/prune", nil)
-	w := httptest.NewRecorder()
-	pruneTasksHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ============================================================
 // handlers_openclaw.go: openclawEventsHandler
 // ============================================================
 
 // TestOpenclawEventsHandler_MethodNotAllowed tests non-GET method on events endpoint.
 // GET is the SSE stream method; DELETE triggers 405.
-func TestOpenclawEventsHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/openclaw/events", nil)
-	w := httptest.NewRecorder()
-	openclawEventsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestOpenclawEventsHandler_PostNotAllowed tests that POST returns 405.
 // The endpoint only accepts GET (SSE stream).
 func TestOpenclawEventsHandler_PostNotAllowed(t *testing.T) {

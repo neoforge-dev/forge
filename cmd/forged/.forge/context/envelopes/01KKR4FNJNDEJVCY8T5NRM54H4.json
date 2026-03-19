@@ -1,0 +1,15 @@
+{
+  "id": "01KKR4FNJNDEJVCY8T5NRM54H4",
+  "agent_id": "w125-high-ctx-agent",
+  "domain": "prya",
+  "project": "",
+  "task_id": "",
+  "created_at": "2026-03-15T06:56:05.717960969Z",
+  "expires_at": "2026-03-22T06:56:05.717961029Z",
+  "summary": "Auto-generated: Agent reached 75% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

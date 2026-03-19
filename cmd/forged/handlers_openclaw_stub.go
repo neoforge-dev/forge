@@ -1,13 +1,11 @@
-//go:build !openclaw
-// +build !openclaw
+//go:build tmux_bridge
+// +build tmux_bridge
 
 package main
 
 import "net/http"
 
-// openclawHandler is a no-op stub when built without the openclaw tag.
-// Full implementation: handlers_openclaw.go (build with -tags openclaw)
-// Future: ADR-031 plugin system will replace this build-tag approach.
+// openclawHandler stub for tmux_bridge builds only.
 func openclawHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "openclaw integration not enabled in this build", http.StatusNotFound)
 }

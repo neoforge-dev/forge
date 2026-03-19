@@ -157,6 +157,7 @@ var configListCmd = &cobra.Command{
 }
 
 func init() {
+	// initCmd and envCmd visible — setup and configuration are user-facing
 	// Add commands to config noun
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)
@@ -205,11 +206,44 @@ var initCmd = &cobra.Command{
 			defaultNodeID = h
 		}
 
+		// Auto-detect profile
+		suggestedProfile := detectInitProfile(defaultNodeID)
+		fmt.Printf("\nAuto-detected: hostname=%s, FORGE_ROOT=%s\n", defaultNodeID, os.Getenv("FORGE_ROOT"))
+		fmt.Printf("\nWhat's your role?\n")
+		fmt.Printf("  1) solo       — local dev, no fleet\n")
+		fmt.Printf("  2) worker     — fleet agent, join a hub\n")
+		fmt.Printf("  3) hub        — orchestrator, manage fleet\n")
+		fmt.Printf("  4) portfolio  — business lead, full stack\n")
+		profileMap := map[string]string{"1": "solo", "2": "worker", "3": "hub", "4": "portfolio"}
+		profileDefault := "3"
+		for k, v := range profileMap {
+			if v == suggestedProfile {
+				profileDefault = k
+			}
+		}
+		fmt.Printf("\nChoice [%s]: ", profileDefault)
+		profile := suggestedProfile
+		if scanner := bufio.NewScanner(os.Stdin); scanner.Scan() {
+			choice := strings.TrimSpace(scanner.Text())
+			if choice == "" {
+				choice = profileDefault
+			}
+			if p, ok := profileMap[choice]; ok {
+				profile = p
+			}
+		}
+		fmt.Printf("Profile: %s\n\n", profile)
+
 		// Prompts (flags override when set)
 		daemonURL, _ := cmd.Flags().GetString("control-plane")
 		if daemonURL == "" || daemonURL == internal.DefaultControlPlaneURL {
 			daemonURL = defaultURL
-			fmt.Printf("Daemon URL [%s]: ", defaultURL)
+			// Worker nodes need to know hub address; hub defaults to localhost
+			if profile == "worker" {
+				fmt.Printf("Hub address [%s]: ", defaultURL)
+			} else {
+				fmt.Printf("Daemon URL [%s]: ", defaultURL)
+			}
 			if scanner := bufio.NewScanner(os.Stdin); scanner.Scan() && strings.TrimSpace(scanner.Text()) != "" {
 				daemonURL = strings.TrimSpace(scanner.Text())
 			}
@@ -225,9 +259,11 @@ var initCmd = &cobra.Command{
 		}
 
 		apiToken := ""
-		fmt.Print("API Token (leave empty for local mode): ")
-		if scanner := bufio.NewScanner(os.Stdin); scanner.Scan() {
-			apiToken = strings.TrimSpace(scanner.Text())
+		if profile != "solo" {
+			fmt.Print("API Token (leave empty for local mode): ")
+			if scanner := bufio.NewScanner(os.Stdin); scanner.Scan() {
+				apiToken = strings.TrimSpace(scanner.Text())
+			}
 		}
 
 		port := 8081
@@ -258,6 +294,8 @@ var initCmd = &cobra.Command{
 		}
 
 		configContent := fmt.Sprintf(`# FORGE v3 daemon config (ADR-030)
+profile = %q
+
 [daemon]
 port = %d
 ws_port = %d
@@ -268,14 +306,15 @@ forge_root = %q
 [auth]
 mode = %q
 api_token = %q
-`, port, wsPort, dbPath, nodeID, forgeRoot, authMode, apiToken)
+`, profile, port, wsPort, dbPath, nodeID, forgeRoot, authMode, apiToken)
 
 		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 			return fmt.Errorf("failed to write config file: %w", err)
 		}
 
 		fmt.Printf("Writing %s... done.\n", configPath)
-		fmt.Printf("Config written to %s\n", configPath)
+		fmt.Printf("\n✓ Config written to %s\n", configPath)
+		fmt.Printf("✓ Profile: %s\n", profile)
 
 		// Optional: also write legacy config.toml for viper/CLI
 		legacyPath := filepath.Join(home, ".forge", "config.toml")
@@ -291,10 +330,43 @@ forge_root = "%s"
 		_ = os.WriteFile(legacyPath, []byte(legacyContent), 0644)
 
 		fmt.Printf("\nNext steps:\n")
-		fmt.Printf("  forge daemon start    # start the local daemon (uses %s)\n", configPath)
-		fmt.Printf("  forge status          # verify fleet connectivity\n")
+		switch profile {
+		case "hub":
+			fmt.Printf("  forge daemon start    # start the local daemon\n")
+			fmt.Printf("  forge status          # verify fleet connectivity\n")
+			fmt.Printf("  forge fleet windows   # see agent windows\n")
+		case "worker":
+			fmt.Printf("  forge work --daemon   # start autonomous task claim loop\n")
+			fmt.Printf("  forge agent list      # verify you're registered\n")
+		case "solo":
+			fmt.Printf("  forge daemon start    # start the local daemon\n")
+			fmt.Printf("  forge task create --title \"My first task\" --domain test --project demo --type feature\n")
+		case "portfolio":
+			fmt.Printf("  forge daemon start    # start the local daemon\n")
+			fmt.Printf("  forge status          # fleet health snapshot\n")
+			fmt.Printf("  forge approval list   # review pending approvals\n")
+		default:
+			fmt.Printf("  forge daemon start    # start the local daemon (uses %s)\n", configPath)
+			fmt.Printf("  forge status          # verify fleet connectivity\n")
+		}
 		return nil
 	},
+}
+
+// detectInitProfile suggests a role based on environment signals.
+func detectInitProfile(hostname string) string {
+	if agentType := os.Getenv("FORGE_AGENT_TYPE"); agentType == "fleet" {
+		return "worker"
+	}
+	if p := os.Getenv("FORGE_PROFILE"); p != "" {
+		return p
+	}
+	// Known orchestrator nodes default to hub
+	knownHubs := map[string]bool{"prya": true, "sati": true, "nova": true, "gaea": true, "vega": true}
+	if knownHubs[hostname] {
+		return "hub"
+	}
+	return "hub" // safe default
 }
 
 // testControlPlaneConnection does a quick HTTP GET to the control plane health endpoint.

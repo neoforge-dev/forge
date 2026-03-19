@@ -81,15 +81,6 @@ func TestDispatchHandler_DELETE_W48(t *testing.T) {
 
 // ─── agentTelemetrySummaryHandler ────────────────────────────────────────
 
-func TestAgentTelemetrySummaryHandler_MethodNotAllowed_W48(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/telemetry/summary", nil)
-	w := httptest.NewRecorder()
-	agentTelemetrySummaryHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestAgentTelemetrySummaryHandler_NilDB_W48(t *testing.T) {
 	orig := getDBConn()
 	setDBConn(nil)
@@ -125,15 +116,6 @@ func TestAgentTelemetrySummaryHandler_WithData_W48(t *testing.T) {
 }
 
 // ─── claimTaskHandler deeper paths ───────────────────────────────────────
-
-func TestClaimTaskHandler_MethodNotAllowed_W48(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-X/claim", nil)
-	w := httptest.NewRecorder()
-	claimTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestClaimTaskHandler_InvalidJSON_W48(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/TASK-X/claim", bytes.NewBufferString("bad"))

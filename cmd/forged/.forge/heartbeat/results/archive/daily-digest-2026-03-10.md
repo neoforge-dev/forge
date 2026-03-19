@@ -1,0 +1,154 @@
+# FORGE Daily Digest — 2026-03-10
+
+**Generated:** 2026-03-10 01:20 UTC
+
+## Tasks (24h)
+- Completed: 0
+- Failed/Abandoned: 0
+
+## Patrols
+- Errors: 0
+
+## Recent Commits
+- 45ea8a5c test(forge-v3): coverage wave 138 — agentsSSEHandler, fleetScaleRecommendPatrol, TUI handler
+- f27f551f feat(portfolio/is): IS activation — onboarding tighten + activated_at tracking
+- b4a890da docs(plan): S98 re-plan — Epic 2 complete, IS activation next; README GitHub Loop; ADR-041 approved
+- cb6a7bf2 docs(prompt): S97 — Epic 2 GitHub Loop COMPLETE, next S98 focus
+- 779f89d9 feat(github-loop): Epic 2 Phase 4 — auto-merge on forge approval decide
+- e0c4282e feat(github-loop): Epic 2 Phase 3 — merge approval record in forge approval list
+- 86120366 feat(github-loop): Epic 2 Phase 2 — PR creation on task completion
+- 991b8a94 docs(prompt): S96 session 2 — Epic 2 Phase 1 complete, IS blog confirmed
+- cc7f8a5e feat(github-loop): Epic 2 Phase 1 — completion feedback to GitHub issues
+- 8d59bfff chore(session): log S97 wave137 + fleet delegation 2026-03-10
+- 1238ec1f chore(session): log S96 coverage wave 137 + fleet cleanup 2026-03-10
+- 102498c4 docs(plan): S96 infrastructure state — 82.7% coverage, H2 started
+- e41435dc chore(forge): H2-1 .forge/ cleanup — remove stale scripts + old DBs
+- 43817000 feat(cli/horizon2): H2-2 forge init profile wizard — role detection + profile-aware steps
+- 7ec4de2c docs(adr): update INDEX with ADR-041 proposed + ADR-027 dropped
+- 24a80302 docs(adr): ADR-041 public/private repo split — proposed
+- c4fd3e2d docs(prompt): S96 sprint state — 82.7% coverage, H1 complete, revenue focus
+- 4b0df181 test(forge-v3): coverage wave137 — handler gap coverage (82.7%)
+- 7e1db2b7 chore(context): update failures.json + openclaw results S95
+- d9f71570 fix(test): wave116 NoAutoSpawnNodes tests use actual hostname
+- be9f16a6 fix(fleet-scaler): vacuum stale scale_recommendations rows older than 7 days
+- 20c4f10a test(forge-v3): coverage waves 135-136 — patrol handlers, fleet-auto, dispatch
+- 4b1edabd chore(session): log coverage waves 130-134 + patrol upgrade 2026-03-09
+- a1ddae73 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 2dd494f6 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 46df9c4b chore(node-5): add node-5 context + advance portfolio submodule pointers
+- 4c65ac38 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 93a16b9f chore(h2-cleanup): delete obsolete scripts + dead .forge/ dirs
+- 0d649802 docs: add HEARTBEAT.md, FORGE_BIG_PICTURE.md, update node-3 context
+- 7c9cbc68 chore(gates): GATE D+E done — Stripe + API keys configured on node-3 + node-1
+- 069c1a59 chore(gate-b): drop ADR-027 cross-node push — hub model is final
+- bbc8dc6b fix(patrol): binary-freshness build failure returns nil to avoid breaking patrol loop
+- e6ab795c chore(gate-a): delete harness/command_center/ — ADR-014 complete
+- bf0122ce docs(plan): refresh PLAN.md to S95 — correct ADR-014 status, revenue gates, fleet state
+- 6986089a docs: INFRA_REVIEW_2026_03_09 — honest ADR status + gap analysis
+- b8f467fc feat(ui): HTMX patrol drill-down + task kanban view
+- 7b28a838 test(forged): coverage wave 120 — push 82.1% → 82.4%
+- 7f41b825 fix(cli/daemon): surface real task titles + pending approvals in status
+- bce40ceb test(forge-v3): coverage waves 131-133 — github webhook, agentTasks, fleet_scaler, plan.go
+- 40f05d7b test(forge-v3): coverage wave 134 — xnode handlers, RegisterNode, Heartbeat, detectTailscaleIP
+- e58fb234 feat(patrol): binary-freshness patrol auto-rebuilds and restarts daemon on source change
+- dc90b0d9 test(forge-v3): coverage wave 130 — openclaw SSE, agentsSSE, systemHealth, taskLogs, parity, PWA agents
+- ad135907 test(forge-v3): wave 129 — worktree_manager + fix websocket_wave113 panic
+- a02fc09f test(forge-v3): coverage wave 128 — routing_config, context, context_sync
+- 487795d6 test(forge-v3): coverage waves 126-127 — migrate, dashboard, TUI, gitguard, lease, event_bus
+- 5c43e0b0 test(forge-v3): coverage waves 124-125 — patrol, PWA handlers, telemetry, syncRoyalJelly
+- 416298f5 test(forged): coverage wave 123 — handleQueueDepth error path, SSE handlers, fleet scale
+- 4018dddb test(forged): coverage wave 122 — patrol error branches, resultIngest, staleTaskTTL
+- 2eb9d21f test(forged): coverage wave 121 — fleetAutoDeflate deep paths, PWA handlers
+- 8f9c3ae6 test(forged): coverage wave 120 — fleetAutoExecutePatrol deep paths
+- 35b632c8 chore(horizon1): H1-W3/W4 — delete dead .forge/v4/ + fix stale queue tests
+- bf75dff4 chore: clean up obsolete v3/v4 tracking files + deprecate up/down commands
+- e95b7406 feat(cli/horizon1): H1-4 patrol groups + H1-5 profile-aware status
+- 3c083266 feat(cli/horizon1): surface discipline — H1-1 + H1-2 + H1-3
+- 2ad96035 chore(handoff): session handoff 2026-03-09 S94 — surface discipline plan + 3 features shipped
+- 0af85574 docs(plan): SURFACE_DISCIPLINE_PLAN — council-reviewed 3-horizon simplification
+- 798c6f18 feat(portfolio): advance confirms routing tier via /api/routing/resolve
+- 67a59e04 feat(work-daemon): exponential backoff + circuit breaker on empty queue / API errors
+- d70fc5f2 feat(github): webhook comment-back — post FORGE task ID on issue creation
+- 0d0a2105 chore(handoff): session handoff 2026-03-09 S93 — routing+portfolio+github+patrol shipped
+- 9d2334a3 test(forged): coverage wave 119 — MigrateDown, Dashboard handlers, syncRoyalJelly
+- d6e74fe4 test(forged): coverage wave 118 — error branches, TUI handlers, websocket
+- c5fb3be1 test(forged): coverage waves 115-117 — queue depth, fleet patrol, routing handlers
+- b768e6a0 test(forged): coverage waves 110+114 — cli_commands, xnode paths
+- 40d2e171 test(forged): coverage wave 112 — completion, context, envelope handlers
+- 7ecc69b1 feat(patrol): add migration 049 + tests for patrol_executions audit table
+- 262799c3 feat(s93): portfolio advance + github webhook — two of three tasks
+- eab94de2 feat(epic3): portfolio-stage routing + approval tiers — Phase 1+2
+- 593303e6 refactor(patrol): consolidate 31→25 patrols — merge 4 redundant groups
+- d8a356d1 fix(forge-terminal): fix TerminalBuffer coordinate system for tmux compatibility
+- 552c3d62 fix(forge-terminal): tmux compatibility — SO/SI charsets + DA/CPR responses
+- 0ecb7151 Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 7cd7a51b feat(forge-terminal): LocalEchoSession — local terminal now interactive
+- 3ee9f331 chore(context): resolve merge conflict — keep upstream node-2 lead-context
+- 18bfc721 chore(context): update forge domain failures.json — coverage ceiling lessons
+- d56420cc docs(readme): lead with differentiators, surface hidden fleet commands
+- 5ad6f483 feat(routing): Epic 1 Phase 2 — forge dispatch auto uses routing endpoint
+- c3293597 feat(routing): Epic 1 Phase 1 — POST /api/routing/resolve endpoint
+- 4c8f7d40 docs(plan): update PLAN.md to S92 — correct coverage, ADR status, 4-epic roadmap
+- a978da1c chore(handoff): session handoff 2026-03-09 S92 — CC deleted, council dispatched
+- 63710692 chore(adr-014): retire Command Center — forged is sole control plane
+- c44978fc docs(prompt): update session state — infra review complete, gates identified
+- 075de5e6 chore(git): untrack xnode outbox (already gitignored) + context IDs
+- bae161d0 test(forged): add coverage tier1+tier2 tests — 81.8% → 82.1%
+- 6181c9bb fix(adr-036): update catalog.toml — fix forge-v3 refs, update coverage cmd
+- 5c8e94f6 chore(context): update Royal Jelly + gitignore cmd/forge-v3/ entirely
+- 47e3eb47 docs(prompt): update session state — post-split complete, current targets
+- 958d5a13 fix(tests): fix pre-existing pattern + status test failures
+- 5abf6590 fix(tests): align DefaultURL test with localhost:8081; delete V3 legacy docs
+- e315a27e chore(forge-v3): remove orphaned test files from cmd/forge-v3/
+- bf7d12f5 test(split): council tests + doc checklist updates
+- df31ebc6 docs(split): council epics 1-4 — contract layer alignment
+- 9c13175e chore(submodules): update portfolio submodule refs
+- e83fbcb3 chore(forge): persist Royal Jelly context + task results (S89/W106)
+- 7dd9a4ec fix(tests): align test expectations with P0 safety fixes
+- 02fd3576 fix(fleet-scaler): disable auto-spawn on node-1 + fix deleted fleetScaleRecommend test refs
+- 7fdd95fc Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 6868b1bf docs(prompt): update Blink parity status — SOCKS5 wired, Test button confirmed
+- b9586d40 fix(hooks): make pre-commit hook portable across nodes
+- 83e55e91 chore(portfolio): advance submodule pointers to latest fleet work
+- 93922c1b test(forge-v3): coverage waves 76-87 — reach 80% statement coverage
+- 5b17308a Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- a39d5184 feat(forge-terminal): wire SOCKS5Server to PortForwardingDelegate (-D dynamic forward)
+- 93a5f5af chore(split): go mod tidy after module rename + forge domain failures.json
+- 335ee9ed feat(split): Gate 5 — private repo integration + config migration + doc cleanup
+- 05fb0199 docs(split): update node-2 context — Gates 0-4 complete, public repo live
+- ea9abe4a fix(split): Gate 4.1 pre-copy — fix checker violations in active docs
+- c4e18785 feat(split): Gates 2+3 — examples dir, config paths, OpenClaw build tag
+- 3335ad22 fix(forge-terminal): wire fontFamily to Metal renderer + default relay URL
+- f715a295 fix(patrols): P1 fixes — syncRoyalJelly path, remove dead fleetScaleRecommend
+- 34e78f66 fix(patrols): P0 safety fixes — data-retention, confidence-approve, fleet scaler race
+- 71fa96e1 test(forge-v3): coverage wave 109 — migrate, lease, gitguard, xnode, fleet readLoadAverage
+- 8769d4d7 fix(fleet-scaler): executor-side ForbiddenAgentTypes guard + fail-closed budget gate
+- 066655a0 test(forge-v3): coverage wave 107 — openclaw handlers, task queue, approval service, patrol branches
+- 00aada79 test(forge-v3): coverage wave 108 — SSE handlers, fleet auto-execute, dash, parity
+- 4888a1da test(forge-v3): coverage waves 104-106 — relay handlers, xnode retry, fleet scale, approvals, health
+- af34e349 feat(split): Gates 0+1 — guardrail scripts + module rename + hostname cleanup
+- 49fbd762 feat(forge-terminal): tab persistence, iTerm2 theme import, MoshHandshake tests
+- fa6ba82e chore(handoff): session handoff 2026-03-09 — split plan v1.1 complete
+- de3ec99b docs(split): add synthesis plan v1.1 with council review findings
+- 361ff985 fix(fleet-scaler): 6 P0/P1 safety fixes — no-claude-on-node-1, idempotency, root detection
+- c2d9b4c1 test(forge-v3): add ADR-014 integration test + update node-2 context
+- 18ca25b7 feat(forge): forge lock command — port git-lock.sh to Go (243 lines bash → native CLI)
+- 2b4edd8b chore(consolidation): delete start-orchestrator.sh + clean forge-v3 metadata
+- 7639f86e Merge branch 'main' of https://github.com/neoforge-dev/FORGE
+- 6eaf71ab docs: remove stale Python CLI references from migration guide and runbooks
+- 087a0bd7 chore(gitignore): ignore cmd/forge-v3/cov*.out coverage artifacts
+- a776e689 chore(scripts): delete 5 obsolete scripts — CC-era and deprecated
+- 08c5aac5 chore(hygiene): merge local changes — wave107 coverage test, public release checklist, boundary check script
+- 934f79a4 chore(git): untrack forged binary + add pid to gitignore
+- ec45d64a feat(forge): add --format json to forge doctor
+- f804a6b7 feat(forge): fleet metrics CLI + task claim/complete ergonomics
+- a4e4eb5d docs(adr): update council vote record with codex ballot
+- 31e50498 docs(claude): update CLAUDE.md for ADR-040 completion
+- 05871b83 docs(adr): council votes 2026-03-09 — 6 ADR status decisions
+- e41fc67c docs(prompt): ADR-040 COMPLETE — cli_v2 reduced to ios.py only
+- ca32a2f9 refactor(cli): Wave 6 deletions — ADR-040 complete (cli_v2 → ios.py only)
+- 9f797077 docs(prompt): ADR-040 Wave 5 complete — state/git/check ported, df.py decision made
+- 66061554 refactor(cli): Wave 5 deletions — state_manager.py + git_guard.py + check.py + 5 tests
+- 71ebf5a3 feat(forge): forge state + forge git guard/commit/mutex + forge check — ADR-040 Wave 5
+- e01c04a0 docs(prompt): update ADR-040 progress — Wave 4 done, 3 worktrees running
+- 28ec9acc refactor(cli): Wave 4 deletions — 11 CC-dependent Python modules + 11 tests + 2 scripts

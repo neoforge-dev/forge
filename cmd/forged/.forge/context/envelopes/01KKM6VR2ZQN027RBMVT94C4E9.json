@@ -1,0 +1,15 @@
+{
+  "id": "01KKM6VR2ZQN027RBMVT94C4E9",
+  "agent_id": "wave87-env-agent",
+  "domain": "codeswiftr",
+  "project": "proj",
+  "task_id": "wave87-env-task",
+  "created_at": "2026-03-13T18:20:40.927899989Z",
+  "expires_at": "2026-03-20T18:20:40.927900209Z",
+  "summary": "test",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

@@ -97,15 +97,6 @@ func TestCheckGates_UnknownGate_W58(t *testing.T) {
 
 // ─── pauseTaskHandler ─────────────────────────────────────────────────────
 
-func TestPauseTaskHandler_MethodNotAllowed_W58(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-W58/pause", nil)
-	w := httptest.NewRecorder()
-	pauseTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestPauseTaskHandler_MissingID_W58(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks//pause", nil)
 	req.URL.Path = "/api/tasks//pause"

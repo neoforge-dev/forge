@@ -34,7 +34,8 @@ type ContextSync struct {
 	lastDBUpdate map[string]time.Time
 	dbMu         sync.RWMutex
 
-	stopCh chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewContextSync creates a new bidirectional sync manager
@@ -93,10 +94,12 @@ func (cs *ContextSync) Start() error {
 	return nil
 }
 
-// Stop stops the filesystem watcher
+// Stop stops the filesystem watcher. Safe to call multiple times.
 func (cs *ContextSync) Stop() {
-	close(cs.stopCh)
-	cs.watcher.Close()
+	cs.stopOnce.Do(func() {
+		close(cs.stopCh)
+		cs.watcher.Close()
+	})
 }
 
 func (cs *ContextSync) syncLoop() {

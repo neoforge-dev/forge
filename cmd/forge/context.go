@@ -341,6 +341,7 @@ func buildBar(pct float64, n int) string {
 }
 
 func init() {
+	contextCmd.Hidden = true
 	// context list flags
 	contextListCmd.Flags().String("domain", "", "Filter by domain")
 	contextListCmd.Flags().String("project", "", "Filter by project")

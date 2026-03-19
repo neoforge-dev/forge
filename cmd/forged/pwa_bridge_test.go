@@ -47,6 +47,79 @@ func TestPWADashboardHandlers(t *testing.T) {
 	}
 }
 
+// TestPWADashboardHandlers_HandleAgents_WithAgents verifies that handleAgents
+// correctly populates the pwaAgents slice when agents are in the DB.
+// This covers the for-range loop body in handleAgents.
+func TestPWADashboardHandlers_HandleAgents_WithAgents(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Insert a heartbeat so the loop body is exercised.
+	_, err := db.Exec(`
+		INSERT INTO agent_heartbeats (agent_id, node, status, context_pct, capabilities, last_seen, connected_at)
+		VALUES ('pwa-test-agent', 'test-node', 'active', 0.5, 'task,review', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatalf("insert heartbeat: %v", err)
+	}
+
+	h := NewPWADashboardHandler(NewDashboard(db, nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/agents", nil)
+	w := httptest.NewRecorder()
+	h.handleAgents(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPWADashboardHandlers_HandleAgents_NilDashboard verifies that handleAgents
+// returns 503 when the dashboard field is nil.
+func TestPWADashboardHandlers_HandleAgents_NilDashboard(t *testing.T) {
+	h := &PWADashboardHandler{dashboard: nil}
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/agents", nil)
+	w := httptest.NewRecorder()
+	h.handleAgents(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 for nil dashboard, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPWADashboardHandlers_HandleSummary_WithAgents verifies that handleSummary
+// populates the agents list in the response when agents are present.
+// This covers the for-range body at handlers_pwa_bridge.go:88.
+func TestPWADashboardHandlers_HandleSummary_WithAgents(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	_, err := db.Exec(`
+		INSERT INTO agent_heartbeats (agent_id, node, status, context_pct, capabilities, last_seen, connected_at)
+		VALUES ('summary-agent', 'node1', 'active', 0.3, 'task', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatalf("insert heartbeat: %v", err)
+	}
+
+	h := NewPWADashboardHandler(NewDashboard(db, nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil)
+	w := httptest.NewRecorder()
+	h.handleSummary(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPWADashboardHandlers_HandleSummary_NilDashboard verifies that handleSummary
+// returns 503 when the dashboard field is nil.
+func TestPWADashboardHandlers_HandleSummary_NilDashboard(t *testing.T) {
+	h := &PWADashboardHandler{dashboard: nil}
+	req := httptest.NewRequest(http.MethodGet, "/api/dashboard/summary", nil)
+	w := httptest.NewRecorder()
+	h.handleSummary(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 for nil dashboard, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPWADashboardHandlers_Error(t *testing.T) {
 	// Test with valid DB — verify handler returns 200
 	db, cleanup := setupClaimTestDB(t)

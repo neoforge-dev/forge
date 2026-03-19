@@ -1,0 +1,2 @@
+"""CLI helper tests."""
+

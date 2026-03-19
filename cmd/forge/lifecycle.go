@@ -250,6 +250,10 @@ func trimSpaces(s string) string {
 }
 
 func init() {
+	upCmd.Hidden = true
+	upCmd.Deprecated = "use 'forge daemon start' instead"
+	downCmd.Hidden = true
+	downCmd.Deprecated = "use 'forge daemon stop' instead"
 	upCmd.Flags().Bool("skip-agents", false, "Skip launching agent tmux windows")
 	upCmd.Flags().String("tmux", "", "tmux session name to create agent windows in (e.g. forge)")
 

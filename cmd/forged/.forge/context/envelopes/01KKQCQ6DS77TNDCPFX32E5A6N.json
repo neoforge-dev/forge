@@ -1,0 +1,15 @@
+{
+  "id": "01KKQCQ6DS77TNDCPFX32E5A6N",
+  "agent_id": "prya",
+  "domain": "prya",
+  "project": "",
+  "task_id": "",
+  "created_at": "2026-03-15T00:00:46.521746588Z",
+  "expires_at": "2026-03-22T00:00:46.521746728Z",
+  "summary": "Auto-generated: Agent reached 53% context threshold",
+  "decisions": null,
+  "failures": null,
+  "calibration": null,
+  "key_files": null,
+  "metadata": {}
+}

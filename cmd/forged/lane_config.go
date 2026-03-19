@@ -12,8 +12,9 @@ import (
 )
 
 type LaneConfig struct {
-	Gates      []string `yaml:"gates"`
-	Thresholds struct {
+	Description string   `yaml:"description"`
+	Gates       []string `yaml:"gates"`
+	Thresholds  struct {
 		Coverage      float64 `yaml:"coverage"`
 		MaxLintIssues int     `yaml:"max_lint_issues"`
 	} `yaml:"thresholds"`

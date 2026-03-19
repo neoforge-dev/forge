@@ -661,20 +661,6 @@ func TestWave63_IsTitleJunk_FeatureSuffix(t *testing.T) {
 
 // ─── queueTaskHandler additional branches ─────────────────────────────────────
 
-func TestWave63_QueueTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/task-w63-q/queue", nil)
-	req.URL.Path = "/api/tasks/task-w63-q/queue"
-	w := httptest.NewRecorder()
-	queueTaskHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("queueTaskHandler GET: expected 405, got %d", w.Code)
-	}
-}
-
 func TestWave63_QueueTaskHandler_EmptyTaskID(t *testing.T) {
 	cleanup := setupHandlerTest(t)
 	defer cleanup()
@@ -704,20 +690,6 @@ func TestWave63_QueueTaskHandler_TaskNotFound(t *testing.T) {
 }
 
 // ─── pauseTaskHandler branches ────────────────────────────────────────────────
-
-func TestWave63_PauseTaskHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/task-w63-p/pause", nil)
-	req.URL.Path = "/api/tasks/task-w63-p/pause"
-	w := httptest.NewRecorder()
-	pauseTaskHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("pauseTaskHandler GET: expected 405, got %d", w.Code)
-	}
-}
 
 func TestWave63_PauseTaskHandler_TaskNotFound(t *testing.T) {
 	cleanup := setupHandlerTest(t)

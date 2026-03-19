@@ -337,12 +337,12 @@ func TestIntegration_PatternCommands(t *testing.T) {
 	})
 
 	t.Run("pattern_show", func(t *testing.T) {
-		output, err := suite.runCLI(t, "pattern", "show", "fastapi-endpoint")
+		output, err := suite.runCLI(t, "pattern", "show", "api_endpoint:simple")
 		if err != nil {
 			t.Errorf("pattern show failed: %v", err)
 		}
-		if !strings.Contains(output, "FastAPI") {
-			t.Errorf("expected FastAPI in output, got: %s", output)
+		if !strings.Contains(output, "Simple API") && !strings.Contains(output, "api_endpoint") {
+			t.Errorf("expected pattern details in output, got: %s", output)
 		}
 	})
 }

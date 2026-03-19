@@ -263,6 +263,7 @@ func hasNpmScript(script string) bool {
 }
 
 func init() {
+	shipCmd.Hidden = true
 	// Add flags
 	shipRunCmd.Flags().StringP("message", "m", "", "Commit message (required)")
 	shipRunCmd.Flags().Bool("dry-run", false, "Show what would happen without executing")

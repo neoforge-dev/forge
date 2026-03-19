@@ -123,32 +123,32 @@ func TestPatternShowFormats(t *testing.T) {
 	runner := NewTestRunner(t)
 
 	t.Run("table", func(t *testing.T) {
-		out, err := runner.Execute("pattern", "show", "fastapi-endpoint")
+		out, err := runner.Execute("pattern", "show", "api_endpoint:simple")
 		if err != nil {
 			t.Fatalf("pattern show: %v", err)
 		}
-		if out != "" && !strings.Contains(out, "FastAPI") && !strings.Contains(out, "fastapi-endpoint") {
+		if out != "" && !strings.Contains(out, "Simple API") && !strings.Contains(out, "api_endpoint:simple") {
 			t.Errorf("expected pattern details: %s", out)
 		}
 	})
 
 	t.Run("json", func(t *testing.T) {
-		out, err := runner.Execute("pattern", "show", "fastapi-endpoint", "--format", "json")
+		out, err := runner.Execute("pattern", "show", "api_endpoint:simple", "--format", "json")
 		if err != nil {
 			t.Fatalf("pattern show --format json: %v", err)
 		}
-		if out != "" && !strings.Contains(out, "fastapi-endpoint") {
+		if out != "" && !strings.Contains(out, "api_endpoint:simple") {
 			t.Errorf("expected JSON with id: %s", out)
 		}
 	})
 
 	t.Run("render", func(t *testing.T) {
-		out, err := runner.Execute("pattern", "show", "fastapi-endpoint", "--render")
+		out, err := runner.Execute("pattern", "show", "api_endpoint:simple", "--render")
 		if err != nil {
 			t.Fatalf("pattern show --render: %v", err)
 		}
-		if out != "" && !strings.Contains(out, "@router") && !strings.Contains(out, "resource_name") {
-			t.Errorf("expected template body: %s", out)
+		if out != "" && !strings.Contains(out, "api_endpoint") && !strings.Contains(out, "Simple API") {
+			t.Errorf("expected pattern content in render output: %s", out)
 		}
 	})
 }

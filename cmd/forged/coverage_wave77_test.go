@@ -380,36 +380,10 @@ func TestWave76_DispatchHandler_Post_InvalidBody(t *testing.T) {
 	}
 }
 
-func TestWave76_DispatchHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodDelete, "/api/dispatch", nil)
-	w := httptest.NewRecorder()
-	dispatchHandler(w, r)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("dispatchHandler DELETE: expected 405, got %d", w.Code)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // handlers_task.go: claimTaskHandler — 68.4%
 // Test method not allowed, missing body, missing agent_id.
 // ---------------------------------------------------------------------------
-
-func TestWave76_ClaimTaskHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodGet, "/api/tasks/wave76-task/claim", nil)
-	w := httptest.NewRecorder()
-	claimTaskHandler(w, r)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("claimTaskHandler GET: expected 405, got %d", w.Code)
-	}
-}
 
 func TestWave76_ClaimTaskHandler_MissingAgentID(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)

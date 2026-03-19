@@ -185,7 +185,7 @@ func TestWave76_GenerateEnvelope_Success(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	envelope, err := cm.GenerateEnvelope(context.Background(), "agent-76", "test-domain", "test-project", "TASK-76", "wave76 test")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestWave76_GenerateEnvelope_WithContextFiles(t *testing.T) {
 	os.MkdirAll(domainDir, 0755)
 	os.WriteFile(domainDir+"/lead-context.md", []byte("# Test Domain\n\nContext here."), 0644)
 
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	envelope, err := cm.GenerateEnvelope(context.Background(), "agent-76b", "test-dom", "project-x", "TASK-76b", "with files")
 	if err != nil {
 		t.Fatalf("GenerateEnvelope with files: %v", err)

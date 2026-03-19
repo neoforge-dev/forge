@@ -1,0 +1,44 @@
+# Python Profiling Analysis Prompt
+
+Analyze the following Python profiling data and provide actionable optimization recommendations.
+
+## Input Data
+```json
+{{profiling_data}}
+```
+
+## Analysis Tasks
+
+1. **Identify Hot Paths**: Find the top 3-5 functions consuming the most CPU time
+2. **Call Frequency Analysis**: Identify functions called excessively (potential optimization targets)
+3. **I/O Bottlenecks**: Look for database, file, or network operations
+4. **Algorithmic Issues**: Detect O(n²) or worse complexity patterns
+
+## Output Format
+
+### Summary
+- Total execution time: X ms
+- Top bottleneck: [function name] (Y% of total time)
+- Severity: [Critical/High/Medium/Low]
+
+### Hot Functions
+```
+1. [function_name] - [time]ms ([%] of total)
+   Location: [file:line]
+   Calls: [count]
+   Recommendation: [specific action]
+
+2. [function_name] - [time]ms ([%] of total)
+   ...
+```
+
+### Optimization Recommendations (Prioritized)
+1. **[P0 - Critical]**: [Description and specific code change]
+2. **[P1 - High]**: [Description and specific code change]
+3. **[P2 - Medium]**: [Description and specific code change]
+
+### Quick Wins
+- [List of easy optimizations with high impact]
+
+### Follow-up Actions
+- [What to profile next after implementing fixes]

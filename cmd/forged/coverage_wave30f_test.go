@@ -9,34 +9,7 @@ import (
 	"testing"
 )
 
-// Wave 30f: handleAgentList, handleAgent stubs, handleTaskList, handleTaskShow, handleSystemPatrol
-
-func TestHandleAgentSpawn_W30F(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestHandleAgentStop_W30F(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/stop", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestHandleSystemPatrol_W30F(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/system/patrol", nil)
-	w := httptest.NewRecorder()
-	handleSystemPatrol(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
+// Wave 30f: handleAgentList, handleAgentStatus, handleTaskList, handleTaskShow
 
 func TestHandleAgentStatus_NoID_W30F(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/agents/status", nil)

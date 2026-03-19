@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,12 @@ import (
 )
 
 func TestStatusUsesConfiguredControlPlane(t *testing.T) {
+	// Skip if local daemon is already running on :8081 — we can't isolate
+	// isPortListening() from the real system daemon in that case.
+	if conn, err := net.DialTimeout("tcp", "localhost:8081", 50*time.Millisecond); err == nil {
+		conn.Close()
+		t.Skip("local daemon running on :8081; skipping offline-daemon assertion")
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 

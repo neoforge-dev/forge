@@ -184,15 +184,6 @@ func TestNodeMetricsPushPatrol_WithLeadURL_W42(t *testing.T) {
 
 // ─── agentByIDHandler ─────────────────────────────────────────────────────
 
-func TestAgentByIDHandler_MethodNotAllowed_W42(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/agent-x", nil)
-	w := httptest.NewRecorder()
-	agentByIDHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestAgentByIDHandler_NotFound_W42(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()

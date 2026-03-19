@@ -1,0 +1,307 @@
+name: Security Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'codeswiftr-com/interview-simulator/backend/**'
+      - 'codeswiftr-com/interview-simulator/frontend/**'
+      - '.github/workflows/security-tests.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'codeswiftr-com/interview-simulator/backend/**'
+      - 'codeswiftr-com/interview-simulator/frontend/**'
+      - '.github/workflows/security-tests.yml'
+  schedule:
+    # Run security tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  # Require minimum security test coverage
+  MIN_SECURITY_COVERAGE: 85
+  # Fail build on security test failures
+  FAIL_ON_SECURITY_FAILURE: true
+
+jobs:
+  security-tests-backend:
+    name: Backend Security Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_interview_simulator
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv package manager
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install backend dependencies
+        run: |
+          cd codeswiftr-com/interview-simulator/backend
+          uv sync --frozen --no-dev-install
+          uv sync --frozen --extra dev
+
+      - name: Set up environment variables
+        run: |
+          cd codeswiftr-com/interview-simulator/backend
+          cat > .env << EOF
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/test_interview_simulator
+          SECRET_KEY=test-secret-key-for-security-tests
+          DEBUG=true
+          CORS_ORIGINS=http://localhost:3000,https://app.codeswiftr.com
+          EOF
+
+      - name: Run database migrations
+        run: |
+          cd codeswiftr-com/interview-simulator/backend
+          alembic upgrade head
+
+      - name: Run security tests
+        id: security-tests
+        run: |
+          cd codeswiftr-com/interview-simulator/backend
+          python run_security_tests.py \
+            --output-report=security_report.json \
+            --verbose
+        continue-on-error: true
+
+      - name: Generate security coverage
+        run: |
+          cd codeswiftr-com/interview-simulator/backend
+          python run_security_tests.py --coverage
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report-backend
+          path: |
+            codeswiftr-com/interview-simulator/backend/security_report.json
+            codeswiftr-com/interview-simulator/backend/coverage.json
+          retention-days: 30
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-coverage-backend
+          path: codeswiftr-com/interview-simulator/backend/coverage_html/
+          retention-days: 30
+
+      - name: Check security test results
+        run: |
+          cd codeswiftr-com/interview-simulator/backend
+
+          if [ -f security_report.json ]; then
+            # Extract summary from report
+            TOTAL_TESTS=$(jq '.summary.total' security_report.json)
+            PASSED_TESTS=$(jq '.summary.passed' security_report.json)
+            FAILED_TESTS=$(jq '.summary.failed' security_report.json)
+
+            echo "Security Test Summary:"
+            echo "  Total: $TOTAL_TESTS"
+            echo "  Passed: $PASSED_TESTS"
+            echo "  Failed: $FAILED_TESTS"
+
+            # Check if any critical issues
+            CRITICAL_ISSUES=$(jq '.critical_issues | length' security_report.json)
+            if [ "$CRITICAL_ISSUES" -gt 0 ]; then
+              echo "❌ Critical security issues detected!"
+              jq '.critical_issues[]' security_report.json
+              exit 1
+            fi
+
+            # Fail if tests failed and FAIL_ON_SECURITY_FAILURE is true
+            if [ "$FAILED_TESTS" -gt 0 ] && [ "${{ env.FAIL_ON_SECURITY_FAILURE }}" = "true" ]; then
+              echo "❌ Security tests failed!"
+              exit 1
+            fi
+          else
+            echo "❌ Security report not generated!"
+            exit 1
+          fi
+
+      - name: Run static security analysis
+        uses: pyQMA/static-security-analysis@v1
+        with:
+          path: codeswiftr-com/interview-simulator/backend
+
+  security-tests-frontend:
+    name: Frontend Security Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'bun'
+          cache-dependency-path: codeswiftr-com/interview-simulator/frontend/bun.lockb
+
+      - name: Install frontend dependencies
+        run: |
+          cd codeswiftr-com/interview-simulator/frontend
+          bun install
+
+      - name: Run frontend security tests
+        id: frontend-security-tests
+        run: |
+          cd codeswiftr-com/interview-simulator/frontend
+          bun test src/lib/__tests__/security.test.ts --reporter=json --outputFile=frontend_security_report.json
+        continue-on-error: true
+
+      - name: Upload frontend security report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report-frontend
+          path: codeswiftr-com/interview-simulator/frontend/frontend_security_report.json
+          retention-days: 30
+
+      - name: Run bun audit
+        run: |
+          cd codeswiftr-com/interview-simulator/frontend
+          bun audit
+        continue-on-error: true
+
+  dependency-security-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  security-scan:
+    name: Code Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Bandit security scan
+        uses: tj-actions/bandit@v44
+        with:
+          path: codeswiftr-com/interview-simulator/backend
+
+      - name: Run Semgrep security scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+          paths: codeswiftr-com/interview-simulator/backend
+
+  security-summary:
+    name: Security Test Summary
+    runs-on: ubuntu-latest
+    needs: [security-tests-backend, security-tests-frontend, dependency-security-scan]
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Generate security summary
+        run: |
+          echo "# Security Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+
+          # Backend results
+          if [ -f security-report-backend/security_report.json ]; then
+            echo "### Backend Security Tests" >> $GITHUB_STEP_SUMMARY
+            TOTAL=$(jq '.summary.total' security-report-backend/security_report.json)
+            PASSED=$(jq '.summary.passed' security-report-backend/security_report.json)
+            FAILED=$(jq '.summary.failed' security-report-backend/security_report.json)
+            echo "- Total: $TOTAL" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Passed: $PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "- ❌ Failed: $FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Frontend results
+          if [ -f security-report-frontend/frontend_security_report.json ]; then
+            echo "### Frontend Security Tests" >> $GITHUB_STEP_SUMMARY
+            PASSED=$(jq '.numTotalTests - (json_assertion_results | map(select(.status == "failed")) | length)' security-report-frontend/frontend_security_report.json)
+            FAILED=$(jq 'json_assertion_results | map(select(.status == "failed")) | length' security-report-frontend/frontend_security_report.json)
+            echo "- ✅ Passed: $PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "- ❌ Failed: $FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Coverage
+          if [ -f security-report-backend/coverage.json ]; then
+            COVERAGE=$(jq '.totals.percent_covered' security-report-backend/coverage.json)
+            echo "### Coverage" >> $GITHUB_STEP_SUMMARY
+            echo "Security Module Coverage: ${COVERAGE}%" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Status
+          if [ "${{ needs.security-tests-backend.result }}" == "failure" ] || [ "${{ needs.security-tests-frontend.result }}" == "failure" ]; then
+            echo "## ❌ Security Status: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "Security tests failed. Please review the reports and fix issues." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "## ✅ Security Status: PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "All security tests passed successfully!" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  notify-security-failure:
+    name: Notify on Security Failure
+    runs-on: ubuntu-latest
+    needs: [security-tests-backend, security-tests-frontend]
+    if: failure() && github.event_name == 'schedule'
+
+    steps:
+      - name: Notify security team
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#security-alerts'
+          text: |
+            🚨 Security tests failed in scheduled run!
+
+            Please check the GitHub Actions run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_SECURITY_WEBHOOK }}

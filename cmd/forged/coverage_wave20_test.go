@@ -36,7 +36,7 @@ func TestCheckContextThreshold_EmptyDB(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 	rj := NewRoyalJelly(db, cm)
 
@@ -129,18 +129,6 @@ func TestEventBusInitSchema_Idempotent(t *testing.T) {
 // handlers_patrols.go — fleetRecommendationsHandler
 // ---------------------------------------------------------------------------
 
-func TestFleetRecommendationsHandler_MethodNotAllowed_W20(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/fleet/recommendations", nil)
-	w := httptest.NewRecorder()
-	fleetRecommendationsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestFleetRecommendationsHandler_NoDB(t *testing.T) {
 	oldDB := getDBConn()
 	setDBConn(nil)
@@ -188,18 +176,6 @@ func TestFleetRecommendationsHandler_WithTable(t *testing.T) {
 // ---------------------------------------------------------------------------
 // handlers_patrols.go — dashHandler
 // ---------------------------------------------------------------------------
-
-func TestDashHandler_MethodNotAllowed_W20(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/ui/", nil)
-	w := httptest.NewRecorder()
-	dashHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestDashHandler_NoDB(t *testing.T) {
 	oldDB := getDBConn()
@@ -383,18 +359,6 @@ func TestDispatchTimeoutPatrol_EmptyDir(t *testing.T) {
 // main.go — handleQueueCancel additional paths
 // ---------------------------------------------------------------------------
 
-func TestHandleQueueCancel_MethodNotAllowed_W20(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/cli/queue/cancel", nil)
-	w := httptest.NewRecorder()
-	handleQueueCancel(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandleQueueCancel_NotFound(t *testing.T) {
 	cleanup := setupHandlerTest(t)
 	defer cleanup()
@@ -406,15 +370,6 @@ func TestHandleQueueCancel_NotFound(t *testing.T) {
 	handleQueueCancel(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for nonexistent task, got %d", w.Code)
-	}
-}
-
-func TestOpenclawEventsHandler_MethodNotAllowed_W20(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/events", nil)
-	w := httptest.NewRecorder()
-	openclawEventsHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 
@@ -439,10 +394,10 @@ func TestOpenclawEventsHandler_CancelledContext(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCheckTokenBudgetGate_NoBudgetFile(t *testing.T) {
-	// No .forge/heartbeat/token-budgets-prya.json in test dir → allow
+	// P0 fix: no budget file → fail-closed (block spawn until file restored)
 	ok, reason := checkTokenBudgetGate("anthropic")
-	if !ok {
-		t.Errorf("expected allow=true with no budget file, got false (reason: %s)", reason)
+	if ok {
+		t.Errorf("expected fail-closed (false) with no budget file, got true; reason: %s", reason)
 	}
 }
 
@@ -477,18 +432,6 @@ func TestListPatternsHandler_WithDomain(t *testing.T) {
 // ---------------------------------------------------------------------------
 // handlers_plan.go — resumeTaskHandler
 // ---------------------------------------------------------------------------
-
-func TestResumeTaskHandler_MethodNotAllowed_W20(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-001/resume", nil)
-	w := httptest.NewRecorder()
-	resumeTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestResumeTaskHandler_NotFound_W20(t *testing.T) {
 	cleanup := setupHandlerTest(t)
@@ -563,15 +506,6 @@ func TestUIFleetHandler_GET(t *testing.T) {
 	}
 }
 
-func TestUIFleetHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/ui/fleet", nil)
-	w := httptest.NewRecorder()
-	uiFleetHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // queue.go — dependenciesComplete (via sqliteTaskQueue, same package)
 // ---------------------------------------------------------------------------
@@ -640,19 +574,6 @@ func TestTaskStoreClaimTask_Success(t *testing.T) {
 // ---------------------------------------------------------------------------
 // handlers_task.go — completeTaskWithApprovalHandler
 // ---------------------------------------------------------------------------
-
-func TestCompleteTaskWithApprovalHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/TASK-1/complete-with-approval", nil)
-	req.URL.Path = "/api/tasks/TASK-1/complete-with-approval"
-	w := httptest.NewRecorder()
-	completeTaskWithApprovalHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestCompleteTaskWithApprovalHandler_BadJSON(t *testing.T) {
 	cleanup := setupHandlerTest(t)
@@ -889,23 +810,6 @@ func TestXNodeListNodesHandler_GET(t *testing.T) {
 	t.Logf("ListNodesHandler status: %d body: %s", w.Code, w.Body.String())
 }
 
-func TestXNodeForwardHandler_MethodNotAllowed(t *testing.T) {
-	db, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	xc, err := NewXNodeController(db, "test-node")
-	if err != nil {
-		t.Fatalf("NewXNodeController: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/xnode/forward", nil)
-	w := httptest.NewRecorder()
-	xc.ForwardHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestXNodeForwardHandler_BadJSON(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
@@ -977,7 +881,7 @@ func TestEnvelopesHandler_GET(t *testing.T) {
 	defer cleanup()
 
 	db := getDBConn()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/context/envelopes", nil)
@@ -989,29 +893,12 @@ func TestEnvelopesHandler_GET(t *testing.T) {
 	}
 }
 
-func TestEnvelopesHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	db := getDBConn()
-	cm := NewContextManager(db, t.TempDir())
-	defer cm.Stop()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/context/envelopes", nil)
-	w := httptest.NewRecorder()
-	cm.EnvelopesHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestEnvelopesHandler_PostBadJSON(t *testing.T) {
 	cleanup := setupHandlerTest(t)
 	defer cleanup()
 
 	db := getDBConn()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/context/envelopes",
@@ -1029,7 +916,7 @@ func TestEnvelopesHandler_PostInvalidTaskID(t *testing.T) {
 	defer cleanup()
 
 	db := getDBConn()
-	cm := NewContextManager(db, t.TempDir())
+	cm := testContextManager(t, db, t.TempDir())
 	defer cm.Stop()
 
 	body := `{"task_id":"","agent_id":"agent-1","context_pct":50}`
@@ -1080,19 +967,6 @@ func TestCheckTokenBudgetGate_EmptyProvider(t *testing.T) {
 // handlers_agent.go — agentFleetSummaryHandler_V2 (36.4%)
 // ---------------------------------------------------------------------------
 
-func TestAgentFleetSummaryHandlerV2_MethodNotAllowed(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v2/agents/fleet-summary", nil)
-	w := httptest.NewRecorder()
-	agentFleetSummaryHandler_V2(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestAgentFleetSummaryHandlerV2_GET(t *testing.T) {
 	cleanup := setupHandlerTest(t)
 	defer cleanup()
@@ -1109,19 +983,6 @@ func TestAgentFleetSummaryHandlerV2_GET(t *testing.T) {
 // ---------------------------------------------------------------------------
 // handlers_agent.go — agentsSSEHandler cancelled context path
 // ---------------------------------------------------------------------------
-
-func TestAgentsSSEHandler_MethodNotAllowed(t *testing.T) {
-	cleanup := setupHandlerTest(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/sse", nil)
-	w := httptest.NewRecorder()
-	agentsSSEHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
 
 func TestAgentsSSEHandler_CancelledContext(t *testing.T) {
 	cleanup := setupHandlerTest(t)

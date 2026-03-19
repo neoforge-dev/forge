@@ -21,7 +21,7 @@ func TestContextManagerSyncEnvelopes_NilSync_W54(t *testing.T) {
 	defer cleanup()
 
 	// Create without sync (contextDir doesn't exist).
-	cm := NewContextManager(db, "")
+	cm := testContextManager(t, db, "")
 	err := cm.SyncEnvelopesToFilesystem()
 	if err == nil {
 		t.Logf("SyncEnvelopesToFilesystem nil sync: returned nil (may have initialized sync)")
@@ -32,7 +32,7 @@ func TestContextManagerSyncDomain_NilSync_W54(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, "")
+	cm := testContextManager(t, db, "")
 	err := cm.SyncDomainToFilesystem("test-domain")
 	if err == nil {
 		t.Logf("SyncDomainToFilesystem nil sync: returned nil (may have initialized sync)")
@@ -46,7 +46,7 @@ func TestContextManagerSyncEnvelopes_WithDir_W54(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	// Call sync — may succeed (0 envelopes → writes nothing).
 	err := cm.SyncEnvelopesToFilesystem()
 	if err != nil {
@@ -59,7 +59,7 @@ func TestContextManagerSyncDomain_WithDir_W54(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	err := cm.SyncDomainToFilesystem("test-domain-w54")
 	if err != nil {
 		t.Logf("SyncDomainToFilesystem with dir: %v (may be OK)", err)
@@ -72,7 +72,7 @@ func TestContextManagerEnvelopesHandler_GET_W54(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, "")
+	cm := testContextManager(t, db, "")
 	req := httptest.NewRequest(http.MethodGet, "/api/contexts/envelopes", nil)
 	w := httptest.NewRecorder()
 	cm.EnvelopesHandler(w, req)
@@ -87,7 +87,7 @@ func TestContextManagerBootstrapAgent_NoEnvelope_W54(t *testing.T) {
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	cm := NewContextManager(db, "")
+	cm := testContextManager(t, db, "")
 	ctx := context.Background()
 
 	// No envelopes in DB → returns nil or empty envelope.

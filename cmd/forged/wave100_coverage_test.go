@@ -2086,7 +2086,7 @@ func TestWave100_GenerateEnvelope_HappyPath(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	env, err := cm.GenerateEnvelope(
 		context.Background(),
 		"test-agent", "test-domain", "test-project", "TASK-001",
@@ -3256,7 +3256,7 @@ func TestWave100_ContextManager_GenerateEnvelope(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	envelope, err := cm.GenerateEnvelope(
 		context.Background(),
@@ -3625,7 +3625,7 @@ func TestWave100_ContextManager_StoreInFilesystem(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	envelope := &ContextEnvelope{
 		ID:        "test-env-fs-wave100",

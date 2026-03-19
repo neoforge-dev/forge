@@ -303,11 +303,12 @@ func TestWave71_SyncEnvelopesToFilesystem_Empty(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	db := getDBConn()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)
 	}
+	t.Cleanup(cs.Stop)
 
 	// No envelopes — should return nil
 	err = cs.SyncEnvelopesToFilesystem()
@@ -527,7 +528,7 @@ func TestWave71_ContextManager_StoreInFilesystem(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	db := getDBConn()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	env := &ContextEnvelope{
 		ID:      "env-store-1",

@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -54,6 +55,90 @@ func TestCompletionManagerGenerateFish(t *testing.T) {
 	}
 	if !strings.Contains(out, "complete -c forge") {
 		t.Fatalf("GenerateFish output missing expected content:\n%s", out)
+	}
+}
+
+// TestHandleCompletion_BashRoute exercises the HandleCompletion bash branch.
+// It redirects os.Stdout to capture the output without calling os.Exit.
+func TestHandleCompletion_BashRoute(t *testing.T) {
+	m := NewCompletionManager()
+
+	// Capture stdout since HandleCompletion writes to os.Stdout.
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	// Recover from os.Exit if it fires (should not for valid shell).
+	defer func() {
+		w.Close()
+		os.Stdout = old
+	}()
+
+	m.HandleCompletion([]string{"bash"})
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	if !strings.Contains(buf.String(), "_forge_completion") {
+		t.Errorf("expected bash completion script in output, got: %s", buf.String())
+	}
+}
+
+// TestHandleCompletion_ZshRoute exercises the zsh branch.
+func TestHandleCompletion_ZshRoute(t *testing.T) {
+	m := NewCompletionManager()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	defer func() {
+		w.Close()
+		os.Stdout = old
+	}()
+
+	m.HandleCompletion([]string{"zsh"})
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	if !strings.Contains(buf.String(), "#compdef forge") {
+		t.Errorf("expected zsh completion script in output, got: %s", buf.String())
+	}
+}
+
+// TestHandleCompletion_FishRoute exercises the fish branch.
+func TestHandleCompletion_FishRoute(t *testing.T) {
+	m := NewCompletionManager()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	defer func() {
+		w.Close()
+		os.Stdout = old
+	}()
+
+	m.HandleCompletion([]string{"fish"})
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	if !strings.Contains(buf.String(), "complete -c forge") {
+		t.Errorf("expected fish completion script in output, got: %s", buf.String())
 	}
 }
 

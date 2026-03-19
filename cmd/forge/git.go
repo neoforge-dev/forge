@@ -712,6 +712,7 @@ func runGitCmdInDir(dir string, gitArgs ...string) (string, error) {
 }
 
 func init() {
+	gitCmd.Hidden = true
 	// Wire verbs into the noun
 	gitCmd.AddCommand(gitPushCmd)
 	gitCmd.AddCommand(gitGuardCmd)

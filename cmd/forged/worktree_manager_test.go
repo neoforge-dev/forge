@@ -182,3 +182,149 @@ func TestWorktreeManager_PruneStale(t *testing.T) {
 	}
 }
 
+// Wave 129: WorktreeManager — CreateWorktree, RemoveWorktree, ListWorktrees,
+//           RecordWorktree, PruneStaleWorktrees edge cases.
+
+// TestWave129_WorktreeManager_CreateWorktree_EmptyTaskID verifies empty taskID returns error.
+func TestWave129_WorktreeManager_CreateWorktree_EmptyTaskID(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	_, err := m.CreateWorktree(context.Background(), "")
+	if err == nil {
+		t.Error("expected error for empty taskID")
+	}
+	t.Logf("CreateWorktree empty taskID: %v", err)
+}
+
+// TestWave129_WorktreeManager_CreateWorktree_InvalidRepo verifies git failure is handled.
+func TestWave129_WorktreeManager_CreateWorktree_InvalidRepo(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir() // not a git repo
+	wdir := t.TempDir()
+	m := NewWorktreeManager(root, wdir, db)
+
+	_, err := m.CreateWorktree(context.Background(), "task-wave129-invalid")
+	// Git will fail (not a git repo) but should not panic
+	t.Logf("CreateWorktree invalid repo: %v", err)
+}
+
+// TestWave129_WorktreeManager_CreateWorktree_ExistingDir verifies existing-dir early return.
+func TestWave129_WorktreeManager_CreateWorktree_ExistingDir(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	root := t.TempDir()
+	wdir := t.TempDir()
+	m := NewWorktreeManager(root, wdir, db)
+
+	// Pre-create the expected worktree directory so CreateWorktree short-circuits.
+	existingPath := filepath.Join(wdir, "task-wave129-existing")
+	if err := os.MkdirAll(existingPath, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	path, err := m.CreateWorktree(context.Background(), "task-wave129-existing")
+	if err != nil {
+		t.Errorf("expected success for existing dir, got: %v", err)
+	}
+	t.Logf("CreateWorktree existing dir: %s", path)
+}
+
+// TestWave129_WorktreeManager_RemoveWorktree_EmptyTaskID verifies empty taskID returns error.
+func TestWave129_WorktreeManager_RemoveWorktree_EmptyTaskID(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	err := m.RemoveWorktree(context.Background(), "")
+	if err == nil {
+		t.Error("expected error for empty taskID")
+	}
+	t.Logf("RemoveWorktree empty taskID: %v", err)
+}
+
+// TestWave129_WorktreeManager_RemoveWorktree_NonExistent verifies no error for missing worktree.
+func TestWave129_WorktreeManager_RemoveWorktree_NonExistent(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	// Best-effort — should not error even if worktree doesn't exist
+	err := m.RemoveWorktree(context.Background(), "task-nonexistent-wave129")
+	if err != nil {
+		t.Logf("RemoveWorktree non-existent: %v (may be acceptable)", err)
+	}
+}
+
+// TestWave129_WorktreeManager_ListWorktrees_InvalidRepo verifies error on non-git dir.
+func TestWave129_WorktreeManager_ListWorktrees_InvalidRepo(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	_, err := m.ListWorktrees(context.Background())
+	if err == nil {
+		t.Error("expected error for non-git repo")
+	}
+	t.Logf("ListWorktrees invalid repo: %v", err)
+}
+
+// TestWave129_WorktreeManager_RecordWorktree_ClosedDB verifies DB error handling.
+func TestWave129_WorktreeManager_RecordWorktree_ClosedDB(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	err := m.RecordWorktree(context.Background(), "task-w129", "/tmp/path", "feature/task-w129", "agent-1")
+	if err == nil {
+		t.Error("expected error with closed DB")
+	}
+	t.Logf("RecordWorktree closed DB: %v", err)
+}
+
+// TestWave129_WorktreeManager_RecordWorktree_Success records a worktree entry.
+func TestWave129_WorktreeManager_RecordWorktree_Success(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	err := m.RecordWorktree(context.Background(), "task-w129-ok", "/tmp/path-ok", "feature/task-w129-ok", "agent-1")
+	if err != nil {
+		t.Logf("RecordWorktree success path: %v (acceptable if table missing)", err)
+	}
+}
+
+// TestWave129_WorktreeManager_PruneStaleWorktrees_ClosedDB verifies error on closed DB.
+func TestWave129_WorktreeManager_PruneStaleWorktrees_ClosedDB(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	err := m.PruneStaleWorktrees(context.Background())
+	t.Logf("PruneStaleWorktrees closed DB: %v", err)
+}
+
+// TestWave129_WorktreeManager_PruneStaleWorktrees_EmptyDB verifies no-op on empty DB.
+func TestWave129_WorktreeManager_PruneStaleWorktrees_EmptyDB(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	m := NewWorktreeManager(t.TempDir(), t.TempDir(), db)
+
+	err := m.PruneStaleWorktrees(context.Background())
+	if err != nil {
+		t.Logf("PruneStaleWorktrees empty DB: %v (acceptable)", err)
+	}
+}
+

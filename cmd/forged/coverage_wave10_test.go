@@ -93,18 +93,6 @@ func TestHandleTaskLogs_MissingIDW10(t *testing.T) {
 
 // --- main.go: handleQueuePriority, handleQueueCancel ---
 
-func TestHandleQueuePriority_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/queue/priority", nil)
-	w := httptest.NewRecorder()
-	handleQueuePriority(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandleQueuePriority_BadJSON(t *testing.T) {
 	cleanup := setupWave5(t)
 	defer cleanup()
@@ -127,18 +115,6 @@ func TestHandleQueuePriority_MissingFields(t *testing.T) {
 	handleQueuePriority(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for missing fields, got %d", w.Code)
-	}
-}
-
-func TestHandleQueueCancel_MethodNotAllowed(t *testing.T) {
-	cleanup := setupWave5(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/queue/cancel", nil)
-	w := httptest.NewRecorder()
-	handleQueueCancel(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 

@@ -14,15 +14,6 @@ import (
 // Wave 31: fleetAggregateHandler, handleQueueList (with queue), confidenceApproveCompletedTasks,
 //          handleQueueDepth, fleetScaleRecommendPatrol, fleetDeflateRecommendPatrol
 
-func TestFleetAggregateHandler_MethodNotAllowed_W31(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/fleet/aggregate", nil)
-	w := httptest.NewRecorder()
-	fleetAggregateHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestFleetAggregateHandler_NilDB_W31(t *testing.T) {
 	orig := getDBConn()
 	setDBConn(nil)

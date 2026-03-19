@@ -248,19 +248,6 @@ func TestDashboard_ServeAgentsDashboard_OK(t *testing.T) {
 	}
 }
 
-func TestDashboard_ServeAgentsDashboard_MethodNotAllowed(t *testing.T) {
-	d, cleanup := newTestDashboard(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/dashboard", nil)
-	w := httptest.NewRecorder()
-	d.ServeAgentsDashboard(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 for POST, got %d", w.Code)
-	}
-}
-
 // ============================================================
 // errors.go — ForgeError.JSON without os.Exit paths
 // ============================================================
@@ -649,22 +636,6 @@ func TestApprovalHandler_HandleApprovals_POST_MissingFields(t *testing.T) {
 }
 
 // TestApprovalHandler_HandlePending_MethodNotAllowed hits the 405 branch.
-func TestApprovalHandler_HandlePending_MethodNotAllowed(t *testing.T) {
-	store, cleanup := setupApprovalsTestDB(t)
-	defer cleanup()
-
-	svc := NewApprovalService(store)
-	h := NewApprovalHandler(svc)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/approvals/pending", nil)
-	w := httptest.NewRecorder()
-	h.handlePending(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // TestApprovalHandler_ListApprovals_ByTier exercises the tier filter branch.
 func TestApprovalHandler_ListApprovals_ByTier(t *testing.T) {
 	store, cleanup := setupApprovalsTestDB(t)

@@ -500,7 +500,7 @@ func TestWave85_CheckContextThreshold_GeneratesEnvelope(t *testing.T) {
 	ctx := context.Background()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 
 	// Insert an agent at >= 50% context NOT in context_envelopes
 	now := time.Now().UTC().Format(time.RFC3339)

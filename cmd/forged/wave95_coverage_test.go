@@ -150,7 +150,7 @@ func TestWave95_ContextSync_Start_WithDomainDirs(t *testing.T) {
 		t.Fatalf("mkdir project: %v", err)
 	}
 
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)

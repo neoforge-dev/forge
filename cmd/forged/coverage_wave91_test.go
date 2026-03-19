@@ -30,18 +30,6 @@ func TestWave91_PatrolsHandler_WithExecutionData(t *testing.T) {
 	}
 }
 
-func TestWave91_PatrolsHandler_MethodNotAllowed(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	r := httptest.NewRequest(http.MethodPost, "/api/patrols", nil)
-	w := httptest.NewRecorder()
-	patrolsHandler(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Logf("patrolsHandler POST: got %d", w.Code)
-	}
-}
-
 // dashHandler with execution rows
 func TestWave91_DashHandler_WithData(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
@@ -236,7 +224,7 @@ func TestWave91_SyncEnvelopesToFilesystem_Empty(t *testing.T) {
 	defer cleanup()
 
 	tmpDir := t.TempDir()
-	cm := NewContextManager(db, tmpDir)
+	cm := testContextManager(t, db, tmpDir)
 	cs, err := NewContextSync(cm, db, tmpDir)
 	if err != nil {
 		t.Fatalf("NewContextSync: %v", err)

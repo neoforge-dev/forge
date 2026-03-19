@@ -13,8 +13,7 @@ import (
 	"time"
 )
 
-// Wave 55: handleAgentList, handleAgentStatus, handleAgentSpawn/Stop,
-//          handleSystemPatrol, GetCoordinationHTML, calculateStatus,
+// Wave 55: handleAgentList, handleAgentStatus, GetCoordinationHTML, calculateStatus,
 //          checkWarnings, CompletionManager, getAgentID (env path)
 
 // ─── handleAgentList ──────────────────────────────────────────────────────
@@ -70,35 +69,6 @@ func TestHandleAgentStatus_NotFound_W55(t *testing.T) {
 	// No heartbeat → 404
 	if w.Code != http.StatusNotFound {
 		t.Logf("handleAgentStatus notFound: got %d (may vary)", w.Code)
-	}
-}
-
-// ─── stub handlers (instant 501/not-implemented) ─────────────────────────
-
-func TestHandleAgentSpawn_W55(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/cli/agents/spawn", nil)
-	w := httptest.NewRecorder()
-	handleAgentSpawn(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestHandleAgentStop_W55(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/cli/agents/stop", nil)
-	w := httptest.NewRecorder()
-	handleAgentStop(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestHandleSystemPatrol_W55(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/cli/system/patrol", nil)
-	w := httptest.NewRecorder()
-	handleSystemPatrol(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
 	}
 }
 

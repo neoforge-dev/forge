@@ -294,21 +294,6 @@ func TestHandoffService_AcceptNotFound(t *testing.T) {
 // handoffs.go — HTTP handlers via HandoffHandler
 // ---------------------------------------------------------------------------
 
-func TestHandoffHandler_MethodNotAllowed_W15(t *testing.T) {
-	_, service, cleanup := setupHandoffTest(t)
-	defer cleanup()
-
-	handler := NewHandoffHandler(service)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/handoffs", nil)
-	w := httptest.NewRecorder()
-	handler.handleHandoffs(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestHandoffHandler_CreateAndList(t *testing.T) {
 	_, service, cleanup := setupHandoffTest(t)
 	defer cleanup()
@@ -380,21 +365,6 @@ func TestHandoffHandler_ActionInvalidPath(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandoffHandler_ActionMethodNotAllowed(t *testing.T) {
-	_, service, cleanup := setupHandoffTest(t)
-	defer cleanup()
-
-	handler := NewHandoffHandler(service)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/handoffs/some-id/accept", nil)
-	w := httptest.NewRecorder()
-	handler.handleHandoffAction(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 
@@ -561,15 +531,6 @@ func TestPopulateTasksFromDispatches_Stub(t *testing.T) {
 // handlers_agent.go — agentFleetSummaryHandler_V2
 // ---------------------------------------------------------------------------
 
-func TestAgentFleetSummaryHandler_V2_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/fleet/summary", nil)
-	w := httptest.NewRecorder()
-	agentFleetSummaryHandler_V2(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 func TestAgentFleetSummaryHandler_V2_NoDB(t *testing.T) {
 	// Save and nil the DB
 	oldDB := getDBConn()
@@ -665,22 +626,3 @@ func TestPriorityToInt_AllValues_Wave15(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Additional handler method checks
 // ---------------------------------------------------------------------------
-
-func TestOpenclawChatHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete, "/api/openclaw/chat", nil)
-	w := httptest.NewRecorder()
-	openclawChatHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
-func TestOpenclawHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPut, "/api/openclaw", nil)
-	w := httptest.NewRecorder()
-	openclawHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-

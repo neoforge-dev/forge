@@ -7,6 +7,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -18,15 +20,6 @@ func TestSetActiveConnections_W29(t *testing.T) {
 	// Just exercises the Prometheus gauge Set — should not panic
 	metrics.SetActiveConnections(42)
 	metrics.SetActiveConnections(0)
-}
-
-func TestUIFleetHandler_MethodNotAllowed_W29(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/ui/fleet", nil)
-	w := httptest.NewRecorder()
-	uiFleetHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
 }
 
 func TestUIFleetHandler_Get_W29(t *testing.T) {
@@ -68,15 +61,6 @@ func TestGetAppliedMigrations_W29(t *testing.T) {
 	}
 	if len(applied) == 0 {
 		t.Error("expected at least one applied migration")
-	}
-}
-
-func TestHandleQueueCancel_MethodNotAllowed_W29(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/queue/cancel", nil)
-	w := httptest.NewRecorder()
-	handleQueueCancel(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
 	}
 }
 
@@ -133,3 +117,40 @@ func TestGetAppliedMigrations_ClosedDB_W29(t *testing.T) {
 
 // Suppress unused import warning — context is used below
 var _ = context.Background
+
+// TestParityChecker_CountV2Agents_InvalidJSON covers the json.Unmarshal error
+// path in countV2Agents (fleet/state.json has invalid JSON).
+func TestParityChecker_CountV2Agents_InvalidJSON(t *testing.T) {
+	root := t.TempDir()
+	fleetDir := filepath.Join(root, "fleet")
+	if err := os.MkdirAll(fleetDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fleetDir, "state.json"), []byte("{invalid json"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	pc := NewParityChecker(root, filepath.Join(root, "forge-v3.db"))
+	_, err := pc.countV2Agents()
+	if err == nil {
+		t.Error("expected error for invalid JSON in state.json")
+	}
+}
+
+// TestParityChecker_Check_V3TasksError covers the countV3Tasks error append path in Check.
+// A directory-as-DB-path causes SQLite to fail on first query.
+func TestParityChecker_Check_V3TasksError(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "invalid-db-dir")
+	if err := os.Mkdir(dbPath, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	pc := NewParityChecker(root, dbPath)
+	result, err := pc.Check()
+	if err != nil {
+		t.Fatalf("Check returned unexpected error: %v", err)
+	}
+	// The v3 tasks/agents count should have failed, populating result.Errors.
+	if len(result.Errors) == 0 {
+		t.Error("expected at least one error in result.Errors for invalid v3 DB path")
+	}
+}

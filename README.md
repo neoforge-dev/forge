@@ -1,14 +1,31 @@
 # FORGE
 
-**Multi-Agent Orchestration Platform for Autonomous Software Development**
+**Self-hosted AI Ops Platform for Teams Running Autonomous Agents**
 
 [![CI](https://github.com/neoforge-dev/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/neoforge-dev/forge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.23+-blue.svg)](https://golang.org)
 
-FORGE manages fleets of AI coding agents across multiple nodes with durable task queues, real-time WebSocket dispatch, human-in-the-loop approvals, and context preservation across sessions.
+FORGE is not a coding assistant — it's the **operations layer** that runs under your agents. It manages multi-node fleets, approval-gated execution, YAML-backed agent routing, cross-node messaging, and persistent context across sessions.
 
-**Stack:** V4 CLI (`cmd/forge`) + V3 daemon (`cmd/forge-v3`). The CLI supports hub-first control-plane operation and should be configured with your own `FORGE_API_URL` or `~/.forge/config.toml`.
+| What FORGE does | What it doesn't do |
+|---|---|
+| Run 5+ agents across node-1/node-2/node-3/node-4/node-5 | Write code itself |
+| Route tasks by YAML capability config | Replace your IDE |
+| Gate risky tasks behind human approval | Require cloud accounts |
+| Track fleet metrics, budget, inventory | Lock you to any LLM |
+| Self-heal via background patrols | — |
+
+**Key differentiators vs Cursor/Copilot/Devin:**
+
+- **Multi-node**: agents run on separate hardware, coordinated via a single hub
+- **Approval-gated**: tier-based auto-approve for lightweight tasks, human gate for risky ones
+- **YAML routing**: `config/routing/*.yaml` defines agent capabilities, node constraints, workload policy — `forge dispatch auto` reads it
+- **Dark Factory**: 31+ background patrols that auto-fix, auto-approve, auto-scale
+- **Self-hosted**: runs on your hardware, no cloud required, no per-seat pricing
+- **Auditable**: SQLite event log, pattern library, Royal Jelly context persistence
+
+**Stack:** V4 CLI (`cmd/forge`) + daemon (`cmd/forged`). Configure with `FORGE_API_URL` or `~/.forge/config.toml`.
 
 **Start here:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), [AGENTS.md](AGENTS.md), [docs/ACTIVE_SURFACES.md](docs/ACTIVE_SURFACES.md)
 
@@ -24,10 +41,10 @@ cd cmd/forge
 go build -o forge .
 mv forge ~/.local/bin/forge   # or /usr/local/bin/forge
 
-# Build the V3 daemon
-cd cmd/forge-v3
-go build -o forge-v3 .
-mv forge-v3 ~/.local/bin/forge-v3
+# Build the daemon
+cd cmd/forged
+go build -o forged .
+mv forged ~/.local/bin/forged
 ```
 
 ### Start the Daemon
@@ -73,6 +90,60 @@ forge portfolio list
 forge dispatch send forge:kimi "Read .forge/dispatches/kimi-task.md — EXECUTE now"
 ```
 
+### Fleet Operations
+
+```bash
+# Multi-node fleet status
+forge fleet status
+forge fleet windows            # live tmux agent windows
+forge fleet inventory          # all nodes + agents in one view
+forge fleet metrics            # per-agent token/task metrics
+forge fleet budget             # token budget by agent/provider
+forge fleet recommendations    # scale-up/down suggestions
+
+# Auto-route a task to the best agent (YAML-backed since S92)
+forge dispatch auto "Run coverage wave on cmd/forged" --task-type coverage
+
+# Bulk-approve queued approvals
+forge approval list
+forge approval bulk-decide --action approve --domain forge
+
+# Smart routing query (direct API call)
+curl -s -X POST http://localhost:8081/api/routing/resolve \
+  -H "Content-Type: application/json" \
+  -d '{"task_type":"coverage","weight":"heavy"}' | jq .
+# → {"agent":"kimi","node":"node-2","reason":"best_at match: go-test (node preference)"}
+```
+
+### GitHub Integration (Autonomous Issue → PR → Merge)
+
+FORGE connects to GitHub via webhook to close the full issue lifecycle autonomously:
+
+```bash
+# 1. Set env vars on the daemon node
+export GITHUB_TOKEN="ghp_..."              # PAT with repo + issues write
+export GITHUB_WEBHOOK_SECRET="your-secret" # set in GitHub repo settings
+
+# 2. Register the webhook in GitHub repo settings:
+#    Payload URL: http://your-forge-node:8081/api/github/webhook
+#    Events:      Issues (opened, reopened, labeled)
+
+# 3. When an issue is opened, FORGE automatically:
+#    - Creates a FORGE task (visible in `forge task list`)
+#    - Posts a comment: "FORGE task created: TASK-XXXX"
+#    - Agent claims and works on the task in a git worktree
+#    - On completion: opens a PR and creates a merge approval
+#    - Posts a comment: "✅ FORGE task completed. PR: https://github.com/..."
+
+# 4. Review and approve the merge:
+forge approval list                             # see pending PRs
+forge approval decide <approval-id> --approve   # merge the PR
+```
+
+The full loop: **GitHub issue → FORGE task → autonomous agent → PR → approval gate → merged**. Requires `GITHUB_TOKEN` for PR creation and merge. All steps are best-effort — the pipeline degrades gracefully if tokens are absent.
+
+---
+
 ### Connect a Worker
 
 ```bash
@@ -94,7 +165,7 @@ forge agent list
 └────────────────────┬────────────────────────────────┘
                      │  HTTP :8081 / WS :8082
 ┌────────────────────▼────────────────────────────────┐
-│              forge-v3 (daemon, per-node)             │
+│              forged (daemon, per-node)               │
 │  SQLite · Task FSM · WebSocket Hub · Patrol · Leases │
 └─────────────────────────────────────────────────────┘
 ```
@@ -113,15 +184,18 @@ Current operating model: hub-first, local daemons optional. See [docs/adr/INDEX.
 | `agent` | Worker process | `list`, `show` |
 | `worker` | WebSocket worker | `up` |
 | `lane` | Dark Factory stage | `list`, `show`, `promote` |
-| `dispatch` | Fleet messaging | `send`, `list` |
+| `dispatch` | Fleet messaging | `send`, `auto`, `list`, `status` |
+| `fleet` | Multi-node ops | `status`, `metrics`, `inventory`, `budget`, `recommendations`, `windows` |
 | `daemon` | Daemon lifecycle | `start`, `stop`, `status`, `restart`, `install`, `logs` |
 | `domain` | Business domain | `list`, `show` |
 | `project` | Repository | `list`, `show` |
-| `approval` | Human checkpoint | `list`, `decide` |
+| `approval` | Human checkpoint | `list`, `decide`, `bulk-decide` |
 | `queue` | Task scheduling | `list`, `depth`, `show`, `prune` |
 | `context` | Knowledge preservation | `list`, `show` |
 | `patrol` | Background monitors | `list`, `show` |
 | `pattern` | Reusable templates | `list`, `show` |
+| `portfolio` | Project portfolio | `list`, `status` |
+| `node` | Fleet node | `list`, `status` |
 | `config` | Settings | `get`, `set` |
 
 ### Output Formats
@@ -157,7 +231,7 @@ FORGE_API_URL=http://forge-control-plane:8081
 FORGE_WS_URL=ws://localhost:8082       # V3 daemon WebSocket endpoint
 FORGE_NODE_ID=node-a                   # Node identity
 FORGE_AGENT_ID=kimi                    # Agent identity
-FORGE_V3_BIN=/path/to/forge-v3        # Override daemon binary location
+FORGED_BIN=/path/to/forged            # Override daemon binary location (FORGE_V3_BIN also accepted for compatibility)
 ```
 
 ### Config File (`~/.forge/config.toml` or project `.forge/config.toml`)
@@ -172,7 +246,7 @@ id = "node-a"
 
 ---
 
-## V3 Daemon
+## Daemon (forged)
 
 The daemon exposes:
 
@@ -193,6 +267,7 @@ The daemon exposes:
 | `/api/contexts/{key}` | GET | Get context |
 | `/api/config` | GET | Daemon config |
 | `/api/workers` | GET | List workers |
+| `/api/routing/resolve` | POST | YAML-backed agent routing (returns best agent for task type) |
 | `/ws` | WS | WebSocket hub (`:8082`) |
 
 ### WebSocket Protocol
@@ -220,8 +295,8 @@ cd cmd/forge
 go build ./...
 go test ./... -count=1   # All 6 packages must pass
 
-# V3 daemon
-cd cmd/forge-v3
+# Daemon
+cd cmd/forged
 go build ./...
 go test . -timeout 60s
 ```
@@ -244,7 +319,7 @@ FORGE/
 │       ├── errors/     # Structured error types
 │       ├── websocket/  # WebSocket client
 │       └── heartbeat/  # Agent heartbeat monitor
-├── cmd/forge-v3/       # V3 daemon (HTTP + WebSocket server)
+├── cmd/forged/         # daemon (HTTP + WebSocket server)
 │   ├── main.go         # All HTTP handlers (~3400 lines)
 │   ├── websocket.go    # WebSocket hub + agent registration
 │   ├── task_store.go   # SQLite CRUD
@@ -258,7 +333,7 @@ FORGE/
 │   └── xnode/          # Cross-node JSONL sync
 ├── docs/               # Architecture decisions, plans, runbooks
 │   └── adr/            # ADRs 001–025
-├── harness/            # Legacy V2 harness (maintenance mode)
+├── harness/            # Python harness for iOS orchestration (private repo only; not in v1 public release — see SCOPE.md)
 └── portfolio/          # 95 managed projects (11 domains)
 ```
 
@@ -270,14 +345,14 @@ Use a shared control-plane host for hub-first deployments. Local daemons are opt
 
 ```bash
 # 1. Build daemon on each node
-cd cmd/forge-v3 && go build -o forge-v3 .
+cd cmd/forged && go build -o forged .
 
 # 2. Start via forge daemon (manages PID + logs)
 forge daemon start
 
 # 3. Or install as systemd user service
 forge daemon install --enable
-systemctl --user start forge-v3
+systemctl --user start forged
 
 # 4. Verify
 forge status
@@ -311,4 +386,4 @@ forge fleet status
 
 ---
 
-**Phase:** 1.0 (Production) | **CLI:** V4 | **Daemon:** V3 | **Last Updated:** 2026-03-06
+**Phase:** 1.0 (Production) | **CLI:** V4 | **Daemon:** forged | **Last Updated:** 2026-03-09 (S92)

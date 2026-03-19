@@ -333,15 +333,6 @@ func TestWave67_ClaimTask_NotFound(t *testing.T) {
 // TestWave67_ReleaseTaskHandler_MethodNotAllowed
 // ---------------------------------------------------------------------------
 
-func TestWave67_ReleaseTaskHandler_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/tasks/task-1/release", nil)
-	w := httptest.NewRecorder()
-	releaseTaskHandler(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // TestWave67_ReleaseTaskHandler_InvalidJSON
 // ---------------------------------------------------------------------------
@@ -484,7 +475,7 @@ func TestWave67_NewContextManager_EmptyDir(t *testing.T) {
 	defer cleanup()
 
 	// Pass empty string — NewContextManager should default to ".forge/context".
-	cm := NewContextManager(db, "")
+	cm := testContextManager(t, db, "")
 	if cm == nil {
 		t.Fatal("expected non-nil ContextManager")
 	}

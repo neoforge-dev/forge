@@ -18,7 +18,7 @@ go build -o forged .
 ./forged
 
 # Or with explicit DB path
-DB_PATH=/home/bogdan/FORGE/.forge/forge-v3.db ./forged
+DB_PATH=./.forge/forge-v3.db ./forged
 ```
 
 By default:
@@ -369,7 +369,7 @@ Immediately after connecting, agents must send a registration message:
   "payload": {
     "agent_id": "forge:kimi",
     "name": "forge:kimi",
-    "node": "sati",
+    "node": "node-2",
     "tier": "standard",
     "capabilities": ["code", "tests"]
   },
@@ -887,8 +887,8 @@ List all known nodes in the mesh.
 {
   "nodes": [
     {
-      "id": "nova",
-      "hostname": "nova.local",
+      "id": "node-3",
+      "hostname": "node-3.local",
       "address": "100.64.0.1",
       "status": "online",
       "last_heartbeat": "2026-03-04T10:00:00Z"
@@ -903,8 +903,8 @@ Register a new node.
 **Request:**
 ```json
 {
-  "id": "sati",
-  "hostname": "sati.local",
+  "id": "node-2",
+  "hostname": "node-2.local",
   "address": "100.64.0.2"
 }
 ```
@@ -915,7 +915,7 @@ Forward a message to another node.
 **Request:**
 ```json
 {
-  "target_node": "nova",
+  "target_node": "node-3",
   "message": {
     "type": "task.assigned",
     "task_id": "TASK-BOLD-NODE-042"
@@ -948,7 +948,7 @@ List all connected agents.
   "agents": [
     {
       "agent_id": "kimi",
-      "node": "sati",
+      "node": "node-2",
       "status": "busy",
       "current_task_id": "TASK-BOLD-NODE-042",
       "context_pct": 45.5,
@@ -1059,8 +1059,8 @@ After connecting, the agent must send a registration message within 10 seconds:
   "id": "msg_1234567890",
   "payload": {
     "agent_id": "kimi",
-    "name": "kimi (sati)",
-    "node": "sati",
+    "name": "kimi (node-2)",
+    "node": "node-2",
     "tier": "tier-1",
     "capabilities": ["coding", "testing", "review"]
   }
@@ -1297,8 +1297,8 @@ ws.onopen = () => {
     id: 'msg_' + Date.now(),
     payload: {
       agent_id: 'kimi',
-      name: 'kimi (sati)',
-      node: 'sati',
+      name: 'kimi (node-2)',
+      node: 'node-2',
       tier: 'tier-1',
       capabilities: ['coding', 'testing']
     }
@@ -1367,7 +1367,7 @@ forge migrate down 1
 |----------|-------------|---------|
 | `PORT` | HTTP API port | `8081` |
 | `WS_PORT` | WebSocket port | `8082` |
-| `DB_PATH` | SQLite database path | `/home/bogdan/FORGE/.forge/forge-v3.db` |
+| `DB_PATH` | SQLite database path | `./.forge/forge-v3.db` |
 | `DB_TYPE` | Database type (`sqlite` or `postgres`) | `sqlite` |
 | `NODE_ID` | Node identifier | Hostname |
 

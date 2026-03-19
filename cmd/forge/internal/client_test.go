@@ -509,8 +509,8 @@ func TestClientFactory(t *testing.T) {
 		t.Chdir(t.TempDir())
 
 		client := NewClient()
-		if client.BaseURL() != "http://prya:8081/api" {
-			t.Errorf("expected http://prya:8081/api, got %s", client.BaseURL())
+		if client.BaseURL() != "http://localhost:8081/api" {
+			t.Errorf("expected http://localhost:8081/api, got %s", client.BaseURL())
 		}
 	})
 

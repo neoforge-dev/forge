@@ -440,6 +440,7 @@ Examples:
 // ── init ──────────────────────────────────────────────────────────────────────
 
 func init() {
+	relayCmd.Hidden = true
 	relayCmd.AddCommand(relayStartCmd)
 	relayCmd.AddCommand(relayStopCmd)
 	relayCmd.AddCommand(relayStatusCmd)

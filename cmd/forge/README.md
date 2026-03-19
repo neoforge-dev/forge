@@ -63,9 +63,9 @@ forge task list --format quiet   # exit code only (0=ok)
 ## Configuration
 
 ```bash
-export FORGE_API_URL=http://prya:8081        # default hub
+export FORGE_API_URL=http://node-1:8081        # default hub
 export FORGE_WS_URL=ws://localhost:8082
-export FORGE_NODE_ID=prya
+export FORGE_NODE_ID=node-1
 export FORGED_BIN=/path/to/forged            # override daemon binary (FORGE_V3_BIN also accepted for backward compat)
 ```
 
@@ -147,7 +147,7 @@ When the control plane is unreachable:
 
 ```
 Error: control plane unreachable
-  URL: http://prya:8081/api
+  URL: http://node-1:8081/api
 ```
 
 Exit codes (from `internal/errors`):

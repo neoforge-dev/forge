@@ -438,3 +438,206 @@ func TestParseTaskFromMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractDomainAndTypeFromMessage(t *testing.T) {
+	tests := []struct {
+		name           string
+		text           string
+		wantDomain     string
+		wantTypeHint   string
+	}{
+		{
+			name:         "no hints — defaults",
+			text:         "fix the login bug",
+			wantDomain:   "",
+			wantTypeHint: "feature",
+		},
+		{
+			name:         "domain: prefix",
+			text:         "domain: interview-simulator fix auth",
+			wantDomain:   "interview-simulator",
+			wantTypeHint: "feature",
+		},
+		{
+			name:         "for domain: prefix",
+			text:         "for domain: voice-coach add retry logic",
+			wantDomain:   "voice-coach",
+			wantTypeHint: "feature",
+		},
+		{
+			name:         "project: prefix",
+			text:         "project: code-atlas add graph view",
+			wantDomain:   "code-atlas",
+			wantTypeHint: "feature",
+		},
+		{
+			name:         "type: prefix",
+			text:         "type: bug fix the crash",
+			wantDomain:   "",
+			wantTypeHint: "bug",
+		},
+		{
+			name:         "task type: prefix",
+			text:         "task type: research investigate caching",
+			wantDomain:   "",
+			wantTypeHint: "research",
+		},
+		{
+			name:         "domain and type together",
+			text:         "domain: study-flow type: bug user cannot log in",
+			wantDomain:   "study-flow",
+			wantTypeHint: "bug",
+		},
+		{
+			name:         "domain with trailing punctuation",
+			text:         "domain: babybites, add COPPA gate",
+			wantDomain:   "babybites",
+			wantTypeHint: "feature",
+		},
+		{
+			name:         "uppercase domain value normalised in type only",
+			text:         "type: BUG uppercase type",
+			wantDomain:   "",
+			wantTypeHint: "bug",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			domain, typeHint := extractDomainAndTypeFromMessage(tc.text)
+			if domain != tc.wantDomain {
+				t.Errorf("domain: got %q, want %q", domain, tc.wantDomain)
+			}
+			if typeHint != tc.wantTypeHint {
+				t.Errorf("typeHint: got %q, want %q", typeHint, tc.wantTypeHint)
+			}
+		})
+	}
+}
+
+func TestOpenClawChat_WithDomainHint(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Message with a domain hint — exercises extractDomainAndTypeFromMessage +
+	// the stage gate advisory path inside openclawChatHandler.
+	payload := map[string]string{
+		"from": "telegram:user",
+		"text": "domain: interview-simulator type: bug fix auth refresh",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/chat", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	openclawHandler(rr, req)
+
+	// Should always succeed — stage gate is advisory only
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp OpenClawChatResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TaskID == "" {
+		t.Error("expected non-empty task_id")
+	}
+}
+
+func TestOpenClawIngest_FailStatus(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	payload := map[string]interface{}{
+		"task_id": "INGEST-FAIL-1",
+		"status":  "fail",
+		"agent":   "kimi",
+		"node":    "sati",
+		"summary": "task failed due to build error",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/ingest", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	openclawHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify task.failed event was inserted
+	db := getDBConn()
+	if db == nil {
+		t.Skip("no db")
+	}
+	var eventType string
+	err := db.QueryRow(`SELECT event_type FROM task_events WHERE task_id = ?`, "INGEST-FAIL-1").Scan(&eventType)
+	if err != nil {
+		t.Fatalf("query event: %v", err)
+	}
+	if eventType != "task.failed" {
+		t.Errorf("expected event_type 'task.failed', got %q", eventType)
+	}
+}
+
+func TestOpenClawIngest_NeedsApprovalStatus(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	payload := map[string]interface{}{
+		"task_id": "INGEST-APPROVAL-1",
+		"status":  "needs_approval",
+		"agent":   "glm",
+		"node":    "sati",
+		"summary": "task needs human approval",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/ingest", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	openclawHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	db := getDBConn()
+	if db == nil {
+		t.Skip("no db")
+	}
+	var eventType string
+	err := db.QueryRow(`SELECT event_type FROM task_events WHERE task_id = ?`, "INGEST-APPROVAL-1").Scan(&eventType)
+	if err != nil {
+		t.Fatalf("query event: %v", err)
+	}
+	if eventType != "task.needs_approval" {
+		t.Errorf("expected event_type 'task.needs_approval', got %q", eventType)
+	}
+}
+
+// TestOpenClawChatHandler_EnqueueFails exercises the enqueue error path
+// (handlers_openclaw.go:218.70,222.3) when the DB is closed so Enqueue fails.
+func TestOpenClawChatHandler_EnqueueFails(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Close DB so taskQueue.Enqueue fails.
+	db := getDBConn()
+	db.Close()
+
+	body, _ := json.Marshal(OpenClawMessage{
+		Text: "Fix the authentication bug in the login service",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/chat", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	openclawChatHandler(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for enqueue failure in openclawChatHandler, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

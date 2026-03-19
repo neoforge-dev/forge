@@ -47,16 +47,15 @@ func TestWave80_GetAgentID_FromEnv(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWave80_SpawnAgent_ValidType_TmuxFails(t *testing.T) {
+	// SAFETY: Do NOT call spawnAgent with a real agent type when tmux is available —
+	// it creates real windows in the forge session (orphan claude-N windows).
+	// Test only the unknown-type error path which is safe.
 	ctx := context.Background()
-	// Use a valid agent type — will fail at tmux new-window (not available in test)
-	// but covers: agentSpawnCommands lookup, tmux list-windows attempt, window name generation
-	_, err := spawnAgent(ctx, "claude", "test-node-wave80")
-	// On macOS/test env, tmux new-window will fail — this is expected
+	_, err := spawnAgent(ctx, "unknown-type-wave80-safe", "test-node-wave80")
 	if err == nil {
-		t.Skip("tmux available and spawn succeeded — skipping error path test")
+		t.Error("expected error for unknown agent type")
 	}
-	// Just verify we got some error (not "unknown agent type")
-	t.Logf("spawnAgent with valid type: %v (expected tmux error)", err)
+	t.Logf("spawnAgent unknown type error (expected): %v", err)
 }
 
 // ---------------------------------------------------------------------------
@@ -300,20 +299,4 @@ func TestWave80_MigrateDown_OneStep(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// patrol.go: fleetScaleRecommend — 67.6%
-// ---------------------------------------------------------------------------
-
-func TestWave80_FleetScaleRecommend_EmptyDB(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	db := getDBConn()
-	ctx := context.Background()
-	_ = ensureScaleRecommendationsTable(ctx, db)
-
-	err := fleetScaleRecommend(ctx, db)
-	if err != nil {
-		t.Logf("fleetScaleRecommend empty DB: %v", err)
-	}
-}
+// fleetScaleRecommend deleted (f715a295) — test removed.
