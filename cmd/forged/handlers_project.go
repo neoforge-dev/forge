@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-// Project represents a workspace or repository being managed
-type Project struct {
+// Product represents a workspace or repository being managed (formerly Project).
+// The JSON field names are unchanged for backward API compatibility.
+type Product struct {
 	ID          string    `json:"id"`
 	Key         string    `json:"key"`
 	Name        string    `json:"name"`
@@ -46,24 +47,24 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if domain != "" {
-		rows, err = getDBConn().Query("SELECT id, key, name, domain, description, path, type, status, created_at, updated_at FROM projects WHERE domain = ?", domain)
+		rows, err = getDBConn().Query("SELECT id, key, name, domain, description, path, type, status, created_at, updated_at FROM products WHERE domain = ?", domain)
 	} else {
-		rows, err = getDBConn().Query("SELECT id, key, name, domain, description, path, type, status, created_at, updated_at FROM projects")
+		rows, err = getDBConn().Query("SELECT id, key, name, domain, description, path, type, status, created_at, updated_at FROM products")
 	}
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to query projects: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to query products: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	projects := []Project{}
+	products := []Product{}
 	for rows.Next() {
-		var p Project
+		var p Product
 		var desc, ppath, ptype, status, createdAt, updatedAt sql.NullString
 		err := rows.Scan(&p.ID, &p.Key, &p.Name, &p.Domain, &desc, &ppath, &ptype, &status, &createdAt, &updatedAt)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to scan project: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to scan product: %v", err), http.StatusInternalServerError)
 			return
 		}
 		if desc.Valid {
@@ -93,13 +94,13 @@ func listProjectsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			p.UpdatedAt = t
 		}
-		projects = append(projects, p)
+		products = append(products, p)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"projects": projects,
-		"count":    len(projects),
+		"products": products,
+		"count":    len(products),
 	})
 }
 
@@ -122,16 +123,16 @@ func projectByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p Project
+	var p Product
 	var desc, ppath, ptype, status, createdAt, updatedAt sql.NullString
-	err := getDBConn().QueryRow("SELECT id, key, name, domain, description, path, type, status, created_at, updated_at FROM projects WHERE id = ? OR key = ?", id, id).Scan(
+	err := getDBConn().QueryRow("SELECT id, key, name, domain, description, path, type, status, created_at, updated_at FROM products WHERE id = ? OR key = ?", id, id).Scan(
 		&p.ID, &p.Key, &p.Name, &p.Domain, &desc, &ppath, &ptype, &status, &createdAt, &updatedAt)
 
 	if err == sql.ErrNoRows {
-		http.Error(w, "project not found", http.StatusNotFound)
+		http.Error(w, "product not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("failed to query project: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to query product: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -167,9 +168,9 @@ func projectByIDHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(p)
 }
 
-// createProjectHandler creates a new project
+// createProjectHandler creates a new product (route kept as /projects for backward compat)
 func createProjectHandler(w http.ResponseWriter, r *http.Request) {
-	var p Project
+	var p Product
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
@@ -194,12 +195,12 @@ func createProjectHandler(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	_, err := getDBConn().Exec(`
-		INSERT INTO projects (id, key, name, domain, description, path, type, status, created_at, updated_at)
+		INSERT INTO products (id, key, name, domain, description, path, type, status, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Key, p.Name, p.Domain, p.Description, p.Path, p.Type, p.Status, now, now)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to create project: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to create product: %v", err), http.StatusInternalServerError)
 		return
 	}
 

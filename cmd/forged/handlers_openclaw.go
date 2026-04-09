@@ -13,8 +13,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // OpenClawMessage represents an incoming message from OpenClaw gateway
@@ -50,6 +53,74 @@ type OpenClawIngestPayload struct {
 	Artifacts   []interface{}          `json:"artifacts"`
 	Approval    map[string]interface{} `json:"approval,omitempty"`
 	CompletedAt string                 `json:"completed_at,omitempty"`
+}
+
+// OpenClawDispatchRequest is the payload for POST /api/openclaw/dispatch.
+// OpenClaw is intake-only: it queues a task for the daemon's polling loop
+// (forge work --daemon) to assign.  The agent field is intentionally absent
+// so that no direct agent-claiming occurs.
+type OpenClawDispatchRequest struct {
+	Message       string `json:"message"`
+	Priority      int    `json:"priority,omitempty"`
+	PreferredNode string `json:"preferred_node,omitempty"`
+	PreferredRole string `json:"preferred_role,omitempty"`
+	SourceChannel string `json:"source_channel,omitempty"`
+	ProductKey    string `json:"product_key,omitempty"`
+}
+
+// OpenClawDispatchResponse is the response from POST /api/openclaw/dispatch.
+type OpenClawDispatchResponse struct {
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+}
+
+// OpenClawNotifyRequest is the payload for POST /api/openclaw/notify.
+type OpenClawNotifyRequest struct {
+	Channel string `json:"channel"`
+	Message string `json:"message"`
+	Level   string `json:"level,omitempty"`
+}
+
+// OpenClawNotifyResponse is the response from POST /api/openclaw/notify.
+type OpenClawNotifyResponse struct {
+	OK      bool   `json:"ok"`
+	Channel string `json:"channel"`
+}
+
+// portfolioProduct and portfolioState are defined in stage_gate.go.
+// This file uses the extended version from there which includes
+// ValidationHypothesis, KillCriteria, DistributionChannel fields.
+
+// portfolioProductJSON is the JSON-enriched view for the portfolio endpoint.
+type portfolioProductJSON struct {
+	Key                  string  `yaml:"key"                  json:"key"`
+	Name                 string  `yaml:"name"                 json:"name"`
+	Domain               string  `yaml:"domain"               json:"domain"`
+	RepoPath             string  `yaml:"repo_path"            json:"repo_path"`
+	Stage                string  `yaml:"stage"                json:"stage"`
+	Status               string  `yaml:"status"               json:"status"`
+	Owner                string  `yaml:"owner"                json:"owner"`
+	ICP                  string  `yaml:"icp"                  json:"icp"`
+	CurrentMRR           float64 `yaml:"current_mrr"          json:"current_mrr"`
+	TargetMRR            float64 `yaml:"target_mrr"           json:"target_mrr"`
+	DeployReady          bool    `yaml:"deploy_ready"         json:"deploy_ready"`
+	AnalyticsReady       bool    `yaml:"analytics_ready"      json:"analytics_ready"`
+	BillingReady         bool    `yaml:"billing_ready"        json:"billing_ready"`
+	NextGate             string  `yaml:"next_gate"            json:"next_gate"`
+	NextAction           string  `yaml:"next_action"          json:"next_action"`
+	PrimaryMetric        string  `yaml:"primary_metric"       json:"primary_metric"`
+	PrimaryRisk          string  `yaml:"primary_risk"         json:"primary_risk"`
+	KillCriteria         string  `yaml:"kill_criteria"        json:"kill_criteria,omitempty"`
+	DistributionChannel  string  `yaml:"distribution_channel" json:"distribution_channel,omitempty"`
+	ValidationHypothesis string  `yaml:"validation_hypothesis" json:"validation_hypothesis,omitempty"`
+}
+
+// portfolioStateJSON is the full YAML structure for JSON output.
+type portfolioStateJSON struct {
+	Version   string                 `yaml:"version"    json:"version"`
+	Updated   string                 `yaml:"updated"    json:"updated"`
+	NorthStar string                 `yaml:"north_star" json:"north_star"`
+	Products  []portfolioProductJSON `yaml:"products"   json:"products"`
 }
 
 // openclawHandler handles /api/openclaw/* routes
@@ -184,6 +255,10 @@ func openclawChatHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "text required")
 		return
 	}
+	if len(strings.TrimSpace(msg.Text)) < 5 {
+		writeJSONError(w, http.StatusBadRequest, "message too short (min 5 chars)")
+		return
+	}
 
 	// Parse task title from message
 	title := parseTaskFromMessage(msg.Text)
@@ -204,14 +279,17 @@ func openclawChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create task with default values for openclaw-sourced tasks
 	task := Task{
-		ID:       generateTaskID(),
-		Title:    title,
-		Domain:   "openclaw",
-		Project:  "bridge",
-		Type:     TaskTypeFeature,
-		Priority: 5,
-		Status:   TaskStatusQueued,
-		State:    StateQueued,
+		ID:            generateTaskID(),
+		Title:         title,
+		Domain:        "openclaw",
+		Project:       "bridge",
+		Type:          TaskTypeFeature,
+		Priority:      5,
+		Status:        TaskStatusQueued,
+		State:         StateQueued,
+		Origin:        "openclaw",
+		Requester:     msg.From,
+		SourceChannel: "telegram",
 	}
 
 	// Enqueue the task
@@ -288,7 +366,8 @@ func extractDomainAndTypeFromMessage(text string) (domainHint, typeHint string) 
 }
 
 // openclawStatusHandler handles GET /api/openclaw/status
-// Returns daemon status for the bot to forward to Telegram
+// Returns daemon status for the bot to forward to Telegram.
+// Uses getFleetCounts for consistency with all other status endpoints.
 func openclawStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -301,29 +380,15 @@ func openclawStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Count total agents
-	var totalAgents int
-	db.QueryRow("SELECT COUNT(*) FROM agent_heartbeats").Scan(&totalAgents)
-
-	// Count busy agents (those with a current task)
-	var busyAgents int
-	db.QueryRow("SELECT COUNT(*) FROM agent_heartbeats WHERE current_task_id IS NOT NULL AND current_task_id != ''").Scan(&busyAgents)
-
-	// Count queued tasks
-	var tasksQueued int
-	db.QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'queued'").Scan(&tasksQueued)
-
-	// Count assigned tasks
-	var tasksAssigned int
-	db.QueryRow("SELECT COUNT(*) FROM tasks WHERE status = 'assigned'").Scan(&tasksAssigned)
+	fc := getFleetCounts(r.Context(), db)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(OpenClawStatusResponse{
 		Daemon:        "ok",
-		Agents:        totalAgents,
-		Busy:          busyAgents,
-		TasksQueued:   tasksQueued,
-		TasksAssigned: tasksAssigned,
+		Agents:        fc.TotalAgents,
+		Busy:          fc.RunningTasks, // tasks running ≈ busy agent slots
+		TasksQueued:   fc.QueuedTasks,
+		TasksAssigned: fc.RunningTasks,
 	})
 }
 
@@ -349,8 +414,14 @@ func openclawEventsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"ok\"}\n\n")
 	flusher.Flush()
 
-	// Poll for events every 5 seconds
-	ticker := time.NewTicker(5 * time.Second)
+	// Poll for events every 5 seconds (override via FORGE_OPENCLAW_TICK_MS for tests)
+	tickInterval := 5 * time.Second
+	if v := os.Getenv("FORGE_OPENCLAW_TICK_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			tickInterval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	// Track last seen event ID to avoid duplicates
@@ -368,7 +439,7 @@ func openclawEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Get recent task events
 			rows, err := db.QueryContext(r.Context(),
-				`SELECT id, task_id, event_type, payload, created_at FROM task_events 
+				`SELECT id, task_id, event_type, payload, created_at FROM task_events
 				 WHERE id > ? ORDER BY id ASC LIMIT 20`, lastEventID)
 			if err != nil {
 				continue
@@ -402,7 +473,7 @@ func openclawEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Get agent state changes
 			agentRows, err := db.QueryContext(r.Context(),
-				`SELECT agent_id, status, current_task_id, last_seen FROM agent_heartbeats 
+				`SELECT agent_id, status, current_task_id, last_seen FROM agent_heartbeats
 				 WHERE last_seen > datetime('now', '-10 seconds')`)
 			if err == nil {
 				for agentRows.Next() {
@@ -423,4 +494,219 @@ func openclawEventsHandler(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// openclawDispatchHandler handles POST /api/openclaw/dispatch.
+//
+// OpenClaw is intake-only: it creates a task with origin=openclaw metadata and
+// returns immediately.  No agent is claimed; the daemon's polling loop
+// (forge work --daemon) is responsible for assignment.
+//
+// Accepted fields:
+//
+//	message         — required, becomes the task title
+//	priority        — optional 1-10 (default 5)
+//	preferred_node  — optional routing hint persisted in task_events
+//	preferred_role  — optional routing hint persisted in task_events
+//	source_channel  — optional (e.g. "telegram", "api")
+//	product_key     — optional portfolio product key
+func openclawDispatchHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req OpenClawDispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if strings.TrimSpace(req.Message) == "" {
+		writeJSONError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+	if len(strings.TrimSpace(req.Message)) < 5 {
+		writeJSONError(w, http.StatusBadRequest, "message too short (min 5 chars)")
+		return
+	}
+
+	priority := req.Priority
+	if priority <= 0 || priority > 10 {
+		priority = 5
+	}
+
+	sourceChannel := req.SourceChannel
+	if sourceChannel == "" {
+		sourceChannel = "telegram"
+	}
+
+	task := Task{
+		ID:            generateTaskID(),
+		Title:         req.Message,
+		Domain:        "openclaw",
+		Project:       "dispatch",
+		Type:          TaskTypeFeature,
+		Priority:      priority,
+		Status:        TaskStatusQueued,
+		State:         StateQueued,
+		Origin:        "openclaw",
+		SourceChannel: sourceChannel,
+	}
+
+	if taskQueue == nil {
+		writeJSONError(w, http.StatusInternalServerError, "task queue not available")
+		return
+	}
+
+	if err := taskQueue.Enqueue(context.Background(), task); err != nil {
+		log.Printf("openclaw/dispatch: failed to enqueue task: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to create task")
+		return
+	}
+
+	// Persist openclaw-specific metadata as a task_events record so the polling
+	// loop can read routing hints without requiring a schema change on tasks.
+	db := getDBConn()
+	if db != nil {
+		meta := map[string]interface{}{
+			"origin":         "openclaw",
+			"preferred_node": req.PreferredNode,
+			"preferred_role": req.PreferredRole,
+			"source_channel": req.SourceChannel,
+			"product_key":    req.ProductKey,
+		}
+		metaJSON, _ := json.Marshal(meta)
+		_, err := db.Exec(
+			`INSERT INTO task_events (task_id, domain, project, event_type, payload, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			task.ID,
+			"openclaw",
+			"dispatch",
+			"task.queued.openclaw",
+			string(metaJSON),
+			time.Now().UTC().Format(time.RFC3339),
+		)
+		if err != nil {
+			log.Printf("openclaw/dispatch: failed to persist origin metadata for task %s: %v", task.ID, err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(OpenClawDispatchResponse{
+		TaskID: task.ID,
+		Status: "queued",
+	})
+}
+
+// openclawNotifyHandler handles POST /api/openclaw/notify.
+// Logs the notification and persists it to task_events.
+//
+// TODO: add Telegram/webhook channel integration when bot token is wired.
+func openclawNotifyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req OpenClawNotifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if strings.TrimSpace(req.Message) == "" {
+		writeJSONError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+
+	channel := strings.TrimSpace(req.Channel)
+	if channel == "" {
+		channel = "log"
+	}
+
+	level := strings.TrimSpace(req.Level)
+	if level == "" {
+		level = "info"
+	}
+
+	log.Printf("openclaw/notify [%s] [%s]: %s", channel, level, req.Message)
+
+	db := getDBConn()
+	if db != nil {
+		payload, _ := json.Marshal(map[string]interface{}{
+			"channel": channel,
+			"level":   level,
+			"message": req.Message,
+		})
+		_, err := db.Exec(
+			`INSERT INTO task_events (task_id, domain, project, event_type, payload, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			"openclaw-notify",
+			"openclaw",
+			"notify",
+			"openclaw.notify",
+			string(payload),
+			time.Now().UTC().Format(time.RFC3339),
+		)
+		if err != nil {
+			log.Printf("openclaw/notify: failed to persist event: %v", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(OpenClawNotifyResponse{
+		OK:      true,
+		Channel: channel,
+	})
+}
+
+// openclawPortfolioHandler handles GET /api/openclaw/portfolio.
+// Returns the full portfolio state from config/portfolio/portfolio-state.yaml as JSON,
+// augmented with computed fields total_mrr and blocked_count.
+func openclawPortfolioHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	forgeRoot := os.Getenv("FORGE_ROOT")
+	if forgeRoot == "" {
+		forgeRoot = "."
+	}
+
+	yamlPath := filepath.Join(forgeRoot, "config", "portfolio", "portfolio-state.yaml")
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		log.Printf("openclaw/portfolio: failed to read portfolio-state.yaml: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to read portfolio state")
+		return
+	}
+
+	var state portfolioStateJSON
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		log.Printf("openclaw/portfolio: failed to parse portfolio-state.yaml: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to parse portfolio state")
+		return
+	}
+
+	// Compute derived fields.
+	var totalMRR float64
+	var blockedCount int
+	for _, p := range state.Products {
+		totalMRR += p.CurrentMRR
+		if strings.TrimSpace(p.NextGate) != "" {
+			blockedCount++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"version":       state.Version,
+		"updated":       state.Updated,
+		"north_star":    state.NorthStar,
+		"products":      state.Products,
+		"total_mrr":     totalMRR,
+		"blocked_count": blockedCount,
+	})
 }

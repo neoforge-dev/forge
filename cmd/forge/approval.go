@@ -63,23 +63,19 @@ var approvalListCmd = &cobra.Command{
 		// Try live v3 API first.
 		apiClient := internal.NewClient()
 		approvals, apiErr := apiClient.ListApprovals(cmd.Context(), statusFilter)
-		if apiErr != nil || len(approvals) == 0 {
-			// Daemon error or empty response — fall back to local file / demo data.
-			// For a real API error that is not "unreachable", surface a warning
-			// but still try local so the CLI stays usable.
-			if apiErr != nil {
-				var unreachable *internal.DaemonUnreachableError
-				if !errors.As(apiErr, &unreachable) {
-					fmt.Fprintf(os.Stderr, "warning: approval API error: %v\n", apiErr)
-				}
+		if apiErr != nil {
+			// Daemon error — fall back to local file.
+			var unreachable *internal.DaemonUnreachableError
+			if errors.As(apiErr, &unreachable) {
+				fmt.Fprintf(os.Stderr, "Warning: daemon unreachable — showing local approval data\n  Recovery: forge daemon start\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: approval API error: %v\n", apiErr)
 			}
 			local, localErr := loadApprovals()
-			if localErr != nil && apiErr != nil {
+			if localErr != nil {
 				return fmt.Errorf("failed to load approvals: %w", apiErr)
 			}
-			if localErr == nil {
-				approvals = local
-			}
+			approvals = local
 			// Apply pending filter to fallback data when not already filtered above.
 			if pendingOnly {
 				var filtered []internal.Approval
@@ -203,8 +199,7 @@ var approvalDecideCmd = &cobra.Command{
 
 		if apiErr != nil {
 			// Fall back to local file mutation for any API error (daemon
-			// unreachable, approval not in v3 DB, etc.).  This preserves
-			// offline/demo usability without masking genuine errors.
+			// unreachable, approval not in v3 DB, etc.).
 			approvals, localErr := loadApprovals()
 			if localErr != nil {
 				return fmt.Errorf("failed to %s approval: %w", decision, apiErr)
@@ -228,29 +223,7 @@ var approvalDecideCmd = &cobra.Command{
 			}
 
 			if !found {
-				// ID not in local storage either — create a synthetic record so
-				// the decide command succeeds (mirrors original demo behaviour).
-				newApproval := internal.Approval{
-					ID:          approvalID,
-					Type:        "feature",
-					Tier:        "desktop",
-					Domain:      "local",
-					Project:     "",
-					Title:       "Local Approval",
-					Description: "",
-					Confidence:  0.85,
-					RiskScore:   0.2,
-					Status:      decision,
-					RequestedBy: "system",
-					RequestedAt: time.Now().Add(-1 * time.Hour),
-					ExpiresAt:   time.Now().Add(23 * time.Hour),
-				}
-				now := time.Now()
-				newApproval.DecidedAt = &now
-				newApproval.DecidedBy = user
-				newApproval.Decision = decision
-				newApproval.Reason = reason
-				approvals = append(approvals, newApproval)
+				return fmt.Errorf("approval not found: %s\n  Recovery: forge daemon start (approval may exist only in daemon DB)", approvalID)
 			}
 
 			if err := saveApprovals(approvals); err != nil {
@@ -277,7 +250,7 @@ func loadApprovals() ([]internal.Approval, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return getDemoApprovals(), nil
+			return nil, nil // No approvals file = no approvals
 		}
 		return nil, err
 	}
@@ -301,60 +274,6 @@ func saveApprovals(approvals []internal.Approval) error {
 	return os.WriteFile(filepath.Join(dir, "approvals.json"), data, 0644)
 }
 
-// getDemoApprovals returns demo approvals for demonstration
-func getDemoApprovals() []internal.Approval {
-	return []internal.Approval{
-		{
-			ID:          "01APP456XYZ",
-			Type:        "merge",
-			Tier:        "phone",
-			Domain:      "codeswiftr-com",
-			Project:     "interview-simulator",
-			Title:       "Merge PR #42: Add OAuth2 login",
-			Description: "OAuth2 integration for Google/GitHub login",
-			Confidence:  0.82,
-			RiskScore:   0.15,
-			Status:      "pending",
-			RequestedBy: "kimi",
-			RequestedAt: time.Now().Add(-2 * time.Hour),
-			ExpiresAt:   time.Now().Add(22 * time.Hour),
-		},
-		{
-			ID:          "01APP789ABC",
-			Type:        "deploy",
-			Tier:        "watch",
-			Domain:      "brandfocus-ai",
-			Project:     "voice-coach",
-			Title:       "Deploy to staging",
-			Description: "Deploy voice coach to staging environment",
-			Confidence:  0.96,
-			RiskScore:   0.05,
-			Status:      "pending",
-			RequestedBy: "minimax",
-			RequestedAt: time.Now().Add(-30 * time.Minute),
-			ExpiresAt:   time.Now().Add(23 * time.Hour),
-		},
-		{
-			ID:          "01APP123DEF",
-			Type:        "feature",
-			Tier:        "desktop",
-			Domain:      "codeswiftr-com",
-			Project:     "interview-simulator",
-			Title:       "Feature: Stripe webhooks",
-			Description: "Process Stripe payment webhooks",
-			Confidence:  0.91,
-			RiskScore:   0.25,
-			Status:      "approved",
-			RequestedBy: "gemini",
-			RequestedAt: time.Now().Add(-5 * time.Hour),
-			ExpiresAt:   time.Now().Add(-1 * time.Hour),
-			DecidedAt:   &time.Time{},
-			DecidedBy:   "lead",
-			Decision:    "approve",
-			Reason:      "LGTM",
-		},
-	}
-}
 
 // approvalBulkDecideCmd: forge approval bulk-decide [--threshold 0.95] [--dry-run]
 var approvalBulkDecideCmd = &cobra.Command{
@@ -382,25 +301,21 @@ Examples:
 
 		// Fetch all pending approvals.
 		approvals, apiErr := apiClient.ListApprovals(cmd.Context(), "pending")
-		if apiErr != nil || len(approvals) == 0 {
-			// Fall back to local data on error or empty API response.
-			if apiErr != nil {
-				var unreachable *internal.DaemonUnreachableError
-				if !errors.As(apiErr, &unreachable) {
-					fmt.Fprintf(os.Stderr, "warning: approval API error: %v\n", apiErr)
-				}
+		if apiErr != nil {
+			// Fall back to local data on API error only.
+			var unreachable *internal.DaemonUnreachableError
+			if !errors.As(apiErr, &unreachable) {
+				fmt.Fprintf(os.Stderr, "warning: approval API error: %v\n", apiErr)
 			}
 			local, localErr := loadApprovals()
-			if localErr != nil && apiErr != nil {
+			if localErr != nil {
 				return fmt.Errorf("failed to load approvals: %w", apiErr)
 			}
-			if localErr == nil {
-				// Filter to pending only from local data.
-				approvals = nil
-				for _, a := range local {
-					if a.Status == "pending" {
-						approvals = append(approvals, a)
-					}
+			// Filter to pending only from local data.
+			approvals = nil
+			for _, a := range local {
+				if a.Status == "pending" {
+					approvals = append(approvals, a)
 				}
 			}
 		}

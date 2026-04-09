@@ -16,13 +16,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ANSI color codes
-const (
+// ANSI color codes — declared as variables so NO_COLOR can zero them at init.
+var (
 	colorReset  = "\033[0m"
 	colorGreen  = "\033[32m"
 	colorRed    = "\033[31m"
 	colorYellow = "\033[33m"
 )
+
+func init() {
+	// Honour the NO_COLOR convention (https://no-color.org/).
+	// When the variable is set (to any value), strip all ANSI codes.
+	if os.Getenv("NO_COLOR") != "" {
+		colorReset = ""
+		colorGreen = ""
+		colorRed = ""
+		colorYellow = ""
+	}
+}
 
 // doctorResult holds the outcome of a single health check
 type doctorResult struct {
@@ -65,6 +76,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	var results []doctorResult
 
+	results = append(results, checkForgeRoot())
 	results = append(results, checkDaemon(apiURL))
 	results = append(results, checkSQLite())
 	results = append(results, checkGitLock())
@@ -116,6 +128,32 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// checkForgeRoot validates the FORGE_ROOT environment variable.
+func checkForgeRoot() doctorResult {
+	root := os.Getenv("FORGE_ROOT")
+	if root == "" {
+		return doctorResult{
+			Name:    "FORGE_ROOT",
+			Status:  "warning",
+			Detail:  "not set",
+			Message: "FORGE_ROOT not set — using current directory",
+		}
+	}
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return doctorResult{
+			Name:    "FORGE_ROOT",
+			Status:  "error",
+			Detail:  "missing — " + root,
+			Message: "FORGE_ROOT points to non-existent directory — fix in ~/.zshrc or ~/.profile",
+		}
+	}
+	return doctorResult{
+		Name:   "FORGE_ROOT",
+		Status: "ok",
+		Detail: "ok       " + root,
+	}
 }
 
 // checkDaemon pings GET /health on the API URL

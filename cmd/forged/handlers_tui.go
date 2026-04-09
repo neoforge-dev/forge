@@ -32,7 +32,10 @@ func tuiLogsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	workers := hub.ListWorkers()
+	var workers []string
+	if hub != nil {
+		workers = hub.ListWorkers()
+	}
 	var entries []LogEntry
 	now := time.Now().UTC()
 

@@ -58,10 +58,18 @@ git submodule foreach 'git stash'  # If needed
 
 ## Multi-Node Fleet
 
-Multiple agents (node-1, node-3, node-2, node-4) push to `main` simultaneously.
-- Use `forge git commit` to handle race conditions
+Multiple agents (prya, nova, sati, vega) push to `main` simultaneously.
+- Use `bin/gitsafe.sh` for all git write operations on multi-agent nodes
 - Fetch + rebase before any push
 - Small, frequent commits reduce conflict surface area
+
+| Node | Multi-Agent | gitsafe.sh Status |
+|------|-------------|-------------------|
+| gaea | YES | ✅ Auto-enabled |
+| nova | YES | ✅ Auto-enabled |
+| sati | YES | ✅ Auto-enabled |
+| prya | YES | ✅ Auto-enabled (8+ agents) |
+| vega | NO | Passthrough |
 
 ## Git Index Lock
 
@@ -73,6 +81,28 @@ rm .git/index.lock
 ```
 
 **Recurring issue** during worktree cleanup — lock is always 0-byte artifact, never valid state.
+
+### GIT_INDEX_FILE Workaround (Sandbox Nodes)
+
+On nodes with sandbox restrictions (e.g., vega), `git add`/`commit` may fail with `fatal: unable to write new index file`. Use this pattern:
+
+```bash
+cp .git/index /tmp/forge-git-index-N && \
+GIT_INDEX_FILE=/tmp/forge-git-index-N git add <files> && \
+cp /tmp/forge-git-index-N .git/index
+```
+
+**Always copy back to `.git/index`** after each operation to keep the main index in sync.
+
+### Read-Only Git Operations in Hooks
+
+When running `git status` or `git diff` in hooks or background scripts, use `--no-optional-locks` to prevent index.lock contention:
+
+```bash
+git --no-optional-locks status --porcelain
+```
+
+This prevents race conditions with concurrent git write operations.
 
 ## Submodules
 
@@ -116,11 +146,12 @@ git push
 
 ## Submodule Commit Pattern (Avoid Detached HEAD)
 
-Portfolio submodules (`portfolio/{domain}/{project}`) require explicit branch checkout before committing. Git submodules check out in detached HEAD by default when FORGE advances the pointer.
+Projects use git worktrees for parallel work. No submodules.
 
 **Always do this before committing inside a submodule:**
 ```bash
-cd portfolio/domain/project
+# Create a worktree for your feature branch
+git worktree add ../forge-mono-feat-x -b feat/my-feature
 git checkout main          # REQUIRED — avoids detached HEAD
 # make changes
 git add <files>
@@ -151,9 +182,49 @@ git push origin main
 - Dispatch files should include `DO NOT COMMIT` instruction
 - Agents write results to `.forge/heartbeat/results/` for lead to collect
 
+## GIT_INDEX_FILE Workaround (Sandbox Nodes)
+
+On nodes with sandbox restrictions (e.g., vega), `git add`/`commit` may fail with `fatal: unable to write new index file`. Use this pattern:
+
+```bash
+cp .git/index /tmp/forge-git-index-N && \
+GIT_INDEX_FILE=/tmp/forge-git-index-N git add <files> && \
+cp /tmp/forge-git-index-N .git/index
+```
+
+**Always copy back to `.git/index`** after each operation to keep the main index in sync.
+
+## Read-Only Git Operations in Hooks
+
+When running `git status` or `git diff` in hooks or background scripts, use `--no-optional-locks` to prevent index.lock contention:
+
+```bash
+git --no-optional-locks status --porcelain
+```
+
+This flag (Git 2.15+) skips the lock file for read-only operations, preventing race conditions with concurrent git write operations. All FORGE heartbeat hooks use this pattern as of S171.
+
+## gitsafe.sh Usage (Council S175 Mandate)
+
+On multi-agent nodes (gaea, nova, sati, prya), always use `bin/gitsafe.sh` for write operations:
+
+```bash
+# Stage and commit
+bash bin/gitsafe.sh add <files>
+bash bin/gitsafe.sh commit -m "type(scope): message"
+
+# Read-only operations (no gitsafe needed)
+git status
+git diff
+git log
+```
+
+**Why:** Prevents `.git/index.lock` corruption from concurrent agent operations.
+
 ## Safety Rules
 
 - **Never force push to main**
 - **Never skip pre-commit hooks** (`--no-verify`) unless explicitly approved
 - **Never commit secrets** (.env, credentials, API keys)
 - **Create NEW commits** after hook failure — never amend previous
+- **Always use gitsafe.sh** on multi-agent nodes for write operations

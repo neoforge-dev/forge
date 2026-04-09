@@ -1,0 +1,18 @@
+id: testing/wave
+name: Coverage Wave
+description: Blueprint for adding test coverage in waves with build verification.
+steps:
+  - type: shell
+    name: baseline
+    command: "cd cmd/forged && go test . -coverprofile=/tmp/cov-baseline.out -timeout 300s -count=1 && go tool cover -func=/tmp/cov-baseline.out | tail -1"
+  - type: dispatch
+    name: write-tests
+    agent: auto
+  - type: check
+    name: verify-tests
+    command: "cd cmd/forged && go test . -coverprofile=/tmp/cov-after.out -timeout 300s -count=1 && go tool cover -func=/tmp/cov-after.out | tail -1"
+  - type: complete
+    name: finalize
+    evidence:
+      - coverage-before
+      - coverage-after

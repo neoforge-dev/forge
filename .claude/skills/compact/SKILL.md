@@ -44,7 +44,7 @@ def analyze_context_composition():
     composition = {
         "file_reads": count_file_contents(),
         "previous_outputs": estimate_output_tokens(),
-        "convernode-2on_history": count_chat_tokens(),
+        "conversation_history": count_chat_tokens(),
         "tool_results": count_tool_output_tokens(),
         "system_prompt": get_system_prompt_size(),
     }
@@ -69,7 +69,7 @@ Total Tokens: 165,000 / 200,000 (82.5% utilization)
 Breakdown:
   📁 File Reads:        45,000 tokens (27%)
   📝 Previous Outputs:  80,000 tokens (48%) ← COMPACT TARGET
-  💬 Convernode-2on:      25,000 tokens (15%)
+  💬 Conversation:      25,000 tokens (15%)
   🛠️  Tool Results:     12,000 tokens (7%)
   ⚙️  System:           3,000 tokens (2%)
 

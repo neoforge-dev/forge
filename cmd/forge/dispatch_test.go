@@ -348,3 +348,23 @@ func TestExtractFirstLine_AllHeadings(t *testing.T) {
 		t.Errorf("expected empty for all-headings text, got %q", got)
 	}
 }
+
+func TestFormatRelativeTime(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		t    time.Time
+		want string
+	}{
+		{now.Add(-30 * time.Second), "just now"},
+		{now.Add(-5 * time.Minute), "5m ago"},
+		{now.Add(-3 * time.Hour), "3h ago"},
+		{now.Add(-48 * time.Hour), "2d ago"},
+	}
+	for _, tc := range cases {
+		got := formatRelativeTime(tc.t)
+		if got != tc.want {
+			t.Errorf("formatRelativeTime(%v ago) = %q, want %q",
+				time.Since(tc.t).Round(time.Second), got, tc.want)
+		}
+	}
+}

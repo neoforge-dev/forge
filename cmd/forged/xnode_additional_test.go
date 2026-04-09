@@ -101,6 +101,7 @@ func TestWave66_SSEDeliveryHandler_InitialConnectionEvent(t *testing.T) {
 // TestWave66_SSEDeliveryHandler_OutboxMessages verifies the SSE handler delivers messages
 // from the outbox directory when a JSONL file is present.
 func TestWave66_SSEDeliveryHandler_OutboxMessages(t *testing.T) {
+	t.Setenv("FORGE_XNODE_CHECK_TICK_MS", "50")
 	xc, cleanup := setupXNodeHTTP(t)
 	defer cleanup()
 
@@ -128,8 +129,8 @@ func TestWave66_SSEDeliveryHandler_OutboxMessages(t *testing.T) {
 		xc.SSEDeliveryHandler(w, req)
 	}()
 
-	// Allow two check-ticker cycles (1s each) to pick up the message.
-	time.Sleep(2200 * time.Millisecond)
+	// Allow two check-ticker cycles at 50ms.
+	time.Sleep(130 * time.Millisecond)
 	cancel()
 
 	select {
@@ -151,6 +152,7 @@ func TestWave66_SSEDeliveryHandler_OutboxMessages(t *testing.T) {
 // TestWave66_SSEDeliveryHandler_TargetNodeFilter verifies that the target_node query
 // parameter filters outbox messages to only the matching node.
 func TestWave66_SSEDeliveryHandler_TargetNodeFilter(t *testing.T) {
+	t.Setenv("FORGE_XNODE_CHECK_TICK_MS", "50")
 	xc, cleanup := setupXNodeHTTP(t)
 	defer cleanup()
 
@@ -178,8 +180,8 @@ func TestWave66_SSEDeliveryHandler_TargetNodeFilter(t *testing.T) {
 		xc.SSEDeliveryHandler(w, req)
 	}()
 
-	// Two check-ticker cycles.
-	time.Sleep(2200 * time.Millisecond)
+	// Two check-ticker cycles at 50ms.
+	time.Sleep(130 * time.Millisecond)
 	cancel()
 
 	select {

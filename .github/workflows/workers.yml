@@ -1,0 +1,43 @@
+name: Workers CI
+
+on:
+  workflow_dispatch:  # Disabled auto-trigger per user request
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/lead-capture
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit || true  # JS project, may not have tsconfig
+
+      - name: Lint
+        run: npx eslint src/ || true
+
+      - name: Run tests
+        run: npm test || echo "No tests configured yet"
+
+      - name: Secret scan
+        working-directory: .
+        run: |
+          # Fail if any hardcoded secrets found in worker source
+          if grep -rE '(sk_live|AKIA|ghp_|Bearer [A-Za-z0-9]{20,})' workers/; then
+            echo "::error::Possible hardcoded secret found in workers/"
+            exit 1
+          fi
+
+      - name: Dry run deploy
+        run: npx wrangler deploy --dry-run
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

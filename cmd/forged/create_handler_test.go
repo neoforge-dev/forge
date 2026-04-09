@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -387,5 +388,90 @@ func TestCreateTaskHandler_TitleTooLong(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+// TestCreateTaskHandler_IDWithSpaceRejected verifies that a caller-supplied
+// task ID containing internal spaces is rejected with 400. This guards against
+// IDs like "TASK-SUPER- SURGE-104" that would break CLI commands and URL paths.
+//
+// Note: leading/trailing spaces are trimmed by sanitizeID before the check, so
+// "TASK-FOO-BAR-001 " (trailing space) becomes valid after trimming. Only IDs
+// with internal spaces that survive TrimSpace are rejected here.
+func TestCreateTaskHandler_IDWithSpaceRejected(t *testing.T) {
+	cleanup := setupCreateHandlerTest(t)
+	defer cleanup()
+
+	// IDs with internal spaces that survive strings.TrimSpace must be rejected.
+	internalSpaceIDs := []struct {
+		name string
+		id   string
+	}{
+		{"internal space between segments", "TASK SUPER-SURGE-104"},
+		{"leading space inside word segment", "TASK-SUPER- SURGE-104"},
+		{"multiple internal spaces", "TASK -SUPER-SURGE-104"},
+	}
+
+	for _, tt := range internalSpaceIDs {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := map[string]interface{}{
+				"id":       tt.id,
+				"domain":   "test-domain",
+				"project":  "test-project",
+				"type":     "feature",
+				"title":    "Implement user authentication",
+				"priority": 5,
+			}
+
+			body, _ := json.Marshal(payload)
+			req := httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			createTaskHandler(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected 400 for ID %q, got %d: %s", tt.id, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestCreateTaskHandler_GeneratedIDHasNoSpaces verifies that when no ID is
+// supplied the auto-generated ID is valid and space-free.
+func TestCreateTaskHandler_GeneratedIDHasNoSpaces(t *testing.T) {
+	cleanup := setupCreateHandlerTest(t)
+	defer cleanup()
+
+	// Run several times to hit different word combinations.
+	for i := 0; i < 20; i++ {
+		payload := map[string]interface{}{
+			"domain":   "test-domain",
+			"project":  "test-project",
+			"type":     "feature",
+			"title":    "Implement user authentication flow",
+			"priority": 5,
+		}
+
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		createTaskHandler(w, req)
+
+		if w.Code != http.StatusOK && w.Code != http.StatusCreated {
+			t.Fatalf("unexpected error on iteration %d: %d %s", i, w.Code, w.Body.String())
+		}
+
+		var response map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("failed to parse response on iteration %d: %v", i, err)
+		}
+
+		id, _ := response["id"].(string)
+		if strings.Contains(id, " ") {
+			t.Errorf("generated task ID contains a space: %q", id)
+		}
 	}
 }

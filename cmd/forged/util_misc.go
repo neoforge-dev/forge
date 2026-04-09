@@ -4,13 +4,18 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
 // detectTailscaleIP returns this node's Tailscale IPv4 address if tailscale
 // is installed and connected, or "" if unavailable.
+// FORGE_TAILSCALE_IP env var overrides exec call — used in tests to avoid 2s timeout.
 func detectTailscaleIP() string {
+	if v, ok := os.LookupEnv("FORGE_TAILSCALE_IP"); ok {
+		return v
+	}
 	out, err := exec.Command("tailscale", "ip", "-4").Output()
 	if err != nil {
 		return ""

@@ -18,17 +18,24 @@ echo $FORGE_AGENT_NAME    # kimi, gemini, pi, etc.
 | Role | Window | Actions |
 |------|--------|---------|
 | Fleet Agent | Agent name (kimi, gemini...) | Execute tasks, write results |
-| Orchestrator | Hostname (node-1, node-2...) | Dispatch, review, commit |
+| Orchestrator | Hostname (prya, sati...) | Dispatch, review, commit |
 | Worktree Agent | (none - spawned by Task) | Code changes on branch |
 
 ---
+
+### Operator Console
+
+**Primary:** `http://<control-plane>:8081/ui` — HTMX fleet dashboard (auto-refresh 20s)
+**Debug only:** `/dashboard` and `/tui` — compatibility HTML views
 
 ### Essential Commands
 
 | Command | Purpose |
 |---------|---------|
 | `forge status` | Fleet health snapshot |
+| `forge fleet windows` | Live tmux agent windows |
 | `forge task list` | Available tasks |
+| `forge config list` | Show active control-plane target |
 | `ls .forge/dispatches/` | Find your dispatch file |
 | `cat .forge/dispatches/YOUR-FILE.md` | Read your task |
 
@@ -138,6 +145,50 @@ Your dispatch file contains:
 | `forge dispatch send` | Only orchestrator delegates |
 | Editing source code | Unless dispatch explicitly allows |
 
+### 7. PROMPT File L0 Header Schema
+
+Every `docs/PROMPT-{node}.md` must start with this mandatory header:
+
+```markdown
+# FORGE — {node} Node State
+
+**Updated:** {YYYY-MM-DD} ({sprint} session {N})
+**Node:** {node} ({RAM}, {role description})
+**Owner Domains:** {comma-separated domain slugs}
+**Git:** {branch}, {clean|dirty}
+```
+
+| Field | Required | Format | Example |
+|-------|----------|--------|---------|
+| Updated | YES | `YYYY-MM-DD (S{sprint} session {N})` | `2026-04-09 (S199 session 6)` |
+| Node | YES | `{hostname} ({RAM}, {role})` | `sati (64GB, primary fleet host)` |
+| Owner Domains | YES | Domain slugs from `config/domains.yaml` | `codeswiftr-com, brandfocus-ai` |
+| Git | YES | `{branch}, {status}` | `main, clean` |
+
+Each node's orchestrator owns its own PROMPT file. Do not edit another node's file.
+
+---
+
+## Architecture Diagrams
+
+Visual maps of the system — start here for quick comprehension.
+
+| Diagram | File | Shows |
+|---------|------|-------|
+| System Map (C4) | [`docs/architecture/SYSTEM-MAP.md`](architecture/SYSTEM-MAP.md) | Nodes, services, external deps |
+| Task FSM | [`docs/architecture/TASK-FSM.md`](architecture/TASK-FSM.md) | Task lifecycle states (ADR-028) |
+| Dispatch Flow | [`docs/architecture/DISPATCH-FLOW.md`](architecture/DISPATCH-FLOW.md) | Task creation → execution → commit |
+
+See also: [`V3_ARCHITECTURE.md`](architecture/V3_ARCHITECTURE.md) (prose), [`NODE-LEAD-FSM.md`](architecture/NODE-LEAD-FSM.md) (agent FSM), [`APPROVAL-TIERS.md`](architecture/APPROVAL-TIERS.md) (approval routing)
+
+### Patrol System
+
+Patrols are defined in **`StandardPatrols()`** in `cmd/forged/patrol.go`. IDs and schedules change when patrols are merged or added — **do not rely on a fixed count in prose**.
+
+```bash
+forge patrol list    # Canonical list for your installed binary
+```
+
 ---
 
 ## Tier 2: Workflow-Specific Knowledge
@@ -171,7 +222,7 @@ npm run lint                     # Node lint
 ```
 
 **Key paths:**
-- `cmd/forge/` — Go CLI (20+ nouns)
+- `cmd/forge/` — Go CLI (33+ nouns)
 - `cmd/forged/` — Go daemon (HTTP API :8081)
 - `harness/` — Python harness (iOS only)
 
@@ -183,7 +234,7 @@ npm run lint                     # Node lint
 ## Status: COMPLETE
 
 ## Deliverables
-- [x] Blog post: portfolio/domain/docs/TITLE.md (1,500 words)
+- [x] Blog post: services/{project}/docs/TITLE.md (1,500 words)
 - [x] Social content: 5 posts written
 
 ## Evidence
@@ -192,7 +243,7 @@ npm run lint                     # Node lint
 ```
 
 **Content directories:**
-- `portfolio/{domain}/docs/` — Project documentation
+- `services/{project}/docs/` or `apps/{project}/docs/` — Project documentation
 - `.forge/heartbeat/results/` — Your output goes here
 
 ### Infrastructure Tasks
@@ -209,8 +260,7 @@ forge daemon stop        # Graceful shutdown
 **Patrols (background monitors):**
 
 ```bash
-forge patrol list                    # List 25+ patrols
-forge patrol task-timeout            # Run timeout recovery
+forge patrol list                    # List registered patrols
 ```
 
 **Node management:**
@@ -222,13 +272,26 @@ forge node status <node>     # Ping specific node
 
 ### iOS Tasks
 
-**Use forge CLI (not harness):**
+There is **no** `forge ios` in the **Go** CLI (`cmd/forge/`). iOS automation lives in the **Python harness** (ADR-040: `forge_harness.cli_v2` keeps **`ios` only**):
 
 ```bash
-forge ios build --project path --scheme Name
-forge ios test --project path --scheme NameTests
-forge ios status --project path
+cd harness && uv run python -m forge_harness ios --help
+# e.g. build / test / sim — see subcommands
 ```
+
+See `harness/CLAUDE.md`, `harness/forge_harness/ios_harness/README.md`, and the `/ios-agent` skill.
+
+### Crontab Management
+
+**What:** Recurring background tasks managed via system crontab.
+
+| Entry | Schedule | Purpose |
+|-------|----------|---------|
+| `heartbeat-refresh.sh` | `*/2 * * * *` | Sends agent pulses to daemon |
+| `forge notify daily` | `03 07 * * *` | Daily Telegram status digest |
+| `forge notify gates` | `17 */4 * * *` | Human gate alerts (revenue blockers) |
+
+**Note:** Stale entries pointing to `/home/openclaw/work/FORGE/` should be updated to `/home/openclaw/work/forge-mono/`.
 
 ### Dispatch & Delegation (Orchestrator Only)
 
@@ -241,8 +304,8 @@ Need to assign work?
 │   └─ Task tool (subagent) — 100% reliable
 │
 ├─ Fleet agent task?
-│   ├─ Simple: forge dispatch send AGENT "message"
-│   └─ Complex: Write dispatch file, then notify
+│   ├─ PRIMARY: forge task create → agents self-assign via daemon (~99%)
+│   └─ SECONDARY: forge dispatch send AGENT "msg" (named agent required)
 │
 └─ Cross-node?
     └─ forge task create — agents claim from queue
@@ -268,8 +331,9 @@ For orchestrators and power users.
 **Monitoring:**
 
 ```bash
-forge status                    # Overall health
-forge fleet status              # Fleet snapshot
+forge status                    # Overall health (use this; there is no `forge fleet status`)
+forge fleet windows             # Live tmux windows on this node
+forge agent list                # Registered / heartbeating agents
 ```
 
 ### Royal Jelly (Persistent Context)
@@ -306,28 +370,34 @@ forge fleet status              # Fleet snapshot
 7. Confidence-approve → Quality gating (F3)
 8. Done → Merged and archived
 
-**Current status:** 70-95% complete
-- ✅ Task FSM, results pattern, manual promotion
-- 🔧 Gap F1: Auto lane promotion
-- 🔧 Gap F2: Result monitoring + auto-complete
-- 📋 Gap F3: Confidence scoring
+**Status:** ✅ Fully implemented (S158 verified)
+- ✅ F1: Auto lane promotion (`autoPromoteCompletedTasksInLane`, patrol.go:958)
+- ✅ F2: Result monitoring + auto-complete (`monitorResultFiles`, patrol.go:999)
+- ✅ F3: Confidence scoring + auto-approve (`confidenceApproveCompletedTasks`, patrol.go:1166)
+- ⚠️ Gap: `quality_gate_results` table exists but no code populates it yet (default score: 0.70)
 
 **Guide:** `forge-shared/modules/dark-factory.md`
 
 ### Cross-Node Communication
 
-**Message bus:** `forge message` — git-based, no HTTP required
+**Preferred:** **`forge lead send`** — XNode via daemon (`POST /api/xnode/forward`).
 
 ```bash
-forge message send --to node "message"
-forge message list
+forge lead send --to-node sati --task-id 42 --summary "run wave-99" --durable
+forge lead inbox
 ```
 
-**XNode mesh:**
+**Legacy git outbox:** `forge message` is **deprecated** in the CLI (still present for older playbooks). Prefer **`lead`** for new cross-node directives.
+
+```bash
+# forge message send --to node ...   # deprecated — see `forge message --help` if needed
+```
+
+**Node mesh:**
 
 ```bash
 forge node list              # All nodes
-forge node status node-1       # Specific node
+forge node status prya       # Specific node
 ```
 
 **Inbox:** `.forge/xnode/lead-inbox/{node}.jsonl`
@@ -354,17 +424,12 @@ forge node status node-1       # Specific node
 .forge/scripts/forge-startup.sh    # Full stack bootstrap
 ```
 
-**Save/restore:**
+**Operational commands (examples):**
 
 ```bash
-forge fleet save              # Snapshot state
-forge fleet restore           # Recover state
-```
-
-**Watchdog:**
-
-```bash
-.forge/scripts/daemon-watchdog.sh   # Auto-restart daemon
+forge fleet list              # Agents (daemon; mirrors `forge agent list` with a note)
+forge fleet windows           # Live tmux agent windows
+forge fleet broadcast "msg"   # Broadcast to fleet
 ```
 
 **Guide:** `forge-shared/modules/fleet-management.md`
@@ -415,7 +480,8 @@ forge blueprint run <name>    # Execute blueprint
 | Run tests | `Bash` + test command | — |
 | Understand architecture | `qmd search` | Grep (too noisy) |
 | Dispatch code work | Task tool | `tmux send-keys` |
-| Dispatch fleet task | `forge dispatch send` | `tmux send-keys` |
+| Queue routine fleet task | `forge task create` | `tmux send-keys` |
+| Dispatch named fleet task | `forge dispatch send` | `tmux send-keys` |
 | Check fleet health | `forge status` | Manual checks |
 
 ### CLI Commands Reference
@@ -437,7 +503,7 @@ forge blueprint run <name>    # Execute blueprint
 | **Approvals** | `forge approval list` | Pending approvals |
 | | `forge approval decide ID` | Approve/reject |
 | **Nodes** | `forge node list` | Mesh status |
-| **Messages** | `forge message send` | Cross-node msg |
+| **Cross-node** | `forge lead send --to-node ...` | Durable node directive |
 
 ---
 
@@ -496,6 +562,16 @@ forge blueprint run <name>    # Execute blueprint
 
 ---
 
+### Script Locations
+
+FORGE infrastructure is managed via scripts in three canonical locations:
+
+1.  **`bin/`** (19 scripts): High-level deployment and operational tools (e.g., `deploy-gate-runner.sh`, `gitsafe.sh`, `deploy-smoke-test.sh`).
+2.  **`.forge/scripts/`** (13 scripts): Internal infrastructure management (e.g., `heartbeat-refresh.sh`, `dark-factory-v3.sh`, `agent-start.sh`).
+3.  **`.claude/hooks/`** (8 hooks): Programmatic guardrails for agents (e.g., `pre-commit-hook.sh`).
+
+---
+
 ## Module Index
 
 | Module | Purpose | Tier |
@@ -514,17 +590,19 @@ forge blueprint run <name>    # Execute blueprint
 
 ---
 
-## Scripts Index
+## Scripts Index (.forge/scripts/)
 
 | Script | Purpose | When to Use |
 |--------|---------|-------------|
 | `forge-startup.sh` | Full stack bootstrap | System restart |
-| `daemon-watchdog.sh` | Auto-restart daemon | Always running |
+| `heartbeat-refresh.sh` | Agent heartbeat pulses | Crontab (every 2m) |
 | `lead-agent-wrapper.sh` | Auto-restart on context | Lead window |
 | `agent-start.sh` | Start fleet agent | New agent spawn |
 | `check-docs.sh` | Validate CLI docs match binary | CI / on-demand |
 | `install-hooks.sh` | Install git hooks | One-time setup |
 | `verify-files.sh` | File location validation | Pre-commit |
+| `smart-dispatch.sh` | Logic for auto-routing tasks | Internal use |
+| `notify-telegram.sh` | Sends alerts to Telegram | Alerts/Patrols |
 
 ---
 
@@ -555,5 +633,5 @@ forge blueprint run <name>    # Execute blueprint
 ## Version
 
 - **Created:** 2026-03-19
-- **Last Updated:** 2026-03-19
+- **Last Updated:** 2026-04-04 (S188 — script cleanup, doc consolidation)
 - **Status:** Active

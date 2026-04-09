@@ -6,8 +6,8 @@ import (
 	"os"
 )
 
-// ANSI color codes
-const (
+// ANSI color codes — declared as variables so NO_COLOR can zero them at init.
+var (
 	colorReset  = "\033[0m"
 	colorRed    = "\033[31m"
 	colorGreen  = "\033[32m"
@@ -15,6 +15,19 @@ const (
 	colorBlue   = "\033[34m"
 	colorCyan   = "\033[36m"
 )
+
+func init() {
+	// Honour the NO_COLOR convention (https://no-color.org/).
+	// When the variable is set (to any value), strip all ANSI codes.
+	if os.Getenv("NO_COLOR") != "" {
+		colorReset = ""
+		colorRed = ""
+		colorGreen = ""
+		colorYellow = ""
+		colorBlue = ""
+		colorCyan = ""
+	}
+}
 
 // PrintError prints a red error message
 func PrintError(msg string, args ...interface{}) {
@@ -42,8 +55,8 @@ func PrintProgress(msg string, args ...interface{}) {
 }
 
 // Color helpers for strings
-func Red(s string) string   { return colorRed + s + colorReset }
-func Green(s string) string { return colorGreen + s + colorReset }
+func Red(s string) string    { return colorRed + s + colorReset }
+func Green(s string) string  { return colorGreen + s + colorReset }
 func Yellow(s string) string { return colorYellow + s + colorReset }
-func Blue(s string) string  { return colorBlue + s + colorReset }
-func Cyan(s string) string  { return colorCyan + s + colorReset }
+func Blue(s string) string   { return colorBlue + s + colorReset }
+func Cyan(s string) string   { return colorCyan + s + colorReset }

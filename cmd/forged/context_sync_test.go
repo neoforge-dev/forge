@@ -16,6 +16,7 @@ import (
 )
 
 func TestContextSync_Bidirectional(t *testing.T) {
+	t.Setenv("FORGE_CONTEXT_SYNC_DEBOUNCE_MS", "50") // 500ms → 50ms debounce
 	// Create temp directory for test
 	tempDir, err := os.MkdirTemp("", "context-sync-test")
 	if err != nil {
@@ -61,7 +62,7 @@ func TestContextSync_Bidirectional(t *testing.T) {
 	defer cm.Stop()
 
 	// Give sync time to start
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Test 1: Generate envelope via API should create file on disk
 	ctx := context.Background()
@@ -71,7 +72,7 @@ func TestContextSync_Bidirectional(t *testing.T) {
 	}
 
 	// Wait for file write
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	// Verify envelope file exists
 	envelopePath := filepath.Join(contextDir, "envelopes", envelope.ID+".json")
@@ -89,7 +90,7 @@ func TestContextSync_Bidirectional(t *testing.T) {
 	}
 
 	// Wait for sync
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
 
 	// Verify SQLite was updated
 	var content string
@@ -121,6 +122,7 @@ func TestContextSync_Bidirectional(t *testing.T) {
 }
 
 func TestContextSync_FileHashTracking(t *testing.T) {
+	t.Setenv("FORGE_CONTEXT_SYNC_DEBOUNCE_MS", "50") // 500ms → 50ms debounce
 	tempDir, err := os.MkdirTemp("", "context-sync-hash-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -158,25 +160,25 @@ func TestContextSync_FileHashTracking(t *testing.T) {
 	cm := testContextManager(t, db, contextDir)
 	defer cm.Stop()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Write initial file
 	testFile := filepath.Join(testDomainDir, "decisions.json")
 	initialContent := `[{"id": "1", "description": "Decision 1"}]`
 	os.WriteFile(testFile, []byte(initialContent), 0644)
 
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
 
 	// Write same content again - should not trigger duplicate sync
 	os.WriteFile(testFile, []byte(initialContent), 0644)
 
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
 
 	// Write different content - should trigger sync
 	newContent := `[{"id": "1", "description": "Decision 1"}, {"id": "2", "description": "Decision 2"}]`
 	os.WriteFile(testFile, []byte(newContent), 0644)
 
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(120 * time.Millisecond)
 
 	t.Log("File hash tracking test passed!")
 }

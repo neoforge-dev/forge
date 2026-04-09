@@ -11,11 +11,24 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
+// serverHealthy is flipped to false when a SIGTERM/SIGINT is received so that
+// load-balancer health checks immediately receive 503 and stop routing new
+// traffic during the graceful-drain window.
+var serverHealthy atomic.Bool
+
+func init() {
+	serverHealthy.Store(true)
+}
+
 type HealthResponse struct {
 	Status    string `json:"status"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildTime string `json:"build_time"`
 	Timestamp string `json:"timestamp"`
 }
 
@@ -26,8 +39,24 @@ type StatusResponse struct {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
+	if !serverHealthy.Load() {
+		resp := HealthResponse{
+			Status:    "shutting_down",
+			Version:   Version,
+			Commit:    GitCommit,
+			BuildTime: BuildTime,
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 	resp := HealthResponse{
 		Status:    "ok",
+		Version:   Version,
+		Commit:    GitCommit,
+		BuildTime: BuildTime,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -36,7 +65,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	resp := StatusResponse{
-		Version: "3.0.0",
+		Version: Version,
 		Phase:   "0.5",
 		Status:  "running",
 	}

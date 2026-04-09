@@ -338,10 +338,12 @@ func (sm *StateMachine) ClaimTransition(taskID, agentID string) error {
 
 	now := time.Now().Format(time.RFC3339)
 
-	// Atomically update FSM state AND legacy status/assigned_to/started_at.
+	// Atomically update FSM state AND legacy status/assigned_to/started_at/dispatch tracking.
 	_, err = tx.Exec(
-		`UPDATE tasks SET state = ?, status = 'assigned', assigned_to = ?, started_at = ?, updated_at = ? WHERE id = ?`,
-		to, agentID, now, now, taskID,
+		`UPDATE tasks SET state = ?, status = 'assigned', assigned_to = ?, started_at = ?, updated_at = ?,
+		 dispatch_attempts = dispatch_attempts + 1, last_dispatch_at = ?
+		 WHERE id = ?`,
+		to, agentID, now, now, now, taskID,
 	)
 	if err != nil {
 		return fmt.Errorf("update task state: %w", err)

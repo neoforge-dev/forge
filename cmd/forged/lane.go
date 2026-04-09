@@ -242,9 +242,14 @@ func forgeRoot() string {
 
 // runBuildCheck runs "go build ./..." in the FORGE root to verify the codebase compiles.
 // Used as the gate check when advancing a task from dev to test lane.
+// FORGE_TEST_BUILD_CMD overrides the command — used in tests to avoid spawning a real build.
 func runBuildCheck(ctx context.Context) error {
+	buildCmd := "go build ./..."
+	if override := os.Getenv("FORGE_TEST_BUILD_CMD"); override != "" {
+		buildCmd = override
+	}
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "go", "build", "./...")
+	cmd := exec.CommandContext(ctx, "sh", "-c", buildCmd)
 	cmd.Dir = forgeRoot()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

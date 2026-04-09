@@ -184,7 +184,7 @@ func TestNetworkDisconnect_WorkerPruned(t *testing.T) {
 	}
 
 	// Wait for registration
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify worker is registered
 	workers := hub.ListWorkers()
@@ -203,7 +203,7 @@ func TestNetworkDisconnect_WorkerPruned(t *testing.T) {
 	ws.Close()
 
 	// Wait for disconnect to be detected
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// The worker should still be in the map but with stale heartbeat
 	// Wait for prune cycle (30s ticker, but we'll manually trigger)

@@ -18,14 +18,19 @@ import (
 // POST /api/openclaw/dispatch
 // ---------------------------------------------------------------------------
 
+// TestOpenClawDispatch_ValidRequest verifies that a well-formed dispatch
+// request creates a queued task without claiming any specific agent.
 func TestOpenClawDispatch_ValidRequest(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
 	body, _ := json.Marshal(OpenClawDispatchRequest{
-		Agent:    "kimi",
-		Message:  "fix the login bug",
-		Priority: 7,
+		Message:       "fix the login bug",
+		Priority:      7,
+		PreferredNode: "sati",
+		PreferredRole: "backend",
+		SourceChannel: "telegram",
+		ProductKey:    "interview-simulator",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
@@ -44,33 +49,105 @@ func TestOpenClawDispatch_ValidRequest(t *testing.T) {
 	if resp.TaskID == "" {
 		t.Error("expected non-empty task_id")
 	}
-	if resp.Agent != "kimi" {
-		t.Errorf("expected agent 'kimi', got '%s'", resp.Agent)
-	}
-	if resp.Status != "dispatched" {
-		t.Errorf("expected status 'dispatched', got '%s'", resp.Status)
+	// OpenClaw is intake-only: status must be "queued", NOT "dispatched".
+	if resp.Status != "queued" {
+		t.Errorf("expected status 'queued', got '%s'", resp.Status)
 	}
 
-	// Verify the task exists and is claimed by the agent.
+	// Verify the task exists and is NOT claimed by any agent.
 	task, err := taskQueue.GetTask(context.Background(), resp.TaskID)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if task.AssignedTo != "kimi" {
-		t.Errorf("expected task assigned_to 'kimi', got '%s'", task.AssignedTo)
+	if task.AssignedTo != "" {
+		t.Errorf("expected task not assigned (intake-only), got assigned_to=%q", task.AssignedTo)
 	}
-	if task.Status != TaskStatusAssigned {
-		t.Errorf("expected task status 'assigned', got '%s'", task.Status)
+	if task.Status != TaskStatusQueued {
+		t.Errorf("expected task status 'queued', got '%s'", task.Status)
+	}
+	if task.Priority != 7 {
+		t.Errorf("expected priority 7, got %d", task.Priority)
+	}
+
+	// Verify origin metadata was persisted in task_events.
+	db := getDBConn()
+	if db == nil {
+		t.Fatal("expected test DB connection")
+	}
+	var payload string
+	err = db.QueryRow(
+		`SELECT payload FROM task_events WHERE task_id = ? AND event_type = 'task.queued.openclaw'`,
+		resp.TaskID,
+	).Scan(&payload)
+	if err != nil {
+		t.Fatalf("query task_events for origin metadata: %v", err)
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal([]byte(payload), &meta); err != nil {
+		t.Fatalf("unmarshal metadata payload: %v", err)
+	}
+	if meta["origin"] != "openclaw" {
+		t.Errorf("expected origin=openclaw in metadata, got %v", meta["origin"])
+	}
+	if meta["preferred_node"] != "sati" {
+		t.Errorf("expected preferred_node=sati, got %v", meta["preferred_node"])
+	}
+	if meta["preferred_role"] != "backend" {
+		t.Errorf("expected preferred_role=backend, got %v", meta["preferred_role"])
+	}
+	if meta["source_channel"] != "telegram" {
+		t.Errorf("expected source_channel=telegram, got %v", meta["source_channel"])
+	}
+	if meta["product_key"] != "interview-simulator" {
+		t.Errorf("expected product_key=interview-simulator, got %v", meta["product_key"])
 	}
 }
 
+// TestOpenClawDispatch_MinimalRequest verifies that only message is required
+// and optional routing hints are accepted as empty values.
+func TestOpenClawDispatch_MinimalRequest(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"message": "update docs",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	openclawHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp OpenClawDispatchResponse
+	json.NewDecoder(rr.Body).Decode(&resp)
+
+	if resp.Status != "queued" {
+		t.Errorf("expected status 'queued', got '%s'", resp.Status)
+	}
+
+	task, err := taskQueue.GetTask(context.Background(), resp.TaskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	// Priority omitted — should default to 5.
+	if task.Priority != 5 {
+		t.Errorf("expected default priority 5, got %d", task.Priority)
+	}
+	// Task must not be claimed.
+	if task.AssignedTo != "" {
+		t.Errorf("expected no assignment (intake-only), got %q", task.AssignedTo)
+	}
+}
+
+// TestOpenClawDispatch_DefaultPriority verifies that omitting priority defaults to 5.
 func TestOpenClawDispatch_DefaultPriority(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
-	// Priority omitted — should default to 5.
 	body, _ := json.Marshal(map[string]string{
-		"agent":   "glm",
 		"message": "update docs",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
@@ -94,29 +171,13 @@ func TestOpenClawDispatch_DefaultPriority(t *testing.T) {
 	}
 }
 
-func TestOpenClawDispatch_MissingAgent(t *testing.T) {
-	_, cleanup := setupClaimTestDB(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]string{
-		"message": "fix something",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
-	rr := httptest.NewRecorder()
-
-	openclawHandler(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rr.Code)
-	}
-}
-
+// TestOpenClawDispatch_MissingMessage verifies that an empty message returns 400.
 func TestOpenClawDispatch_MissingMessage(t *testing.T) {
 	_, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 
 	body, _ := json.Marshal(map[string]string{
-		"agent": "kimi",
+		"preferred_node": "sati",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
@@ -454,7 +515,6 @@ func TestOpenClawDispatch_NilTaskQueue(t *testing.T) {
 	defer func() { taskQueue = orig }()
 
 	body, _ := json.Marshal(OpenClawDispatchRequest{
-		Agent:   "kimi",
 		Message: "test message",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
@@ -524,6 +584,73 @@ func TestOpenClawNotify_NilDB(t *testing.T) {
 	}
 }
 
+// TestOpenClawDispatch_ShortMessage verifies that a message under 5 chars returns 400.
+func TestOpenClawDispatch_ShortMessage(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"message": "test", // exactly 4 chars — should fail
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	openclawHandler(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for 4-char message, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestOpenClawChat_ShortMessage verifies that a chat text under 5 chars returns 400.
+func TestOpenClawChat_ShortMessage(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"from": "telegram:user",
+		"text": "hi", // 2 chars — should fail
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/chat", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	openclawHandler(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for short chat text, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestOpenClawDispatch_ValidMessage verifies that a message of exactly 5 chars
+// is accepted and returns a queued task (boundary at new minimum).
+func TestOpenClawDispatch_ValidMessage(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"message": "12345", // exactly 5 chars — should pass
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/openclaw/dispatch", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	openclawHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for 5-char message, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp OpenClawDispatchResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TaskID == "" {
+		t.Error("expected non-empty task_id")
+	}
+	if resp.Status != "queued" {
+		t.Errorf("expected status 'queued', got '%s'", resp.Status)
+	}
+}
+
 // TestOpenClawDispatchHandler_EnqueueFails exercises the enqueue error path
 // (handlers_openclaw_new.go:130.70,134.3) when the DB is closed so Enqueue fails.
 func TestOpenClawDispatchHandler_EnqueueFails(t *testing.T) {
@@ -535,7 +662,6 @@ func TestOpenClawDispatchHandler_EnqueueFails(t *testing.T) {
 	db.Close()
 
 	body, _ := json.Marshal(OpenClawDispatchRequest{
-		Agent:    "kimi",
 		Message:  "fix the login bug",
 		Priority: 5,
 	})

@@ -1,0 +1,36 @@
+id: content-batch
+name: Batch Content Generation
+description: Pattern for generating content assets in batches (blog posts, social media posts, etc.)
+tags:
+  - content
+  - batch
+automation: true
+steps:
+  - type: check
+    name: pre-flight-checks
+    command: "forge check --task ${Task.id}"
+  - type: shell
+    name: run-batch
+    command: "cd cmd/content-manager && ./content-batch.sh"
+  - type: complete
+    name: cleanup
+    command: "rm -rf output/*"
+  - type: dispatch
+    name: dispatch-work
+    args: "forge dispatch send forge:gemini --file /path/to/content/content-batch.py --domain ${domain} --count {count}"
+  - type: review
+    name: review-output
+    command: "cat output/* >> /dev/null"
+  - type: complete
+    name: finalize
+    command: "git add . && git commit -m 'content: batch complete'"
+  - type: complete
+    name: git-push
+    command: "git push"
+  - type: complete
+    name: cleanup-logs
+    command: "rm -f output/*.log"
+  - type: complete
+    name: generate-report
+    command: "node /Users/moltbot/work/FORGE/cmd/content-manager/content-batch.py --output report.md"
+---

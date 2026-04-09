@@ -1,0 +1,20 @@
+id: launch/release-default
+name: Release Default
+description: Deploy + smoke test + analytics verification. Requires deploy_ready and analytics_ready.
+steps:
+  - type: check
+    name: verify-deploy-ready
+    command: "forge portfolio show ${PRODUCT_KEY} --format json | grep -q '\"deploy_ready\":true'"
+  - type: check
+    name: verify-analytics-ready
+    command: "forge portfolio show ${PRODUCT_KEY} --format json | grep -q '\"analytics_ready\":true'"
+  - type: review
+    name: deploy-approval
+  - type: shell
+    name: run-smoke-tests
+    command: "bash bin/smoke-test-${PRODUCT_ALIAS}.sh"
+  - type: complete
+    name: finalize
+    evidence:
+      - deploy_approval
+      - smoke_test_results

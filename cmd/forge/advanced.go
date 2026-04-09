@@ -33,5 +33,6 @@ To permanently unhide all commands, set FORGE_SHOW_ALL=1:
 }
 
 func init() {
+	advancedCmd.Hidden = true
 	rootCmd.AddCommand(advancedCmd)
 }

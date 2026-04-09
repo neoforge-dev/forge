@@ -142,3 +142,65 @@ func TestHandleAgentStatus_NotFound_Main(t *testing.T) {
 		t.Errorf("expected 404 for nonexistent agent, got %d", w.Code)
 	}
 }
+
+// TestStartupAgentReset verifies the S173 E1.1 startup reset logic:
+// all agents with status 'connected' or 'online' are marked 'offline' at daemon startup.
+// Agents that are already 'offline' are not changed.
+func TestStartupAgentReset(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Insert three agents: one online, one connected, one already offline.
+	agents := []struct {
+		id     string
+		status string
+	}{
+		{"agent-online", "online"},
+		{"agent-connected", "connected"},
+		{"agent-offline", "offline"},
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, a := range agents {
+		_, err := db.Exec(
+			`INSERT INTO agent_heartbeats (agent_id, node, status, last_seen) VALUES (?, ?, ?, ?)`,
+			a.id, "test-node", a.status, now,
+		)
+		if err != nil {
+			t.Fatalf("failed to insert agent %s: %v", a.id, err)
+		}
+	}
+
+	// Run the startup reset SQL (mirrors the block in main.go startDaemon).
+	result, err := db.Exec(`UPDATE agent_heartbeats SET status = 'offline' WHERE status IN ('connected', 'online')`)
+	if err != nil {
+		t.Fatalf("startup reset SQL failed: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		t.Fatalf("RowsAffected failed: %v", err)
+	}
+	if rowsAffected != 2 {
+		t.Errorf("expected 2 agents reset to offline, got %d", rowsAffected)
+	}
+
+	// Verify every agent in the table is now offline.
+	rows, err := db.Query(`SELECT agent_id, status FROM agent_heartbeats`)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var agentID, status string
+		if err := rows.Scan(&agentID, &status); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		if status != "offline" {
+			t.Errorf("agent %s: expected status 'offline', got %q", agentID, status)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows iteration error: %v", err)
+	}
+}

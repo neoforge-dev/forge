@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/neoforge-dev/forge/internal"
@@ -14,8 +17,9 @@ import (
 
 // taskCmd represents the task noun
 var taskCmd = &cobra.Command{
-	Use:   "task",
-	Short: "Manage tasks - units of work",
+	Use:     "task",
+	Aliases: []string{"t"},
+	Short:   "Manage tasks - units of work",
 	Long: `Tasks are the fundamental unit of work in FORGE.
 
 Each task has:
@@ -54,13 +58,14 @@ Examples:
 // taskListCmd: forge task list
 var taskListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all tasks",
-	Long:  "List all tasks with optional filtering by status.",
+	Short: "List active tasks (queued, assigned, running)",
+	Long:  "List active tasks with optional filtering by status. Use --all to include completed and failed tasks.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		status, _ := cmd.Flags().GetString("status")
 		limit, _ := cmd.Flags().GetInt("limit")
 		domain, _ := cmd.Flags().GetString("domain")
 		format, _ := cmd.Flags().GetString("format")
+		showAll, _ := cmd.Flags().GetBool("all")
 
 		client := internal.NewClient()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -71,13 +76,26 @@ var taskListCmd = &cobra.Command{
 			return fmt.Errorf("failed to list tasks: %w", err)
 		}
 
+		tasks := result.Tasks
+
+		// Default: hide completed/failed unless --all or --status explicitly set
+		if !showAll && status == "" {
+			var active []internal.Task
+			for _, t := range tasks {
+				if t.Status != "completed" && t.Status != "failed" {
+					active = append(active, t)
+				}
+			}
+			tasks = active
+		}
+
 		formatter := internal.NewFormatter(format, nil)
-		if err := formatter.FormatTasks(result.Tasks); err != nil {
+		if err := formatter.FormatTasks(tasks); err != nil {
 			return err
 		}
 
 		if format == "table" {
-			formatter.Printf("\nTotal: %d tasks\n", len(result.Tasks))
+			formatter.Printf("\nTotal: %d tasks\n", len(tasks))
 		}
 		return nil
 	},
@@ -117,7 +135,12 @@ var taskCreateCmd = &cobra.Command{
 		description, _ := cmd.Flags().GetString("description")
 		priority, _ := cmd.Flags().GetString("priority")
 		domain, _ := cmd.Flags().GetString("domain")
-		project, _ := cmd.Flags().GetString("project")
+		// --product is the canonical flag; --project is a deprecated backward-compat alias.
+		product, _ := cmd.Flags().GetString("product")
+		if legacyProject, _ := cmd.Flags().GetString("project"); legacyProject != "" && product == "" {
+			product = legacyProject
+		}
+		project := product
 		taskType, _ := cmd.Flags().GetString("type")
 		lane, _ := cmd.Flags().GetString("lane")
 		metaSlice, _ := cmd.Flags().GetStringArray("metadata")
@@ -126,6 +149,40 @@ var taskCreateCmd = &cobra.Command{
 
 		if title == "" {
 			return fmt.Errorf("--title is required")
+		}
+
+		// Route to remote node via XNode if --node is set and not local.
+		targetNode, _ := cmd.Flags().GetString("node")
+		if targetNode != "" {
+			hostname, _ := os.Hostname()
+			if targetNode != hostname {
+				// Forward via XNode — build summary with full task metadata.
+				summary := fmt.Sprintf("[task-forward] title: %s | domain: %s | product: %s | priority: %s",
+					title, domain, product, priority)
+				if description != "" {
+					summary += " | desc: " + description
+				}
+				payload := &leadForwardPayload{
+					TargetNode: targetNode,
+					TaskID:     fmt.Sprintf("REMOTE-%s-%d", targetNode, time.Now().Unix()),
+					Summary:    summary,
+					Durable:    true,
+				}
+				client := internal.NewClient()
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				resp, err := client.Post(ctx, "/xnode/forward", payload)
+				if err != nil {
+					return fmt.Errorf("forward to %s failed: %w\n  Check: forge node list", targetNode, err)
+				}
+				defer resp.Body.Close()
+				if err := internal.CheckResponse(resp); err != nil {
+					return fmt.Errorf("forward to %s rejected: %w", targetNode, err)
+				}
+				fmt.Printf("Forwarded to %s: %s\n", targetNode, title)
+				return nil
+			}
+			// targetNode == local hostname → fall through to local create
 		}
 
 		// Parse key=value metadata pairs
@@ -353,6 +410,43 @@ and claimed without requiring a task ID argument.`,
 	},
 }
 
+// taskAckCmd: forge task ack <task-id> [--agent <agent-name>]
+var taskAckCmd = &cobra.Command{
+	Use:   "ack TASK_ID",
+	Short: "Acknowledge a dispatched task (DISPATCHED → RUNNING)",
+	Long: `Acknowledge that work has started on a dispatched task.
+
+This transitions the task from DISPATCHED to RUNNING state, confirming
+the agent has received and started executing the task.
+
+Examples:
+  forge task ack 01JQM123ABC
+  forge task ack 01JQM123ABC --agent kimi`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		taskID := args[0]
+		agentID, _ := cmd.Flags().GetString("agent")
+		if agentID == "" {
+			agentID = os.Getenv("FORGE_AGENT_NAME")
+		}
+		if agentID == "" {
+			agentID, _ = os.Hostname()
+		}
+
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		task, err := client.AckTask(ctx, taskID, agentID)
+		if err != nil {
+			return fmt.Errorf("failed to ACK task: %w\n  Ensure the task is in DISPATCHED state: forge task logs %s", err, taskID)
+		}
+
+		fmt.Printf("ACK'd: %s → RUNNING (agent: %s)\n", task.ID, agentID)
+		return nil
+	},
+}
+
 // taskCompleteCmd: forge task complete <task-id> --result "..."
 var taskCompleteCmd = &cobra.Command{
 	Use:   "complete [task-id]",
@@ -564,22 +658,185 @@ var taskQualityGateCmd = &cobra.Command{
 	},
 }
 
+// taskPruneCmd: forge task prune
+var taskPruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Prune completed/failed tasks and zombie assigned tasks",
+	Long: `Prune stale tasks from the queue.
+
+By default, removes completed/failed tasks older than 48 hours and
+abandons assigned tasks with no heartbeat update in the last 2 hours.
+
+Use --older-than to customise the completed/failed retention window.
+Use --dry-run to preview what would be pruned without making changes.
+
+Examples:
+  forge task prune                    # Prune with defaults (48h retention)
+  forge task prune --older-than 24h   # Custom retention for completed/failed
+  forge task prune --dry-run          # Preview without changes`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		olderThan, _ := cmd.Flags().GetString("older-than")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		format, _ := cmd.Flags().GetString("format")
+
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Build query params
+		path := "/tasks/prune"
+		params := []string{}
+		if olderThan != "" {
+			params = append(params, "older_than="+olderThan)
+		}
+		if dryRun {
+			params = append(params, "dry_run=true")
+		}
+		if len(params) > 0 {
+			path += "?" + strings.Join(params, "&")
+		}
+
+		resp, err := client.Post(ctx, path, nil)
+		if err != nil {
+			return fmt.Errorf("prune tasks: %w\n  Check: forge daemon status", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("prune failed (HTTP %d): %s\n  Check: forge daemon status", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var result map[string]interface{}
+		if err := internal.DecodeJSON(resp, &result); err != nil {
+			return fmt.Errorf("decode prune response: %w", err)
+		}
+
+		if format == "json" {
+			formatter := internal.NewFormatter(format, nil)
+			return formatter.WriteJSON(result)
+		}
+
+		pruned, _ := result["pruned"].(float64)
+		threshold, _ := result["threshold"].(string)
+		if dryRun {
+			fmt.Printf("Dry-run: would prune %d task(s)", int(pruned))
+		} else {
+			fmt.Printf("Pruned %d task(s)", int(pruned))
+		}
+		if threshold != "" {
+			fmt.Printf(" (threshold: %s)", threshold)
+		}
+		fmt.Println()
+		return nil
+	},
+}
+
+// taskResultsCmd: forge task results — show fleet agent result files
+var taskResultsCmd = &cobra.Command{
+	Use:   "results",
+	Short: "Show fleet agent result files",
+	Long:  "List result files from .forge/heartbeat/results/ — fleet agent deliverables.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		limit, _ := cmd.Flags().GetInt("limit")
+		matches, err := filepath.Glob(".forge/heartbeat/results/*.md")
+		if err != nil || len(matches) == 0 {
+			fmt.Println("No result files found in .forge/heartbeat/results/")
+			return nil
+		}
+
+		// Sort by modification time (newest first)
+		type fileEntry struct {
+			path    string
+			modTime time.Time
+			title   string
+		}
+		var entries []fileEntry
+		for _, path := range matches {
+			info, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			// Read first non-empty line for title
+			f, err := os.Open(path)
+			if err != nil {
+				continue
+			}
+			scanner := bufio.NewScanner(f)
+			title := "(empty)"
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line != "" && !strings.HasPrefix(line, "---") {
+					title = strings.TrimPrefix(line, "# ")
+					break
+				}
+			}
+			f.Close()
+			if len(title) > 60 {
+				title = title[:57] + "..."
+			}
+			entries = append(entries, fileEntry{path: filepath.Base(path), modTime: info.ModTime(), title: title})
+		}
+
+		// Sort newest first
+		for i := 0; i < len(entries); i++ {
+			for j := i + 1; j < len(entries); j++ {
+				if entries[j].modTime.After(entries[i].modTime) {
+					entries[i], entries[j] = entries[j], entries[i]
+				}
+			}
+		}
+
+		if limit > 0 && len(entries) > limit {
+			entries = entries[:limit]
+		}
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "FILE\tAGE\tTITLE\n")
+		now := time.Now()
+		for _, e := range entries {
+			age := now.Sub(e.modTime).Truncate(time.Minute)
+			fmt.Fprintf(w, "%s\t%s\t%s\n", e.path, formatAge(age), e.title)
+		}
+		w.Flush()
+		fmt.Printf("\nTotal: %d result(s)\n", len(entries))
+		return nil
+	},
+}
+
+func formatAge(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
 func init() {
+	// task results flags
+	taskResultsCmd.Flags().Int("limit", 20, "Maximum number of results to show")
+
 	// task list flags
 	taskListCmd.Flags().String("status", "", "Filter by status")
 	taskListCmd.Flags().String("domain", "", "Filter by domain")
 	taskListCmd.Flags().Int("limit", 50, "Maximum number of tasks to show")
+	taskListCmd.Flags().Bool("all", false, "Show all tasks including completed and failed")
 
 	// task create flags
 	taskCreateCmd.Flags().String("title", "", "Task title/subject (required)")
 	taskCreateCmd.Flags().String("description", "", "Task description")
 	taskCreateCmd.Flags().String("priority", "medium", "Task priority (low, medium, high, critical)")
 	taskCreateCmd.Flags().String("domain", "", "Domain for the task")
-	taskCreateCmd.Flags().String("project", "", "Project for the task")
+	taskCreateCmd.Flags().String("product", "", "Product (repository/project) for the task")
+	taskCreateCmd.Flags().String("project", "", "Deprecated: use --product instead")
+	taskCreateCmd.Flags().Lookup("project").Hidden = true
 	taskCreateCmd.Flags().String("type", "feature", "Task type")
 	taskCreateCmd.Flags().String("lane", "", "Lane to assign the task to")
 	taskCreateCmd.Flags().StringArray("metadata", nil, "Metadata key=value pairs (repeatable)")
 	taskCreateCmd.Flags().String("portfolio", "", "Portfolio product key (sets stage-aware routing)")
+	taskCreateCmd.Flags().String("node", "", "Target node — routes task via XNode if remote (e.g. --node sati)")
 
 	// task update flags
 	taskUpdateCmd.Flags().String("subject", "", "New subject/title")
@@ -594,6 +851,9 @@ func init() {
 	taskClaimCmd.Flags().String("agent", "", "Agent ID to claim the task (or FORGE_AGENT_ID env var)")
 	taskClaimCmd.Flags().Bool("next", false, "Claim the highest-priority pending task (no task-id argument needed)")
 
+	// task ack flags
+	taskAckCmd.Flags().String("agent", "", "Agent name to ACK as (default: FORGE_AGENT_NAME or hostname)")
+
 	// task complete flags
 	taskCompleteCmd.Flags().String("result", "", "Result message or summary")
 	taskCompleteCmd.Flags().String("result-file", "", "File to read result content from; use '-' for stdin")
@@ -603,6 +863,10 @@ func init() {
 	taskQualityGateCmd.Flags().Float64("coverage", 0.0, "Code coverage percentage (0.0–100.0)")
 	taskQualityGateCmd.Flags().Int("lint-issues", 0, "Number of lint issues found")
 
+	// task prune flags
+	taskPruneCmd.Flags().String("older-than", "", "Prune completed/failed tasks older than this duration (e.g. 24h, 7d)")
+	taskPruneCmd.Flags().Bool("dry-run", false, "Preview what would be pruned without making changes")
+
 	// Add commands to task noun
 	taskCmd.AddCommand(taskListCmd)
 	taskCmd.AddCommand(taskShowCmd)
@@ -610,8 +874,13 @@ func init() {
 	taskCmd.AddCommand(taskUpdateCmd)
 	taskCmd.AddCommand(taskDeleteCmd)
 	taskCmd.AddCommand(taskClaimCmd)
+	taskCmd.AddCommand(taskAckCmd)
 	taskCmd.AddCommand(taskCompleteCmd)
 	taskCmd.AddCommand(taskAbandonCmd)
 	taskCmd.AddCommand(taskHistoryCmd)
+	taskCmd.AddCommand(taskLogsCmd)
 	taskCmd.AddCommand(taskQualityGateCmd)
+	taskCmd.AddCommand(taskPruneCmd)
+	taskCmd.AddCommand(taskResultsCmd)
+	taskCmd.AddCommand(taskWatchCmd)
 }

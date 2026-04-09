@@ -6,9 +6,20 @@
 
 | Method | Reliability | Use When |
 |--------|-------------|----------|
-| Task tool (subagent) | **100%** | All code implementation, debug, tests |
-| `forge dispatch send` | **~95%** | Assign work to a named fleet agent window |
+| **`forge work --daemon --interval 15s`** | **~99%** | **PRIMARY: agent self-assigns from queue — default agent mode** |
+| Task tool (subagent) | **100%** | All code implementation, debug, tests (worktree isolation) |
+| `forge dispatch send` | **~95%** | SECONDARY: manual operator assignment to a specific named agent |
 | Raw `tmux send-keys` | **~25%** | **NEVER for task delivery** — git locks + input race |
+
+**Council-approved default (S130):** Fleet agents boot into `forge work --daemon --interval 15s`.
+Orchestrators add tasks to the queue; agents self-assign. No tmux dispatch needed for routine work.
+
+`forge dispatch send` is now the **secondary** path — use it only when you need to direct a specific
+task to a specific named agent window (manual override). For everything else, add to queue and let
+agents claim.
+
+**Agent target format:** use the tmux window name / agent ID only, for example `kimi`, `gemini`,
+`glm`, `minimax`. Do **not** include the `forge:` tmux session prefix in `forge dispatch send`.
 
 Raw tmux fails ~75% of the time for task delivery due to git lock collisions and input buffer
 races. Use `forge dispatch send` instead. tmux is only acceptable for interactive approvals or
@@ -21,22 +32,62 @@ restarts when an agent is already waiting at its own shell prompt.
 ```
 Need to assign work?
 │
-├─ Writing/testing CODE?
-│   └─ Use Task tool (subagent). Always. 100% reliable.
+├─ Writing/testing CODE? (isolated, reproducible)
+│   └─ Use Task tool (subagent/worktree). Always. 100% reliable.
+│   ⚠️  NEVER use `forge dispatch send` for code changes.
+│       Fleet agents writing code on main causes index.lock contention
+│       and dirty working tree. Council S164: hard-prohibit code via dispatch.
 │
-├─ Assigning work to a FLEET AGENT (tmux window)?
-│   ├─ Simple message   → forge dispatch send AGENT "message"
-│   └─ Complex task     → Write dispatch file first, then notify
-│       1. Create: .forge/dispatches/AGENT-TASKID-DATE.md
-│       2. Notify: forge dispatch send AGENT "Read .forge/dispatches/FILE.md -- EXECUTE now"
+├─ Routine fleet work (research, docs, analysis, coverage)?
+│   └─ PRIMARY: forge task create --title "..." → queue it
+│       Agents running in daemon mode self-assign automatically.
+│       No dispatch needed. Orchestrator just adds to queue.
+│
+├─ Need a SPECIFIC named agent for non-code work?
+│   └─ SECONDARY: forge dispatch send AGENT "message" (manual override)
+│       ├─ Simple message   → forge dispatch send AGENT "message"
+│       └─ Complex task     → Write dispatch file first, then notify
+│           1. Create: .forge/dispatches/AGENT-TASKID-DATE.md
+│           2. Notify: forge dispatch send AGENT "Read .forge/dispatches/FILE.md -- EXECUTE now"
+│       ⚠️  PREFLIGHT: If your task references a specific file path, verify
+│           it exists with Glob/ls BEFORE dispatching. Bad paths cause agents
+│           to spin in tool-call loops (Council S164, kilo incident).
 │
 └─ Cross-node work?
-    └─ forge task create --title "..." → agents claim from their own nodes
+    └─ forge task create --title "..." → agents on any node claim from shared queue
 ```
+
+**Rule of thumb:** If you're writing a dispatch message, ask yourself — could I just add this to
+the task queue and let an agent claim it? If yes, prefer the queue. Reserve `forge dispatch send`
+for cases where agent identity matters (e.g., "run this on the sati kimi window specifically").
+
+**Hard rule (Council S164):** `forge dispatch send` is for research, analysis, audits, docs, and
+content ONLY. All code changes go through worktree-isolated Task tool agents. No exceptions.
 
 ---
 
 ## Dispatch Methods (with reliability data)
+
+### 0. Daemon Polling Mode — ✅ PRIMARY (~99% reliable, S130+)
+**Use for:** All routine fleet work. Agents self-assign from the shared queue.
+
+```bash
+# On orchestrator: add work to queue
+forge task create --title "Update ADR index with S130 progress" --priority 5
+
+# Agents (already running in daemon mode) auto-claim and execute.
+# No dispatch needed.
+
+# To start an agent in daemon mode manually (agent-start.sh does this automatically):
+forge work --daemon --interval 15s
+```
+
+**How it works:** `agent-start.sh` automatically sends `forge work --daemon --interval 15s` to each
+agent after it boots. Agents poll the queue every 15 seconds and claim available tasks. The
+orchestrator only needs to add tasks to the queue.
+
+**When to use:** Any time agent identity doesn't matter. Orchestrator delegates to "any available
+agent" — the queue assigns naturally based on availability.
 
 ### 1. Task Tool (Subagents) — ✅ 100% reliable
 **Use for:** All code implementation, debugging, test writing, multi-step tasks.
@@ -53,8 +104,10 @@ Available subagent types: `general-purpose`, `Explore`, `Plan`, `backend-enginee
 `frontend-builder`, `qa-test-guardian`, `architect-advisor`, `code-reviewer`,
 `debug-detective`, `security-auditor`, `performance-optimizer`, `refactor-surgeon`
 
-### 2. CLI Dispatch — ✅ ~95% reliable
-**Use for:** Assigning work to a named fleet agent window.
+### 2. CLI Dispatch — ✅ ~95% reliable (SECONDARY — manual override only)
+**Use for:** Directing a specific task to a specific named agent when agent identity matters.
+
+Target format is the **window name**, not `forge:<agent>`.
 
 ```bash
 forge dispatch send glm "Fix the failing test in coverage_wave6_test.go"
@@ -98,22 +151,22 @@ Every task MUST produce a result file:
 
 ## Fleet Agent Roster
 
-### node-2 node (64GB RAM — all fleet agents)
+### sati node (64GB RAM — all fleet agents)
 | Agent | Window | Best For | Avoid |
 |-------|--------|----------|-------|
-| **claude** | forge:claude | Features, refactors, hard bugs, production code | — |
-| **gemini** | forge:gemini | Research, audits, architecture, planning | Long-running code tasks |
-| **minimax** | forge:minimax | Implementation, docs, runbooks, multi-file features | go-test |
-| **glm** | forge:glm | Implementation, scaffolding, refactors | go-test, ios-builds |
-| **opencode** | forge:opencode | Implementation, multi-file refactors | — |
-| **kilo** | forge:kilo | Implementation, multi-file features, docs | — |
-| **kimi** | forge:kimi | Coverage, triage, rapid fix loops | Large refactors |
-| **kimi-2** | forge:kimi-2 | Parallel coverage/triage | Large refactors |
-| **pi** | forge:pi | Fast triage, quick edits, analysis | Heavy code tasks |
-| **cursor** | forge:cursor | Human-steered interactive editing | Autonomous tasks |
-| **cursor-2** | forge:cursor-2 | Parallel human-steered editing | Autonomous tasks |
+| **claude** | `claude` | Features, refactors, hard bugs, production code | — |
+| **gemini** | `gemini` | Research, audits, architecture, planning | Long-running code tasks |
+| **minimax** | `minimax` | Implementation, docs, runbooks, multi-file features | go-test |
+| **glm** | `glm` | Implementation, scaffolding, refactors | go-test, ios-builds |
+| **opencode** | `opencode` | Implementation, multi-file refactors | — |
+| **kilo** | `kilo` | Implementation, multi-file features, docs | — |
+| **kimi** | `kimi` | Coverage, triage, rapid fix loops | Large refactors |
+| **kimi-2** | `kimi-2` | Parallel coverage/triage | Large refactors |
+| **pi** | `pi` | Fast triage, quick edits, analysis | Heavy code tasks |
+| **cursor** | `cursor` | Human-steered interactive editing | Autonomous tasks |
+| **cursor-2** | `cursor-2` | Parallel human-steered editing | Autonomous tasks |
 
-> All fleet agents run on **node-2** (64GB). node-1 is orchestrator-only (daemon + lead).
+> All fleet agents run on **sati** (64GB). prya is orchestrator-only (daemon + lead).
 > **Hotswap rule:** if primary agent is offline, pick next in the same row (e.g. `kimi` → `kimi-2`).
 
 ---
@@ -148,6 +201,35 @@ If an agent window is at a shell prompt, use these exact commands:
 
 ---
 
+## Dark Factory Boot Sequence (Council S164)
+
+Run at the start of each orchestrator session to ensure fleet is operational:
+
+```bash
+# 1. Clean blockers (stale locks, rebase state)
+forge recover
+
+# 2. Fleet health check — verify agents online, queue depth
+forge status
+
+# 3. Check queue for stale tasks before dispatching new work
+forge task list   # review and manually complete/cancel stale tasks
+
+# 4. Verify agents are in daemon mode (check tmux panes)
+forge fleet windows   # if agents are idle at prompt, restart via agent-start.sh
+
+# 5. Dispatch or queue new work
+forge dispatch send <agent> "..."   # for non-code work
+# OR use Task tool with isolation="worktree" for code changes
+
+# 6. After results come in, check quality
+forge dispatch check-results
+```
+
+**Keep it short.** This is a 2-minute startup checklist, not a 12-step ritual.
+
+---
+
 ## Common Failure Modes + Recovery
 
 | Symptom | Cause | Recovery |
@@ -161,4 +243,23 @@ If an agent window is at a shell prompt, use these exact commands:
 
 ---
 
-*Last updated: 2026-03-19. Added reliability summary, failure modes table, agent start commands, tmux interactive exception, and Avoid column to fleet roster.*
+## Messaging Systems (S120 Phase 3.1 — which one does what)
+
+FORGE has four messaging systems. They are NOT interchangeable.
+
+| Command | System | Use When | Reliability |
+|---------|--------|----------|-------------|
+| `forge dispatch send AGENT "msg"` | HTTP → daemon → tmux | Assigning tasks to fleet agents | ~95% |
+| `forge lead send NODE "msg"` | XNode mesh (file-based) | Orchestrator-to-orchestrator cross-node | ~80% (eventual) |
+| `forge message send NODE "msg"` | Git-based message bus | **Deprecated** — git transport is unreliable for messaging | ~60% |
+| `forge relay start` | File-polling relay worker | Internal daemon relay only — not for task dispatch | N/A (daemon internal) |
+
+**Rules:**
+- Use `forge dispatch send` for all agent task assignment. It is the only production-tested dispatch path.
+- Use `forge lead send` only for orchestrator↔orchestrator coordination across nodes (e.g., prya → sati for handoff).
+- Never use `forge message send` for task delivery — git transport is unreliable and slow.
+- Never use `forge relay start` directly — it is started by `forged` internally.
+
+---
+
+*Last updated: 2026-03-27 S172. Clarified `forge dispatch send` target format uses tmux window name (not `forge:` prefix), added stale-task review note via `forge task list`, and preserved daemon polling as PRIMARY dispatch method.*

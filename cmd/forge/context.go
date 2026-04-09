@@ -300,7 +300,7 @@ func tmuxSend(target, text string) error {
 		return fmt.Errorf("tmux send-keys text: %w", err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	if err := exec.Command("tmux", "send-keys", "-t", target, "", "Enter").Run(); err != nil {
+	if err := exec.Command("tmux", "send-keys", "-t", target, "Enter").Run(); err != nil {
 		return fmt.Errorf("tmux send-keys Enter: %w", err)
 	}
 	return nil

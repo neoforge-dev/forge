@@ -182,6 +182,61 @@ func TestWorktreeManager_PruneStale(t *testing.T) {
 	}
 }
 
+// TestWorktreeManager_PruneDirty verifies that PruneStaleWorktrees preserves dirty worktrees.
+func TestWorktreeManager_PruneDirty(t *testing.T) {
+	repoRoot := initTestRepo(t)
+	defer os.RemoveAll(repoRoot)
+
+	dbPath := filepath.Join(os.TempDir(), fmt.Sprintf("forge_worktree_prune_dirty_%d.db", time.Now().UnixNano()))
+	db := openTestDB(t, dbPath)
+	defer func() {
+		db.Close()
+		_ = os.Remove(dbPath)
+	}()
+
+	ctx := context.Background()
+	manager := NewWorktreeManager(repoRoot, "", db)
+
+	// Create task with COMPLETED status but it will have a dirty worktree.
+	taskID := "TASK-COMPLETE-BUT-DIRTY"
+	now := time.Now().Format(time.RFC3339)
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskID, "domain", "project", string(TaskTypeFeature), 10, string(TaskStatusCompleted), now, now)
+	if err != nil {
+		t.Fatalf("failed to insert task: %v", err)
+	}
+
+	path, err := manager.CreateWorktree(ctx, taskID)
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+
+	// Create dirty file in the worktree.
+	if err := os.WriteFile(filepath.Join(path, "dirty.txt"), []byte("don't delete me"), 0o644); err != nil {
+		t.Fatalf("failed to write dirty file: %v", err)
+	}
+
+	// Prune — should NOT remove the worktree because it's dirty.
+	if err := manager.PruneStaleWorktrees(ctx); err != nil {
+		t.Fatalf("PruneStaleWorktrees failed: %v", err)
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatalf("expected dirty worktree to be preserved, but it was removed")
+	}
+
+	// Verification check via IsWorktreeDirty.
+	dirty, err := manager.IsWorktreeDirty(ctx, taskID)
+	if err != nil {
+		t.Fatalf("IsWorktreeDirty failed: %v", err)
+	}
+	if !dirty {
+		t.Fatalf("expected worktree to be reported as dirty")
+	}
+}
+
 // Wave 129: WorktreeManager — CreateWorktree, RemoveWorktree, ListWorktrees,
 //           RecordWorktree, PruneStaleWorktrees edge cases.
 

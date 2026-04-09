@@ -1479,6 +1479,429 @@ func orchestratorWorkStrategyPatrol(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// phantomTaskAutoCompletePatrol completes auto-generated tasks that match
+// known noise patterns. Council S157 Proposal #1.
+//
+// The orchestratorWorkStrategyPatrol creates tasks assigned to the orchestrator
+// node (e.g. "Fleet has idle agents", "health check failed"). These flood the
+// orchestrator's session with notifications, wasting ~40% of context. This
+// patrol auto-completes them within 60 seconds of creation so they never reach
+// the orchestrator.
+func phantomTaskAutoCompletePatrol(ctx context.Context, db *sql.DB) error {
+	// Auto-complete tasks that:
+	// 1. Are in queued/assigned status
+	// 2. Match known noise patterns in title
+	// 3. Were created more than 60 seconds ago (grace period for legitimate claims)
+	patterns := []string{
+		"%Fleet%idle%",
+		"%Fleet%down%",
+		"%Fleet%0 agents%",
+		"%fleet status%",
+		"%Test message%",
+		"%health check%",
+		"%spawn agents%",
+		"%delegate work%",
+		"%Check forge%",
+	}
+
+	for _, pattern := range patterns {
+		result, err := db.ExecContext(ctx, `
+			UPDATE tasks
+			SET status = 'completed',
+			    updated_at = datetime('now')
+			WHERE status IN ('queued', 'assigned')
+			  AND title LIKE ?
+			  AND created_at < datetime('now', '-60 seconds')
+		`, pattern)
+		if err != nil {
+			return fmt.Errorf("phantom task cleanup pattern %q: %w", pattern, err)
+		}
+		if n, _ := result.RowsAffected(); n > 0 {
+			log.Printf("[Patrol:phantom-task-cleanup] auto-completed %d task(s) matching %q", n, pattern)
+		}
+	}
+	return nil
+}
+
+// taskDispatcherPatrol picks up queued tasks and sends them to idle local tmux
+// agent windows. This bridges the gap between the task queue (daemon) and agents
+// that only respond to tmux send-keys (not daemon-mode polling).
+//
+// Flow: query queued tasks → list idle tmux agents → match → send via tmux → mark assigned.
+func taskDispatcherPatrol(ctx context.Context, db *sql.DB) error {
+	// 1. Get queued tasks (limit to prevent flooding).
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, title, description
+		FROM tasks
+		WHERE status IN ('queued') AND (state IN ('QUEUED', '') OR state IS NULL)
+		ORDER BY created_at ASC
+		LIMIT 5
+	`)
+	if err != nil {
+		return fmt.Errorf("query queued tasks: %w", err)
+	}
+	defer rows.Close()
+
+	type queuedTask struct {
+		ID, Title, Description string
+	}
+	var tasks []queuedTask
+	for rows.Next() {
+		var t queuedTask
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description); err != nil {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	// 2. List tmux agent windows and find idle ones.
+	// Idle = running an agent process (not bash/zsh) AND not currently assigned a task.
+	tmuxOut, err := exec.Command("tmux", "list-windows", "-t", "forge",
+		"-F", "#{window_name}\t#{pane_current_command}").Output()
+	if err != nil {
+		// No tmux session — nothing to dispatch to.
+		return nil
+	}
+
+	hostname, _ := os.Hostname()
+	agentProcesses := map[string]bool{
+		"claude": true, "opencode": true, "kimi": true, "codex": true,
+		"kilo": true, "amp": true, "gemini": true, "aider": true,
+		"node": true, "pi": true, "glm": true, "cursor": true, "minimax": true,
+		// Actual process names that differ from agent names:
+		"python3.13":       true, // kimi runs as python3.13
+		"python3.12":       true, // kimi on older systems
+		"python3":          true, // kimi fallback
+		"codex-aarch64-a":  true, // codex binary on ARM64 macOS
+		"codex-x86_64-l":   true, // codex binary on x86 Linux
+		"cursor-agent":     true, // cursor runs as cursor-agent
+	}
+
+	var idleAgents []string
+	for _, line := range strings.Split(strings.TrimSpace(string(tmuxOut)), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		windowName := strings.TrimSpace(parts[0])
+		paneCmd := strings.ToLower(strings.TrimSpace(parts[1]))
+
+		// Skip orchestrator window (named after hostname).
+		if windowName == hostname {
+			continue
+		}
+		// Skip non-agent processes (bare shells).
+		if !agentProcesses[paneCmd] {
+			continue
+		}
+		// Check if agent already has an assigned task.
+		var activeCount int
+		db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM tasks
+			WHERE assigned_to = ? AND status IN ('assigned', 'executing')
+		`, windowName).Scan(&activeCount)
+		if activeCount > 0 {
+			continue
+		}
+		// Skip agents that are blocked (work_state='blocked') — they cannot accept tasks.
+		var workState string
+		db.QueryRowContext(ctx, `
+			SELECT COALESCE(work_state, 'idle') FROM agent_heartbeats WHERE agent_id = ?
+		`, windowName).Scan(&workState)
+		if workState == "blocked" {
+			log.Printf("[Patrol:task-dispatcher] agent %s is blocked — skipping", windowName)
+			continue
+		}
+		idleAgents = append(idleAgents, windowName)
+	}
+
+	if len(idleAgents) == 0 {
+		return nil
+	}
+
+	// 3. Match tasks to idle agents and dispatch.
+	dispatched := 0
+	for i, t := range tasks {
+		if i >= len(idleAgents) {
+			break
+		}
+		agent := idleAgents[i]
+		target := fmt.Sprintf("forge:%s", agent)
+
+		// Build prompt.
+		prompt := t.Description
+		if prompt == "" {
+			prompt = t.Title
+		}
+		taskPrompt := fmt.Sprintf("Task %s: %s", t.ID, prompt)
+
+		// Send via tmux (2-step protocol).
+		if err := exec.Command("tmux", "send-keys", "-t", target, "-l", taskPrompt).Run(); err != nil {
+			log.Printf("[Patrol:task-dispatcher] tmux send to %s failed: %v", agent, err)
+			continue
+		}
+		time.Sleep(100 * time.Millisecond)
+		if err := exec.Command("tmux", "send-keys", "-t", target, "", "Enter").Run(); err != nil {
+			log.Printf("[Patrol:task-dispatcher] tmux Enter to %s failed: %v", agent, err)
+			continue
+		}
+
+		// Mark task as assigned.
+		_, _ = db.ExecContext(ctx, `
+			UPDATE tasks SET status = 'assigned', assigned_to = ?, state = 'DISPATCHED',
+				updated_at = datetime('now')
+			WHERE id = ?
+		`, agent, t.ID)
+
+		// Update agent work_state to "working" so dispatch routing skips it.
+		_, _ = db.ExecContext(ctx, `
+			UPDATE agent_heartbeats SET work_state = 'working' WHERE agent_id = ?
+		`, agent)
+
+		log.Printf("[Patrol:task-dispatcher] dispatched %s to %s (work_state=working)", t.ID, agent)
+		dispatched++
+	}
+
+	if dispatched > 0 {
+		log.Printf("[Patrol:task-dispatcher] dispatched %d task(s) to %d idle agent(s)", dispatched, dispatched)
+	}
+	return nil
+}
+
+// agentRecoveryRateLimit tracks per-agent recovery timestamps for the
+// agentAutoRecoveryPatrol rate limiter. Max 3 recoveries per agent per hour.
+var agentRecoveryRateLimit struct {
+	sync.Mutex
+	// timestamps maps agentName → slice of recovery times within the last hour.
+	timestamps map[string][]time.Time
+}
+
+func init() {
+	agentRecoveryRateLimit.timestamps = make(map[string][]time.Time)
+}
+
+// agentAutoRecoveryPatrol detects tmux agent windows whose process has reverted
+// to a bare shell (bash/zsh), meaning the agent crashed.  If the crashed agent
+// has an active task (status assigned or executing) it restarts the agent and
+// re-dispatches the task via tmux send-keys.
+//
+// Rate limit: at most 3 recoveries per agent name per rolling hour.
+// All recovery actions are logged with the [Patrol:agent-recovery] prefix.
+func agentAutoRecoveryPatrol(ctx context.Context, db *sql.DB) error {
+	// 1. List all tmux windows in the forge session.
+	tmuxOut, err := exec.Command("tmux", "list-windows", "-t", "forge",
+		"-F", "#{window_name}\t#{pane_current_command}").Output()
+	if err != nil {
+		// No tmux session available — nothing to do.
+		return nil
+	}
+
+	hostname, _ := os.Hostname()
+
+	shellProcesses := map[string]bool{
+		"bash": true,
+		"zsh":  true,
+		"sh":   true,
+	}
+
+	// 2. Iterate windows and find crashed agents (shell running instead of agent).
+	for _, line := range strings.Split(strings.TrimSpace(string(tmuxOut)), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		agentName := strings.TrimSpace(parts[0])
+		paneCmd := strings.ToLower(strings.TrimSpace(parts[1]))
+
+		// Skip the orchestrator window.
+		if agentName == hostname {
+			continue
+		}
+		// Skip windows where a real agent process is running.
+		if !shellProcesses[paneCmd] {
+			continue
+		}
+
+		// 3. Agent window is running a shell — check for an assigned task.
+		var taskID, taskTitle string
+		err := db.QueryRowContext(ctx, `
+			SELECT id, title FROM tasks
+			WHERE assigned_to = ? AND status IN ('assigned', 'executing')
+			LIMIT 1
+		`, agentName).Scan(&taskID, &taskTitle)
+		if err != nil {
+			// No active task for this dead agent — nothing to recover.
+			continue
+		}
+
+		// 4. Rate-limit: allow at most 3 recoveries per agent per rolling hour.
+		agentRecoveryRateLimit.Lock()
+		now := time.Now()
+		cutoff := now.Add(-1 * time.Hour)
+		recent := agentRecoveryRateLimit.timestamps[agentName]
+		// Prune timestamps older than 1 hour.
+		filtered := recent[:0]
+		for _, ts := range recent {
+			if ts.After(cutoff) {
+				filtered = append(filtered, ts)
+			}
+		}
+		agentRecoveryRateLimit.timestamps[agentName] = filtered
+		if len(filtered) >= 3 {
+			agentRecoveryRateLimit.Unlock()
+			log.Printf("[Patrol:agent-recovery] rate-limit hit for %s (%d recoveries in last hour) — skipping",
+				agentName, len(filtered))
+			continue
+		}
+		agentRecoveryRateLimit.timestamps[agentName] = append(filtered, now)
+		agentRecoveryRateLimit.Unlock()
+
+		// 5. Determine the agent type from the window name.
+		// Window names follow the pattern agentType or agentType-N (e.g. kimi, kimi-2).
+		agentType := agentName
+		if idx := strings.LastIndex(agentName, "-"); idx != -1 {
+			// Only strip the numeric suffix.
+			suffix := agentName[idx+1:]
+			allDigits := len(suffix) > 0
+			for _, c := range suffix {
+				if c < '0' || c > '9' {
+					allDigits = false
+					break
+				}
+			}
+			if allDigits {
+				agentType = agentName[:idx]
+			}
+		}
+
+		spawnCmd, ok := agentSpawnCommands[agentType]
+		if !ok {
+			log.Printf("[Patrol:agent-recovery] unknown agent type %q for window %s — skipping restart",
+				agentType, agentName)
+			continue
+		}
+
+		// 6. Restart the agent in-place by sending the spawn command to the existing window.
+		forgeAPIURL := os.Getenv("FORGE_API_URL")
+		if forgeAPIURL == "" {
+			forgeAPIURL = "http://prya:8081"
+		}
+		forgeRoot := findForgeRoot()
+		envSetup := fmt.Sprintf("export FORGE_AGENT_TYPE=fleet && export FORGE_AGENT_NAME=%s && export FORGE_API_URL=%s && cd %s",
+			agentName, forgeAPIURL, forgeRoot)
+		fullRestartCmd := fmt.Sprintf("%s && %s", envSetup, spawnCmd)
+
+		tmuxTarget := fmt.Sprintf("forge:%s", agentName)
+		if err := exec.Command("tmux", "send-keys", "-t", tmuxTarget, "-l", fullRestartCmd).Run(); err != nil {
+			log.Printf("[Patrol:agent-recovery] failed to send restart cmd to %s: %v", agentName, err)
+			continue
+		}
+		if err := exec.Command("tmux", "send-keys", "-t", tmuxTarget, "", "Enter").Run(); err != nil {
+			log.Printf("[Patrol:agent-recovery] failed to send Enter to %s: %v", agentName, err)
+			continue
+		}
+
+		// 7. Re-dispatch the task: reset status to queued so taskDispatcherPatrol
+		// picks it up, then immediately send it directly to this agent window.
+		taskPrompt := fmt.Sprintf("Task %s: %s", taskID, taskTitle)
+		time.Sleep(200 * time.Millisecond) // brief pause so the shell resets before we send the task
+		if err := exec.Command("tmux", "send-keys", "-t", tmuxTarget, "-l", taskPrompt).Run(); err != nil {
+			log.Printf("[Patrol:agent-recovery] failed to re-dispatch task %s to %s: %v", taskID, agentName, err)
+		} else {
+			time.Sleep(100 * time.Millisecond)
+			_ = exec.Command("tmux", "send-keys", "-t", tmuxTarget, "", "Enter").Run()
+		}
+
+		// Keep the task marked as assigned to this agent (it is being re-delivered).
+		_, _ = db.ExecContext(ctx, `
+			UPDATE tasks SET status = 'assigned', state = 'DISPATCHED', updated_at = datetime('now')
+			WHERE id = ?
+		`, taskID)
+
+		log.Printf("[Patrol:agent-recovery] recovered %s — restarted + re-dispatched %s", agentName, taskID)
+	}
+
+	return nil
+}
+
+// resultVerificationPatrol checks tasks stuck in 'assigned' or 'executing' status
+// and resolves them by checking whether a result file exists on disk.
+// Tasks with a result file → completed. Tasks >2h with no result → requeued.
+func resultVerificationPatrol(ctx context.Context, db *sql.DB) error {
+	forgeRoot := os.Getenv("FORGE_ROOT")
+	if forgeRoot == "" {
+		forgeRoot = "."
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, title, assigned_to, status, updated_at FROM tasks
+		WHERE status IN ('assigned', 'executing')
+		AND updated_at < datetime('now', '-30 minutes')
+		ORDER BY updated_at ASC LIMIT 10
+	`)
+	if err != nil {
+		return fmt.Errorf("query stale tasks: %w", err)
+	}
+	defer rows.Close()
+
+	type staleTask struct {
+		ID, Title, AssignedTo, Status, UpdatedAt string
+	}
+	var tasks []staleTask
+	for rows.Next() {
+		var t staleTask
+		if err := rows.Scan(&t.ID, &t.Title, &t.AssignedTo, &t.Status, &t.UpdatedAt); err != nil {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+
+	for _, t := range tasks {
+		// Check for result file.
+		resultPath := filepath.Join(forgeRoot, ".forge", "heartbeat", "results",
+			fmt.Sprintf("%s-%s.md", t.AssignedTo, t.ID))
+		if _, err := os.Stat(resultPath); err == nil {
+			// Result file exists — mark completed.
+			_, _ = db.ExecContext(ctx, `
+				UPDATE tasks SET status = 'completed', state = 'COMPLETED',
+					updated_at = datetime('now') WHERE id = ?`, t.ID)
+			log.Printf("[Patrol:result-verify] task %s completed (result file found)", t.ID)
+			continue
+		}
+
+		// Parse task age.
+		var updatedAt time.Time
+		for _, layout := range []string{
+			"2006-01-02 15:04:05",
+			time.RFC3339,
+			"2006-01-02T15:04:05Z",
+			"2006-01-02 15:04:05.999999-07:00",
+		} {
+			if parsed, err := time.Parse(layout, t.UpdatedAt); err == nil {
+				updatedAt = parsed
+				break
+			}
+		}
+		if updatedAt.IsZero() {
+			continue
+		}
+
+		taskAge := time.Since(updatedAt)
+		if taskAge > 2*time.Hour {
+			// No result after 2h — requeue.
+			_, _ = db.ExecContext(ctx, `
+				UPDATE tasks SET status = 'queued', state = 'QUEUED',
+					assigned_to = '', updated_at = datetime('now') WHERE id = ?`, t.ID)
+			log.Printf("[Patrol:result-verify] task %s requeued (no result after 2h)", t.ID)
+		}
+		// Under 2h — agent may still be working, skip.
+	}
+	return nil
+}
+
 // killAgent terminates a tmux window and updates inventory.
 func killAgent(ctx context.Context, db *sql.DB, agentID, tmuxWindow, reason string) {
 	if tmuxWindow != "" {

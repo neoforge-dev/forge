@@ -18,7 +18,7 @@ allowed-tools: [Read, Write, Edit, Bash, Glob]
 - `all-projects.md` quick reference for user journeys
 - Domain policies for UX/legal copy (BabyBites safety messaging, CalmConnect anonymity, etc.)
 - `docs/10-build-process.md` delivery rhythm + testing expectations
-- Reference implementation: `/Users/bogdan/work/FORGE/harness/command_center/`
+- Reference implementation: forged HTMX UI served at `http://localhost:8081/ui`
 
 ## Tech Stack Decision
 
@@ -611,7 +611,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'http://127.0.0.1:8081',
         changeOrigin: true
       }
     }

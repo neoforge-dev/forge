@@ -682,6 +682,310 @@ func runGitClearLocks(cmd *cobra.Command, args []string) error {
 }
 
 // ---------------------------------------------------------------------------
+// forge git add
+// ---------------------------------------------------------------------------
+
+var gitAddCmd = &cobra.Command{
+	Use:   "add <file> [file...]",
+	Short: "Stage files using safe tmp-index on multi-agent nodes",
+	Long: `Stage files for commit using a private tmp-index copy on multi-agent nodes
+(gaea, nova, sati) to prevent .git/index.lock contention.
+
+On single-agent nodes (prya, vega) or when GITSAFE_ENABLED=0, this is a
+direct pass-through to "git add".
+
+Set GITSAFE_ENABLED=1 to force safe mode on any node.
+Set GITSAFE_ENABLED=0 to disable safe mode everywhere.
+
+Examples:
+  forge git add .
+  forge git add bin/gitsafe.sh cmd/forge/git.go
+  forge git add -u`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runGitAdd,
+}
+
+func runGitAdd(cmd *cobra.Command, args []string) error {
+	forgeRoot := resolveForgeRoot()
+
+	if !shouldUseSafeMode() {
+		// Passthrough — no tmp-index overhead needed
+		out, err := runGitCmdInDir(forgeRoot, append([]string{"add"}, args...)...)
+		if out != "" {
+			fmt.Print(out)
+		}
+		return err
+	}
+
+	return runWithTmpIndex(forgeRoot, append([]string{"add"}, args...))
+}
+
+// ---------------------------------------------------------------------------
+// forge git run
+// ---------------------------------------------------------------------------
+
+var gitRunCmd = &cobra.Command{
+	Use:   "run <git-subcommand> [args...]",
+	Short: "Run any git command with safe tmp-index on multi-agent nodes",
+	Long: `Run an arbitrary git subcommand with the gitsafe tmp-index strategy on
+multi-agent nodes (gaea, nova, sati).
+
+Read-only commands (status, diff, log, show, branch, remote, ls-files,
+ls-tree, describe, shortlog, tag, rev-parse, rev-list, cat-file, blame,
+annotate, grep, bisect, stash list, stash show) are passed directly to git
+without the tmp-index overhead.
+
+Write commands (add, commit, reset, checkout, merge, rebase, stash push/pop/
+drop, and any other subcommand not in the read-only list) use a private tmp
+index copy to avoid .git/index.lock contention.
+
+Set GITSAFE_ENABLED=1 to force safe mode on any node.
+Set GITSAFE_ENABLED=0 to disable safe mode everywhere.
+
+Examples:
+  forge git run status
+  forge git run add -u
+  forge git run commit -m "feat: add feature"
+  forge git run log --oneline -5
+  forge git run stash list`,
+	Args:               cobra.MinimumNArgs(1),
+	DisableFlagParsing: true,
+	RunE:               runGitRun,
+}
+
+func runGitRun(cmd *cobra.Command, args []string) error {
+	// DisableFlagParsing passes --help/-h through to us; handle it explicitly.
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		return cmd.Help()
+	}
+
+	forgeRoot := resolveForgeRoot()
+	subCmd := args[0]
+
+	// Always passthrough if safe mode is disabled
+	if !shouldUseSafeMode() {
+		out, err := runGitCmdInDir(forgeRoot, args...)
+		if out != "" {
+			fmt.Print(out)
+		}
+		return err
+	}
+
+	// Read-only commands: pass through without tmp-index overhead
+	if isReadOnlyGitCommand(args) {
+		out, err := runGitCmdInDir(forgeRoot, args...)
+		if out != "" {
+			fmt.Print(out)
+		}
+		if err != nil {
+			return fmt.Errorf("[git run] %s: %w", subCmd, err)
+		}
+		return nil
+	}
+
+	// Write path: use tmp index
+	return runWithTmpIndex(forgeRoot, args)
+}
+
+// ---------------------------------------------------------------------------
+// gitsafe core helpers
+// ---------------------------------------------------------------------------
+
+// multiAgentNodes is the set of hostnames where concurrent git ops race on index.lock.
+var multiAgentNodes = map[string]bool{
+	"gaea": true,
+	"nova": true,
+	"sati": true,
+}
+
+// shouldUseSafeMode returns true if the tmp-index strategy should be applied.
+//
+// Priority:
+//  1. GITSAFE_ENABLED=1 → always safe mode
+//  2. GITSAFE_ENABLED=0 → always passthrough
+//  3. hostname in multiAgentNodes → safe mode
+//  4. otherwise → passthrough
+func shouldUseSafeMode() bool {
+	switch os.Getenv("GITSAFE_ENABLED") {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		return false
+	}
+	// hostname may be FQDN; use short name
+	short := strings.SplitN(hostname, ".", 2)[0]
+	return multiAgentNodes[short]
+}
+
+// isReadOnlyGitCommand returns true when args[0] is a git subcommand that does
+// not write to the index, so the tmp-index dance can be skipped.
+func isReadOnlyGitCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "status", "diff", "log", "show", "branch", "remote",
+		"ls-files", "ls-tree", "describe", "shortlog", "tag",
+		"rev-parse", "rev-list", "cat-file", "blame", "annotate",
+		"grep", "bisect":
+		return true
+	case "stash":
+		// "stash list" and "stash show" are read-only; push/pop/drop are not
+		if len(args) >= 2 {
+			switch args[1] {
+			case "list", "show":
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// staleLockAgeThreshold is the age above which index.lock is considered stale
+// and safe to remove. Matches the bash script's 30s threshold.
+const staleLockAgeThreshold = 30 * time.Second
+
+// cleanupStaleLockIfNeeded removes .git/index.lock if it is older than
+// staleLockAgeThreshold. It is safe to call even if the lock does not exist.
+func cleanupStaleLockIfNeeded(lockPath string) {
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		return // lock doesn't exist — nothing to do
+	}
+	age := time.Since(info.ModTime())
+	if age > staleLockAgeThreshold {
+		if rmErr := os.Remove(lockPath); rmErr == nil {
+			fmt.Printf("[gitsafe] removed stale index.lock (age: %.0fs)\n", age.Seconds())
+		}
+	}
+}
+
+// copyIndexWithRetry copies src → dst with up to maxAttempts tries.
+func copyIndexWithRetry(src, dst string, maxAttempts int) error {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			if attempt < maxAttempts {
+				fmt.Printf("[gitsafe] index read failed (attempt %d/%d) — retrying...\n", attempt, maxAttempts)
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("failed to read index after %d attempts: %w\n  Fix: verify disk space with 'df -h' and ensure %s is readable", maxAttempts, err, src)
+		}
+		if writeErr := os.WriteFile(dst, data, 0o644); writeErr != nil {
+			if attempt < maxAttempts {
+				fmt.Printf("[gitsafe] index write failed (attempt %d/%d) — retrying...\n", attempt, maxAttempts)
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("failed to write tmp index after %d attempts: %w", maxAttempts, writeErr)
+		}
+		return nil
+	}
+	return fmt.Errorf("copyIndexWithRetry: unreachable")
+}
+
+// safeCopyBack copies tmp → dst only when the tmp file is non-empty and
+// its size is within ±50% of the current dst size.
+func safeCopyBack(tmpPath, dstPath string) error {
+	tmpInfo, err := os.Stat(tmpPath)
+	if err != nil {
+		return fmt.Errorf("cannot stat tmp index: %w\n  Recovery: your original index is intact at %s", err, dstPath)
+	}
+	if tmpInfo.Size() == 0 {
+		return fmt.Errorf("tmp index is empty — refusing to overwrite %s\n  Recovery: your original index is intact", dstPath)
+	}
+
+	// Size sanity check: allow ±50%
+	if dstInfo, statErr := os.Stat(dstPath); statErr == nil && dstInfo.Size() > 0 {
+		origSize := dstInfo.Size()
+		tmpSize := tmpInfo.Size()
+		lower := origSize / 2
+		upper := origSize * 2
+		if tmpSize < lower || tmpSize > upper {
+			return fmt.Errorf(
+				"tmp index size (%dB) is outside ±50%% of original (%dB) — refusing overwrite\n  Recovery: inspect with 'git status'",
+				tmpSize, origSize,
+			)
+		}
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return fmt.Errorf("failed to read tmp index for copy-back: %w", err)
+	}
+	if writeErr := os.WriteFile(dstPath, data, 0o644); writeErr != nil {
+		return fmt.Errorf("failed to copy tmp index back to %s: %w", dstPath, writeErr)
+	}
+	return nil
+}
+
+// runWithTmpIndex executes a git command using the tmp-index strategy:
+//  1. Copy .git/index → /tmp/forge-git-index-<pid>
+//  2. Run git command with GIT_INDEX_FILE pointing at the tmp copy
+//  3. Copy the (modified) tmp index back to .git/index
+//
+// Any non-zero exit from the git command skips the copy-back to leave the
+// real index untouched.
+func runWithTmpIndex(repoDir string, gitArgs []string) error {
+	// Resolve the git directory
+	gitDirOut, err := runGitCmdInDir(repoDir, "rev-parse", "--git-dir")
+	if err != nil {
+		return fmt.Errorf("[gitsafe] not inside a git repository\n  Recovery: cd into your git repo and retry")
+	}
+	gitDir := strings.TrimSpace(gitDirOut)
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repoDir, gitDir)
+	}
+
+	indexPath := filepath.Join(gitDir, "index")
+	lockPath := filepath.Join(gitDir, "index.lock")
+	tmpPath := fmt.Sprintf("/tmp/forge-git-index-%d", os.Getpid())
+
+	// Verify index exists
+	if _, statErr := os.Stat(indexPath); statErr != nil {
+		return fmt.Errorf("[gitsafe] git index not found at %s\n  Recovery: run 'git init' or verify this is a valid git repo", indexPath)
+	}
+
+	// Clean up stale lock before we start
+	cleanupStaleLockIfNeeded(lockPath)
+
+	// Ensure tmp is removed on exit
+	defer os.Remove(tmpPath)
+
+	// Copy index → tmp (with retry)
+	if copyErr := copyIndexWithRetry(indexPath, tmpPath, 3); copyErr != nil {
+		return fmt.Errorf("[gitsafe] %w", copyErr)
+	}
+
+	// Build the command, injecting GIT_INDEX_FILE
+	c := exec.Command("git", gitArgs...)
+	c.Dir = repoDir
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	c.Stdin = os.Stdin
+	c.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpPath)
+
+	runErr := c.Run()
+	if runErr != nil {
+		// Do not copy back on failure — leave real index intact
+		return fmt.Errorf("[gitsafe] git %s failed: %w\n  Recovery: run 'git status' to inspect repo state", strings.Join(gitArgs, " "), runErr)
+	}
+
+	// Copy modified tmp index back to the real index
+	if copyBackErr := safeCopyBack(tmpPath, indexPath); copyBackErr != nil {
+		return fmt.Errorf("[gitsafe] copy-back failed: %w", copyBackErr)
+	}
+
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
@@ -719,6 +1023,8 @@ func init() {
 	gitCmd.AddCommand(gitCommitCmd)
 	gitCmd.AddCommand(gitMutexWaitCmd)
 	gitCmd.AddCommand(gitClearLocksCmd)
+	gitCmd.AddCommand(gitAddCmd)
+	gitCmd.AddCommand(gitRunCmd)
 
 	// Wire mutex subcommand
 	gitMutexWaitCmd.AddCommand(gitMutexWaitSubCmd)

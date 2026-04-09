@@ -1,13 +1,26 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	clierrors "github.com/neoforge-dev/forge/internal/errors"
+	"github.com/neoforge-dev/forge/internal"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+// Build-time version metadata — injected via ldflags:
+//   -X main.Version=v1.2.3 -X main.GitCommit=abc1234 -X main.BuildTime=2026-03-20T00:00:00Z
+var (
+	Version   = "dev"
+	GitCommit = "unknown"
+	BuildTime = "unknown"
 )
 
 var (
@@ -22,6 +35,23 @@ type Config struct {
 	NodeID   string `yaml:"node_id,omitempty" mapstructure:"node_id"`
 	Domain   string `yaml:"domain,omitempty" mapstructure:"domain"`
 	LogLevel string `yaml:"log_level,omitempty" mapstructure:"log_level"`
+}
+
+// exitWithCode exits the process with a structured exit code.
+// If err is a *clierrors.CLIError, its Code field is used.
+// Infrastructure/daemon errors use exit code 2; all others use 1.
+func exitWithCode(err error) {
+	var cliErr *clierrors.CLIError
+	if errors.As(err, &cliErr) {
+		os.Exit(cliErr.Code)
+	}
+	// DaemonUnreachableError → exit 2 (infrastructure error)
+	var daemonErr *internal.DaemonUnreachableError
+	if errors.As(err, &daemonErr) {
+		os.Exit(2)
+	}
+	// Default: general command error
+	os.Exit(1)
 }
 
 func main() {
@@ -43,13 +73,13 @@ func main() {
 			}
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		exitWithCode(err)
 	}
 }
 
 func init() {
-	// versionCmd and completionCmd are useful but secondary — keep visible
-	// selfUpdateCmd stays hidden (risky auto-update)
+	versionCmd.Hidden = true
+	completionCmd.Hidden = true
 	selfUpdateCmd.Hidden = true
 	cobra.OnInitialize(initConfig)
 
@@ -64,12 +94,12 @@ func init() {
 	// Add subcommands (nouns) - V4 style
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(adrCmd)
 	rootCmd.AddCommand(dispatchCmd)
 	rootCmd.AddCommand(domainCmd)
-	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(productCmd)
 	rootCmd.AddCommand(portfolioCmd)
 	rootCmd.AddCommand(contextCmd)
-	rootCmd.AddCommand(queueCmd)
 	rootCmd.AddCommand(fleetCmd)
 	rootCmd.AddCommand(approvalCmd)
 	rootCmd.AddCommand(laneCmd)
@@ -106,9 +136,6 @@ func init() {
 	// Self-update: rebuild the forge CLI binary in-place
 	rootCmd.AddCommand(selfUpdateCmd)
 
-	// Message — cross-node git-based message bus
-	rootCmd.AddCommand(messageCmd)
-
 	// Heartbeat — top-level convenience command (replaces hb-loop bash script)
 	rootCmd.AddCommand(heartbeatCmd)
 
@@ -117,6 +144,48 @@ func init() {
 
 	// Lock — multi-scope file lock manager (ports .forge/scripts/git-lock.sh)
 	rootCmd.AddCommand(lockCmd)
+
+	// Deploy — one-command product deployment (Rails 8 Phase 6)
+	rootCmd.AddCommand(deployCmd)
+
+	// Queue — inspect and manage the task queue
+	rootCmd.AddCommand(queueCmd)
+
+	// Recover — universal git blocker cleanup (all agents, not just Claude hooks)
+	rootCmd.AddCommand(recoverCmd)
+
+	// Gate — human gates blocking revenue across the portfolio
+	rootCmd.AddCommand(gateCmd)
+
+	// Notify — send FORGE status/alerts to Telegram via openclaw
+	rootCmd.AddCommand(notifyCmd)
+
+	// Preflight — automated session boot health checks
+	rootCmd.AddCommand(preflightCmd)
+
+	// Leads — query lead capture data from Cloudflare KV
+	rootCmd.AddCommand(leadsCmd)
+
+	// Trinity — Trinity → Prya delegation bridge
+	rootCmd.AddCommand(trinityCmd)
+
+	// Notion — sync portfolio/task data to Notion database
+	rootCmd.AddCommand(notionCmd)
+
+	// SEO — audit landing page SEO readiness
+	rootCmd.AddCommand(seoCmd)
+
+	// Skill — discover and inspect Claude Code skills
+	rootCmd.AddCommand(skillCmd)
+
+	// Content — publish fleet agent content drafts
+	rootCmd.AddCommand(contentCmd)
+
+	// Audit — comprehensive project health assessment
+	rootCmd.AddCommand(auditCmd)
+
+	// Scaffold — generate new service skeletons pre-wired with forge-shared imports
+	rootCmd.AddCommand(scaffoldCmd)
 
 	cobra.EnableCommandSorting = false
 }
@@ -180,14 +249,18 @@ func handleUnknownCommand(args []string) {
 }
 
 func initConfig() {
+	// Propagate build-time version to the HTTP client so every outgoing request
+	// carries X-Forge-Version and can detect daemon mismatches.
+	internal.SetClientVersion(Version)
+
 	// Precedence: CLI flags > ENV vars > ~/.forge/config.toml > project .forge/forge.yaml > defaults
 
 	// 1. Set environment prefix and automatic env mapping
 	viper.SetEnvPrefix("FORGE")
 	viper.AutomaticEnv()
 
-	// 2. Set defaults
-	viper.SetDefault("api_url", "http://localhost:8081")
+	// 2. Set defaults — use ResolveDefaultControlPlaneURL to respect FORGE_API_PORT
+	viper.SetDefault("api_url", internal.ResolveDefaultControlPlaneURL())
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("format", "table")
 
@@ -261,6 +334,15 @@ var rootCmd = &cobra.Command{
 	Use:           "forge",
 	Short:         "FORGE - Fleet Operations and Resource Governance Engine",
 	SilenceErrors: true,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if root := os.Getenv("FORGE_ROOT"); root != "" {
+			if _, err := os.Stat(root); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Warning: FORGE_ROOT=%s does not exist, falling back to current directory\n", root)
+				os.Unsetenv("FORGE_ROOT")
+			}
+		}
+		return nil
+	},
 	Long: `
 ╔════════════════════════════════════════════════════════════════╗
 ║                    FORGE v4.0                                  ║
@@ -304,13 +386,38 @@ var versionCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		format, _ := cmd.Flags().GetString("format")
 
-		version := "4.0.0"
-		commit := "unknown"
-
 		if format == "json" {
-			fmt.Printf(`{"version": "%s", "commit": "%s"}`+"\n", version, commit)
+			fmt.Printf(`{"version":"%s","commit":"%s","build_time":"%s"}`+"\n", Version, GitCommit, BuildTime)
 		} else {
-			fmt.Printf("FORGE CLI v%s (commit: %s)\n", version, commit)
+			fmt.Printf("FORGE CLI v%s (commit: %s, built: %s)\n", Version, GitCommit, BuildTime)
+		}
+
+		// Check if binary is stale compared to source
+		forgeRoot := os.Getenv("FORGE_ROOT")
+		if forgeRoot == "" {
+			forgeRoot = findForgeRoot()
+		}
+		if forgeRoot != "" {
+			binaryPath, _ := exec.LookPath("forge")
+			if binaryPath != "" {
+				binaryInfo, _ := os.Stat(binaryPath)
+				// Check newest .go file in cmd/forge/
+				sourceDir := filepath.Join(forgeRoot, "cmd", "forge")
+				entries, _ := os.ReadDir(sourceDir)
+				var newestSource time.Time
+				for _, e := range entries {
+					if strings.HasSuffix(e.Name(), ".go") {
+						info, _ := e.Info()
+						if info != nil && info.ModTime().After(newestSource) {
+							newestSource = info.ModTime()
+						}
+					}
+				}
+				if binaryInfo != nil && newestSource.After(binaryInfo.ModTime().Add(2*time.Minute)) {
+					fmt.Fprintf(os.Stderr, "\nBinary is stale (source updated %s ago). Run: forge self-update\n",
+						time.Since(newestSource).Round(time.Second))
+				}
+			}
 		}
 	},
 }

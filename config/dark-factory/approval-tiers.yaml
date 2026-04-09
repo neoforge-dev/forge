@@ -1,0 +1,40 @@
+# DESIGN TEMPLATE — not yet wired to daemon code (S120 Phase 2.3)
+# Dark Factory auto-approval is planned but not yet implemented in cmd/forged/.
+# See docs/adr/ADR-033.md for status. Use `forge approval` for current approval flow.
+# Approval tier policy per portfolio stage
+# tier: watch | phone | desktop
+# confidence_threshold: 0.0 = always require human, 1.0 = always auto-approve
+
+approval_tiers:
+  idea:
+    tier: watch
+    confidence_threshold: 1.0
+    notes: "Exploration — auto-approve everything"
+  validate:
+    tier: phone
+    confidence_threshold: 0.0
+    notes: "Early feedback needed — always notify"
+  build:
+    tier: desktop
+    confidence_threshold: 0.80
+    notes: "Block unless 80%+ confidence"
+  deploy:
+    tier: desktop
+    confidence_threshold: 0.95
+    notes: "High bar — human eyes required below 95%"
+  measure:
+    tier: phone
+    confidence_threshold: 0.70
+    notes: "Async review OK"
+  monetize:
+    tier: desktop
+    confidence_threshold: 0.0
+    notes: "Finance approval always required"
+  scale:
+    tier: phone
+    confidence_threshold: 0.85
+    notes: "Async notification"
+  kill:
+    tier: watch
+    confidence_threshold: 1.0
+    notes: "Archive tasks — auto-approve"

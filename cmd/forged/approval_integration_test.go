@@ -242,6 +242,122 @@ func TestCheckPendingApprovals_SkipsNilTaskID(t *testing.T) {
 	}
 }
 
+// TestCompleteTaskWithApproval_LowConfidence_ReturnsTypedError verifies that
+// low-confidence completion returns an *ApprovalRequiredError (Bug 2 fix).
+// Before the fix, CompleteTaskWithApproval returned a plain fmt.Errorf which
+// caused HandleTaskCompletion's type assertion to fail, resulting in 500s.
+func TestCompleteTaskWithApproval_LowConfidence_ReturnsTypedError(t *testing.T) {
+	store, apCleanup := setupApprovalsTestDB(t)
+	defer apCleanup()
+
+	q, qCleanup := setupTestQueue(t)
+	defer qCleanup()
+
+	ctx := context.Background()
+	taskID := "typed-err-task-001"
+	if err := q.Enqueue(ctx, Task{
+		ID:       taskID,
+		Domain:   "test",
+		Project:  "proj",
+		Type:     TaskTypeFeature,
+		Priority: 5,
+		Status:   TaskStatusQueued,
+		State:    StateQueued,
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.AssignTask(ctx, taskID, "agent-typed"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+
+	svc := NewApprovalService(store)
+	tai := NewTaskApprovalIntegration(q, svc)
+
+	// Extremely low confidence — forces the approval-required path.
+	confCtx := ConfidenceContext{
+		TestResults: &TestResult{
+			Passed:   0,
+			Failed:   100,
+			Skipped:  0,
+			Coverage: 0.0,
+		},
+		PatternMatch: 0.0,
+		BlastRadius:  200,
+		Reversible:   false,
+	}
+
+	err := tai.CompleteTaskWithApproval(ctx, taskID, "agent-typed", "result", confCtx)
+	if err == nil {
+		t.Fatal("expected an error for low-confidence completion, got nil")
+	}
+
+	// The critical assertion: error must be *ApprovalRequiredError so that
+	// HandleTaskCompletion's type assertion succeeds and returns 202, not 500.
+	approvalErr, ok := err.(*ApprovalRequiredError)
+	if !ok {
+		t.Fatalf("expected *ApprovalRequiredError, got %T: %v", err, err)
+	}
+	if approvalErr.TaskID != taskID {
+		t.Errorf("ApprovalRequiredError.TaskID = %q, want %q", approvalErr.TaskID, taskID)
+	}
+	if approvalErr.ApprovalID == "" {
+		t.Error("ApprovalRequiredError.ApprovalID must not be empty")
+	}
+}
+
+// TestHandleTaskCompletion_LowConfidence_Returns202 verifies that
+// HandleTaskCompletion returns a pending_approval response (not an error) when
+// confidence is low — exercising the full Bug 2 fix end-to-end.
+func TestHandleTaskCompletion_LowConfidence_Returns202(t *testing.T) {
+	store, apCleanup := setupApprovalsTestDB(t)
+	defer apCleanup()
+
+	q, qCleanup := setupTestQueue(t)
+	defer qCleanup()
+
+	ctx := context.Background()
+	taskID := "handle-202-task-001"
+	if err := q.Enqueue(ctx, Task{
+		ID:       taskID,
+		Domain:   "test",
+		Project:  "proj",
+		Type:     TaskTypeFeature,
+		Priority: 5,
+		Status:   TaskStatusQueued,
+		State:    StateQueued,
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := q.AssignTask(ctx, taskID, "agent-202"); err != nil {
+		t.Fatalf("AssignTask: %v", err)
+	}
+
+	svc := NewApprovalService(store)
+	tai := NewTaskApprovalIntegration(q, svc)
+
+	req := TaskCompletionRequest{
+		TaskID:  taskID,
+		AgentID: "agent-202",
+		Result:  "some result",
+		Confidence: ConfidenceFactorsInput{
+			TestsPassed:  0,
+			TestsFailed:  50,
+			TestCoverage: 0.0,
+			PatternMatch: 0.0,
+			BlastRadius:  200,
+			Reversible:   false,
+		},
+	}
+
+	resp, err := tai.HandleTaskCompletion(ctx, req)
+	if err != nil {
+		t.Fatalf("HandleTaskCompletion returned unexpected error: %v", err)
+	}
+	if resp.Status != "pending_approval" && resp.Status != "completed" {
+		t.Errorf("expected 'pending_approval' or 'completed', got %q", resp.Status)
+	}
+}
+
 // TestCheckPendingApprovals_ExpiredApproval verifies that an expired approval
 // is handled by CheckPendingApprovals without panicking.
 func TestCheckPendingApprovals_ExpiredApproval(t *testing.T) {

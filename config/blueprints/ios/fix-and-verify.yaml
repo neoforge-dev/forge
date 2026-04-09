@@ -1,0 +1,21 @@
+id: ios/fix-and-verify
+name: iOS Fix and Verify
+description: Build iOS project, run tests, fix failures, verify previews. Loops until green.
+steps:
+  - type: check
+    name: build
+    command: "cd ios/calm-connect-ios && xcodebuild build-for-testing -project Scheduler.xcodeproj -scheme Scheduler -destination 'platform=iOS Simulator,name=iPhone 17 Pro' 2>&1 | xcbeautify --quieter"
+  - type: check
+    name: test
+    command: "cd ios/calm-connect-ios && xcodebuild test -project Scheduler.xcodeproj -scheme Scheduler -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:SchedulerTests -disable-concurrent-testing 2>&1 | xcbeautify --quiet"
+  - type: dispatch
+    name: fix-failures
+    agent: auto
+  - type: check
+    name: verify-fix
+    command: "cd ios/calm-connect-ios && xcodebuild build-for-testing -project Scheduler.xcodeproj -scheme Scheduler -destination 'platform=iOS Simulator,name=iPhone 17 Pro' 2>&1 | xcbeautify --quieter"
+  - type: complete
+    name: finalize
+    evidence:
+      - tests
+      - build

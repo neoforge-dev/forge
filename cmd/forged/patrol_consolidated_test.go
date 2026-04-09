@@ -1108,3 +1108,438 @@ func TestWave267_PatrolRunHandler_PathParsing(t *testing.T) {
 		})
 	}
 }
+
+// ─── Patrol registration validation ─────────────────────────────────────────
+
+// TestStandardPatrols_AllHaveNonEmptyID verifies that every patrol returned by
+// StandardPatrols() has a non-empty ID.
+func TestStandardPatrols_AllHaveNonEmptyID(t *testing.T) {
+	for _, p := range StandardPatrols() {
+		if strings.TrimSpace(p.ID) == "" {
+			t.Errorf("patrol with name=%q has empty ID", p.Name)
+		}
+	}
+}
+
+// TestStandardPatrols_AllHaveNonEmptyName verifies that every patrol has a
+// non-empty Name field for log readability.
+func TestStandardPatrols_AllHaveNonEmptyName(t *testing.T) {
+	for _, p := range StandardPatrols() {
+		if strings.TrimSpace(p.Name) == "" {
+			t.Errorf("patrol with id=%q has empty Name", p.ID)
+		}
+	}
+}
+
+// TestStandardPatrols_AllHavePositiveSchedule verifies that every patrol has a
+// positive (non-zero) schedule duration.
+func TestStandardPatrols_AllHavePositiveSchedule(t *testing.T) {
+	for _, p := range StandardPatrols() {
+		if p.Schedule <= 0 {
+			t.Errorf("patrol %q has non-positive schedule: %v", p.ID, p.Schedule)
+		}
+	}
+}
+
+// TestStandardPatrols_AllHaveActionHandler verifies that every patrol has a
+// non-nil Action function.
+func TestStandardPatrols_AllHaveActionHandler(t *testing.T) {
+	for _, p := range StandardPatrols() {
+		if p.Action == nil {
+			t.Errorf("patrol %q has nil Action handler", p.ID)
+		}
+	}
+}
+
+// TestStandardPatrols_NoDuplicateIDs verifies that no two patrols share the same ID.
+func TestStandardPatrols_NoDuplicateIDs(t *testing.T) {
+	seen := map[string]int{}
+	for _, p := range StandardPatrols() {
+		seen[p.ID]++
+	}
+	for id, count := range seen {
+		if count > 1 {
+			t.Errorf("duplicate patrol ID %q (appears %d times)", id, count)
+		}
+	}
+}
+
+// TestStandardPatrols_MinimumSchedule verifies that no patrol runs faster than
+// every 10 seconds, which would cause excessive log noise and resource pressure.
+func TestStandardPatrols_MinimumSchedule(t *testing.T) {
+	const minSchedule = 10 * time.Second
+	for _, p := range StandardPatrols() {
+		if p.Schedule < minSchedule {
+			t.Errorf("patrol %q schedule %v is below minimum %v — risk of log spam", p.ID, p.Schedule, minSchedule)
+		}
+	}
+}
+
+// TestStandardPatrols_ExpectedCount verifies the patrol count matches the
+// documented count from the StandardPatrols() comment. Update this constant
+// when patrols are added or removed (see patrol.go comment for current count).
+// Note: 3 dark-factory patrols (auto-promote, result-monitor, work-strategy) are excluded
+// from the base count and only added when FORGE_DARK_FACTORY=true.
+func TestStandardPatrols_ExpectedCount(t *testing.T) {
+	os.Unsetenv("FORGE_DARK_FACTORY")
+	const expectedCount = 23 // Council S195 P1 + S196 T3: 38 → 25, +1 voice-health. Dark-factory gate splits into 23 base + 3 gated.
+	got := len(StandardPatrols())
+	if got != expectedCount {
+		t.Errorf("StandardPatrols() returned %d patrols, expected %d — update this test and the patrol.go comment when adding/removing patrols", got, expectedCount)
+	}
+}
+
+// TestNewPatrolSystem_LoadsStandardPatrols verifies that NewPatrolSystem correctly
+// populates the patrols field from StandardPatrols().
+func TestNewPatrolSystem_LoadsStandardPatrols(t *testing.T) {
+	ps := NewPatrolSystem(nil)
+	if ps == nil {
+		t.Fatal("NewPatrolSystem returned nil")
+	}
+	expected := len(StandardPatrols())
+	if len(ps.patrols) != expected {
+		t.Errorf("NewPatrolSystem loaded %d patrols, expected %d", len(ps.patrols), expected)
+	}
+}
+
+// ─── taskLifecyclePatrol (consolidated patrol, Council A2 2026-03-28) ─────────
+// These tests cover the orchestrator function and its sub-function dispatch.
+
+// TestTaskLifecyclePatrol_EmptyDB verifies the patrol runs cleanly with no tasks.
+func TestTaskLifecyclePatrol_EmptyDB(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Reset global counter to a known state so sub-function dispatch is predictable.
+	taskLifecycleCounter = 0
+
+	ctx := context.Background()
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol on empty DB returned error: %v", err)
+	}
+	// Counter should have been incremented once.
+	if taskLifecycleCounter != 1 {
+		t.Errorf("expected counter=1 after one call, got %d", taskLifecycleCounter)
+	}
+}
+
+// TestTaskLifecyclePatrol_CounterIncrements verifies the counter advances on each
+// invocation, which gates the sub-functions at their intended effective periods.
+func TestTaskLifecyclePatrol_CounterIncrements(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	taskLifecycleCounter = 0
+	ctx := context.Background()
+
+	for i := 1; i <= 16; i++ {
+		if err := taskLifecyclePatrol(ctx, db); err != nil {
+			t.Fatalf("iteration %d: unexpected error: %v", i, err)
+		}
+		if taskLifecycleCounter != i {
+			t.Errorf("iteration %d: counter = %d, want %d", i, taskLifecycleCounter, i)
+		}
+	}
+}
+
+// TestTaskLifecyclePatrol_SubFunctionDispatch_Tick5 verifies that on the 5th
+// invocation the task-timeout and stale-task-ttl sub-functions are triggered.
+// We insert a task that handleTimedOutTasks should requeue and verify it moves.
+func TestTaskLifecyclePatrol_SubFunctionDispatch_Tick5(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Insert an "executing" task whose started_at is > 30 minutes ago.
+	// handleTimedOutTasks requeues tasks in status='executing' with started_at < 30 min ago.
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO tasks (id, domain, project, type, title, priority, status, started_at, created_at, updated_at)
+		VALUES ('tlp-timeout-1', 'test', 'proj', 'feature', 'Timed-out task', 5,
+		        'executing',
+		        datetime('now', '-45 minutes'),
+		        datetime('now', '-50 minutes'),
+		        datetime('now', '-45 minutes'))
+	`)
+	if err != nil {
+		t.Fatalf("insert executing task: %v", err)
+	}
+
+	// Drive the counter to exactly 5 so sub-functions fire on this call.
+	taskLifecycleCounter = 4
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+	if taskLifecycleCounter != 5 {
+		t.Errorf("expected counter=5, got %d", taskLifecycleCounter)
+	}
+
+	// The timed-out task should now be in 'queued' status (handleTimedOutTasks requeues it).
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE id = 'tlp-timeout-1'`,
+	).Scan(&status); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if status != "queued" {
+		t.Errorf("expected timed-out task requeued to 'queued', got %q", status)
+	}
+}
+
+// TestTaskLifecyclePatrol_SubFunctionDispatch_Tick15 verifies that on a 15th-tick
+// invocation the dispatchTimeoutPatrol sub-function runs without errors even when
+// the dispatches directory does not exist.
+func TestTaskLifecyclePatrol_SubFunctionDispatch_Tick15(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Point FORGE_ROOT at a temp dir with no dispatches directory so
+	// dispatchTimeoutPatrol returns nil (IsNotExist path).
+	t.Setenv("FORGE_ROOT", t.TempDir())
+
+	taskLifecycleCounter = 14
+	ctx := context.Background()
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol on tick 15 returned error: %v", err)
+	}
+	if taskLifecycleCounter != 15 {
+		t.Errorf("expected counter=15, got %d", taskLifecycleCounter)
+	}
+}
+
+// TestTaskLifecyclePatrol_PhantomCleanup_EveryInvocation verifies the phantom
+// sub-function runs on every invocation (counter%1 == 0 always). A phantom
+// task older than 60 seconds should be completed.
+func TestTaskLifecyclePatrol_PhantomCleanup_EveryInvocation(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO tasks (id, domain, project, type, title, priority, status, created_at, updated_at)
+		VALUES ('tlp-phantom-1', 'infra', 'forged', 'chore', 'Fleet has idle agents', 5,
+		        'queued',
+		        datetime('now', '-120 seconds'),
+		        datetime('now', '-120 seconds'))
+	`)
+	if err != nil {
+		t.Fatalf("insert phantom task: %v", err)
+	}
+
+	// Use a non-multiple-of-5 tick so only the phantom sub-function triggers.
+	taskLifecycleCounter = 1
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE id = 'tlp-phantom-1'`,
+	).Scan(&status); err != nil {
+		t.Fatalf("query phantom task: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("expected phantom task auto-completed, got %q", status)
+	}
+}
+
+// TestTaskLifecyclePatrol_StaleTaskTTL_Requeue verifies the stale-TTL path
+// requeues an 'assigned' task whose agent has no recent heartbeat.
+// Triggered on tick 5 alongside handleTimedOutTasks.
+func TestTaskLifecyclePatrol_StaleTaskTTL_Requeue(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	offlineAgent := "tlp-offline-agent-1"
+
+	// No heartbeat for offlineAgent — it won't appear in the recent-heartbeat subquery.
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO tasks (id, domain, project, type, title, priority, status, assigned_to, created_at, updated_at)
+		VALUES ('tlp-stale-1', 'test', 'proj', 'feature', 'Stale assigned task', 5,
+		        'assigned', ?,
+		        datetime('now', '-60 minutes'),
+		        datetime('now', '-20 minutes'))
+	`, offlineAgent)
+	if err != nil {
+		t.Fatalf("insert stale assigned task: %v", err)
+	}
+
+	// Drive to tick 5 so staleTaskTTLPatrol fires.
+	taskLifecycleCounter = 4
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE id = 'tlp-stale-1'`,
+	).Scan(&status); err != nil {
+		t.Fatalf("query stale task: %v", err)
+	}
+	if status != "queued" {
+		t.Errorf("expected stale task requeued, got %q", status)
+	}
+}
+
+// TestTaskLifecyclePatrol_StaleTaskTTL_Abandon verifies the stale-TTL path
+// abandons an 'assigned' task whose agent has no heartbeat and was last updated
+// more than 2 hours ago.
+func TestTaskLifecyclePatrol_StaleTaskTTL_Abandon(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	ghostAgent := "tlp-ghost-agent-1"
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO tasks (id, domain, project, type, title, priority, status, assigned_to, created_at, updated_at)
+		VALUES ('tlp-ghost-1', 'test', 'proj', 'feature', 'Very old assigned task', 5,
+		        'assigned', ?,
+		        datetime('now', '-5 hours'),
+		        datetime('now', '-3 hours'))
+	`, ghostAgent)
+	if err != nil {
+		t.Fatalf("insert ghost task: %v", err)
+	}
+
+	// Drive to tick 5.
+	taskLifecycleCounter = 4
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE id = 'tlp-ghost-1'`,
+	).Scan(&status); err != nil {
+		t.Fatalf("query ghost task: %v", err)
+	}
+	if status != "abandoned" {
+		t.Errorf("expected very-old task abandoned, got %q", status)
+	}
+}
+
+// TestTaskLifecyclePatrol_NoActionOnNonMultipleTick verifies that a non-multiple-of-5
+// tick does NOT trigger handleTimedOutTasks (so a fresh-enough executing task is left alone).
+func TestTaskLifecyclePatrol_NoActionOnNonMultipleTick(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	// Insert an 'executing' task that is past the 30-minute timeout threshold.
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO tasks (id, domain, project, type, title, priority, status, started_at, created_at, updated_at)
+		VALUES ('tlp-no-action-1', 'test', 'proj', 'feature', 'Running task', 5,
+		        'executing',
+		        datetime('now', '-45 minutes'),
+		        datetime('now', '-50 minutes'),
+		        datetime('now', '-45 minutes'))
+	`)
+	if err != nil {
+		t.Fatalf("insert executing task: %v", err)
+	}
+
+	// Use tick 3 — not a multiple of 5, so handleTimedOutTasks should NOT run.
+	taskLifecycleCounter = 2
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE id = 'tlp-no-action-1'`,
+	).Scan(&status); err != nil {
+		t.Fatalf("query executing task: %v", err)
+	}
+	if status != "executing" {
+		t.Errorf("expected task to remain 'executing' on non-multiple tick, got %q", status)
+	}
+}
+
+// TestTaskLifecyclePatrol_DispatchTimeout_WritesMarker verifies that on tick 15
+// the dispatchTimeoutPatrol sub-function writes a TIMEOUT marker for old dispatches
+// with no corresponding result file.
+func TestTaskLifecyclePatrol_DispatchTimeout_WritesMarker(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	// Create dispatches directory and an old dispatch file (>2h old).
+	dispatchDir := filepath.Join(tmpRoot, ".forge", "dispatches")
+	resultsDir := filepath.Join(tmpRoot, ".forge", "heartbeat", "results")
+	if err := os.MkdirAll(dispatchDir, 0755); err != nil {
+		t.Fatalf("create dispatch dir: %v", err)
+	}
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		t.Fatalf("create results dir: %v", err)
+	}
+
+	dispatchFile := filepath.Join(dispatchDir, "kimi-TASK123-20260101.md")
+	if err := os.WriteFile(dispatchFile, []byte("# Dispatch\nSome task"), 0644); err != nil {
+		t.Fatalf("create dispatch file: %v", err)
+	}
+	// Back-date the file modification time to 3 hours ago.
+	oldTime := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(dispatchFile, oldTime, oldTime); err != nil {
+		t.Fatalf("backdate dispatch file: %v", err)
+	}
+
+	taskLifecycleCounter = 14
+	ctx := context.Background()
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+
+	// Expect a TIMEOUT marker in results/.
+	expectedMarker := filepath.Join(resultsDir, "kimi-TASK123-TIMEOUT.md")
+	if _, err := os.Stat(expectedMarker); err != nil {
+		t.Errorf("expected TIMEOUT marker at %s, got: %v", expectedMarker, err)
+	}
+}
+
+// TestTaskLifecyclePatrol_DispatchTimeout_SkipsIfResultExists verifies that when
+// a result file already exists the patrol does NOT write a TIMEOUT marker.
+func TestTaskLifecyclePatrol_DispatchTimeout_SkipsIfResultExists(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	dispatchDir := filepath.Join(tmpRoot, ".forge", "dispatches")
+	resultsDir := filepath.Join(tmpRoot, ".forge", "heartbeat", "results")
+	if err := os.MkdirAll(dispatchDir, 0755); err != nil {
+		t.Fatalf("create dispatch dir: %v", err)
+	}
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		t.Fatalf("create results dir: %v", err)
+	}
+
+	dispatchFile := filepath.Join(dispatchDir, "glm-TASK456-20260101.md")
+	if err := os.WriteFile(dispatchFile, []byte("# Dispatch"), 0644); err != nil {
+		t.Fatalf("create dispatch file: %v", err)
+	}
+	oldTime := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(dispatchFile, oldTime, oldTime); err != nil {
+		t.Fatalf("backdate dispatch file: %v", err)
+	}
+
+	// Pre-create the result file — patrol should skip writing the TIMEOUT marker.
+	resultFile := filepath.Join(resultsDir, "glm-TASK456.md")
+	if err := os.WriteFile(resultFile, []byte("# Result\nDone"), 0644); err != nil {
+		t.Fatalf("create result file: %v", err)
+	}
+
+	taskLifecycleCounter = 14
+	ctx := context.Background()
+	if err := taskLifecyclePatrol(ctx, db); err != nil {
+		t.Errorf("taskLifecyclePatrol returned error: %v", err)
+	}
+
+	timeoutMarker := filepath.Join(resultsDir, "glm-TASK456-TIMEOUT.md")
+	if _, err := os.Stat(timeoutMarker); err == nil {
+		t.Errorf("expected no TIMEOUT marker when result exists, but found one at %s", timeoutMarker)
+	}
+}

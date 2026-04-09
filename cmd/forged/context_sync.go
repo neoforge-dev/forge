@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -133,8 +134,14 @@ func (cs *ContextSync) syncLoop() {
 			// Mark file as pending
 			pendingFiles.Store(event.Name, time.Now())
 
-			// Reset debounce timer
-			debounceTimer.Reset(500 * time.Millisecond)
+			// Reset debounce timer — FORGE_CONTEXT_SYNC_DEBOUNCE_MS overrides 500ms (tests use 50ms)
+			debounce := 500 * time.Millisecond
+			if v := os.Getenv("FORGE_CONTEXT_SYNC_DEBOUNCE_MS"); v != "" {
+				if ms, err2 := strconv.Atoi(v); err2 == nil && ms > 0 {
+					debounce = time.Duration(ms) * time.Millisecond
+				}
+			}
+			debounceTimer.Reset(debounce)
 
 		case <-debounceTimer.C:
 			// Process all pending files

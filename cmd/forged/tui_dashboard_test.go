@@ -12,6 +12,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// newTuiTestDashboard returns a DashboardModel with a fixed size for rendering tests.
+// Rescued from coverage_tui_test.go.
+func newTuiTestDashboard() DashboardModel {
+	m := NewDashboardModel("http://localhost:9999")
+	m.width = 80
+	m.height = 24
+	return m
+}
+
 func TestDashboardModel_GoroutineLeak(t *testing.T) {
 	// Record goroutines before
 	before := runtime.NumGoroutine()

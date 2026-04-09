@@ -136,6 +136,13 @@ func (h *WebSocketHub) Run() {
 	for {
 		select {
 		case <-h.quit:
+			// Close all worker Send channels so writePump goroutines exit cleanly.
+			h.mu.Lock()
+			for _, worker := range h.workers {
+				close(worker.Send)
+			}
+			h.workers = make(map[string]*WebSocketWorker)
+			h.mu.Unlock()
 			return
 
 		case <-ticker.C:
@@ -485,7 +492,11 @@ func (w *WebSocketWorker) writePump(hub *WebSocketHub) {
 // readPump pumps messages from the WebSocket connection to the hub
 func (w *WebSocketWorker) readPump(hub *WebSocketHub) {
 	defer func() {
-		hub.unregister <- w
+		// Use select so readPump doesn't block if hub.Run() has already exited.
+		select {
+		case hub.unregister <- w:
+		case <-hub.quit:
+		}
 		w.Conn.Close()
 		// Mark agent offline in DB on disconnect.
 		if db := getDBConn(); db != nil {

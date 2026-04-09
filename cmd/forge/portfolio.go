@@ -25,7 +25,67 @@ var portfolioStageOrder = []string{
 	"measure",
 	"monetize",
 	"scale",
+	"harvest",
 	"kill",
+}
+
+// stagePrerequisites defines what fields must be satisfied before
+// advancing TO a given stage.
+var stagePrerequisites = map[string]struct {
+	RequiredTrue []string // bool fields that must be true on the product
+	RequiredSet  []string // string fields that must be non-empty on the product
+}{
+	"validate": {RequiredSet: []string{"icp"}},
+	"build":    {RequiredSet: []string{"icp", "primary_metric", "kill_criteria"}},
+	"deploy":   {RequiredTrue: []string{"deploy_ready"}, RequiredSet: []string{"primary_metric", "kill_criteria"}},
+	"measure":  {RequiredTrue: []string{"deploy_ready", "analytics_ready"}},
+	"monetize": {RequiredTrue: []string{"deploy_ready", "analytics_ready", "billing_ready"}},
+	"scale":    {RequiredTrue: []string{"billing_ready"}},
+}
+
+// checkPrerequisites returns a list of violated prerequisites for advancing
+// the given product to the target stage.
+func checkPrerequisites(product *internal.PortfolioProduct, targetStage string) []string {
+	prereqs, ok := stagePrerequisites[targetStage]
+	if !ok {
+		return nil
+	}
+	var violations []string
+	for _, field := range prereqs.RequiredTrue {
+		switch field {
+		case "deploy_ready":
+			if !product.DeployReady {
+				violations = append(violations, "deploy_ready must be true")
+			}
+		case "analytics_ready":
+			if !product.AnalyticsReady {
+				violations = append(violations, "analytics_ready must be true")
+			}
+		case "billing_ready":
+			if !product.BillingReady {
+				violations = append(violations, "billing_ready must be true")
+			}
+		}
+	}
+	for _, field := range prereqs.RequiredSet {
+		var val string
+		switch field {
+		case "icp":
+			val = product.ICP
+		case "primary_metric":
+			val = product.PrimaryMetric
+		case "kill_criteria":
+			val = product.KillCriteria
+		case "primary_risk":
+			val = product.PrimaryRisk
+		case "validation_hypothesis":
+			val = product.ValidationHypothesis
+		}
+		if val == "" {
+			violations = append(violations, fmt.Sprintf("%s must be set in portfolio-state.yaml", field))
+		}
+	}
+	return violations
 }
 
 var portfolioCmd = &cobra.Command{
@@ -158,6 +218,21 @@ var portfolioAdvanceCmd = &cobra.Command{
 			nextStage = portfolioStageOrder[idx+1]
 		}
 
+		// Check prerequisites for the target stage.
+		forceFlag, _ := cmd.Flags().GetBool("force")
+		violations := checkPrerequisites(product, nextStage)
+		if len(violations) > 0 {
+			if forceFlag {
+				fmt.Fprintf(os.Stderr, "Warning: overriding %d prerequisite(s) with --force:\n", len(violations))
+				for _, v := range violations {
+					fmt.Fprintf(os.Stderr, "  - %s\n", v)
+				}
+			} else {
+				return fmt.Errorf("cannot advance %s to %s: %d prerequisite(s) not met:\n  - %s\n\nUse --force to override.",
+					key, nextStage, len(violations), strings.Join(violations, "\n  - "))
+			}
+		}
+
 		tier := stageTier(nextStage)
 
 		if dryRun {
@@ -213,10 +288,7 @@ var portfolioAdvanceCmd = &cobra.Command{
 // queryRoutingForStage calls POST /api/routing/resolve with the given portfolio
 // stage and returns a human-readable recommendation string, or "" on any error.
 func queryRoutingForStage(stage string) string {
-	apiURL := os.Getenv("FORGE_API_URL")
-	if apiURL == "" {
-		apiURL = "http://localhost:8081"
-	}
+	apiURL := internal.ResolveControlPlaneURL()
 	apiKey := os.Getenv("FORGE_API_KEY")
 
 	body, _ := json.Marshal(map[string]string{"portfolio_stage": stage})
@@ -263,6 +335,7 @@ func init() {
 
 	portfolioAdvanceCmd.Flags().String("to", "", "Jump directly to a specific stage")
 	portfolioAdvanceCmd.Flags().Bool("dry-run", false, "Print what would change without writing")
+	portfolioAdvanceCmd.Flags().Bool("force", false, "Override prerequisite checks (use with caution)")
 
 	portfolioCmd.AddCommand(portfolioStatusCmd)
 	portfolioCmd.AddCommand(portfolioListCmd)
@@ -419,7 +492,9 @@ func portfolioPriorityScore(product internal.PortfolioProduct) int {
 	score := 0
 	switch strings.ToLower(product.Stage) {
 	case "measure":
-		score += 70
+		// Live products with real feedback loops should outrank pre-launch deploy
+		// work, even when some billing or analytics steps still remain.
+		score += 90
 	case "deploy":
 		score += 60
 	case "monetize":
@@ -441,6 +516,11 @@ func portfolioPriorityScore(product internal.PortfolioProduct) int {
 	}
 	if !product.BillingReady && product.Stage != "idea" && product.Stage != "validate" {
 		score += 10
+	}
+	if product.TargetMRR >= 10000 {
+		score += 10
+	} else if product.TargetMRR >= 5000 {
+		score += 5
 	}
 	if product.CurrentMRR > 0 && product.CurrentMRR < product.TargetMRR {
 		score += 20

@@ -1,0 +1,65 @@
+name: CalmConnect Elixir CI
+
+on:
+  push:
+    paths:
+      - 'services/calm_connect_elixir/**'
+  pull_request:
+    paths:
+      - 'services/calm_connect_elixir/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: calm_connect_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/calm_connect_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16'
+          otp-version: '26'
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            services/calm_connect_elixir/deps
+            services/calm_connect_elixir/_build
+          key: elixir-${{ runner.os }}-${{ hashFiles('services/calm_connect_elixir/mix.lock') }}
+
+      - name: Install deps
+        working-directory: services/calm_connect_elixir
+        run: mix deps.get
+
+      - name: Compile
+        working-directory: services/calm_connect_elixir
+        run: mix compile --warnings-as-errors
+
+      - name: Setup DB
+        working-directory: services/calm_connect_elixir
+        run: mix ecto.create && mix ecto.migrate
+
+      - name: Run tests
+        working-directory: services/calm_connect_elixir
+        run: mix test

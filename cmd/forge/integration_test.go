@@ -33,6 +33,12 @@ func NewTestRunner(t *testing.T) *TestRunner {
 		_ = os.Chdir(forgeRoot)
 	}
 
+	// Disable HTTP retries so CLI commands that call the API fail fast on
+	// connection errors (1 attempt instead of 4, no backoff delays).
+	// This prevents tests from hanging when the remote daemon (prya) is
+	// unreachable or not listening on the expected port.
+	t.Setenv("FORGE_NO_RETRY", "1")
+
 	// Clean up mutable local state so tests don't pollute each other.
 	// The approval state file is written by "approval decide" commands and
 	// must be removed after each test to ensure subsequent tests start
@@ -52,7 +58,6 @@ func NewTestRunner(t *testing.T) *TestRunner {
 	// Add commands - these are package-level vars that persist state
 	// For integration tests, we test execution paths rather than output content
 	root.AddCommand(domainCmd)
-	root.AddCommand(projectCmd)
 	root.AddCommand(portfolioCmd)
 	root.AddCommand(approvalCmd)
 	root.AddCommand(configCmd)
@@ -62,7 +67,6 @@ func NewTestRunner(t *testing.T) *TestRunner {
 	root.AddCommand(NewWorkCmd())
 	root.AddCommand(laneCmd)
 	root.AddCommand(contextCmd)
-	root.AddCommand(queueCmd)
 	root.AddCommand(taskCmd)
 	root.AddCommand(agentCmd)
 	root.AddCommand(patrolCmd)
@@ -70,6 +74,8 @@ func NewTestRunner(t *testing.T) *TestRunner {
 	root.AddCommand(versionCmd)
 	root.AddCommand(statusCmd)
 	root.AddCommand(blueprintCmd)
+	root.AddCommand(queueCmd)
+	root.AddCommand(recoverCmd)
 
 	return &TestRunner{t: t, rootCmd: root}
 }
@@ -172,7 +178,7 @@ func setenv(key, value string) func() {
 
 func TestCommandRegistration(t *testing.T) {
 	runner := NewTestRunner(t)
-	expected := []string{"domain", "approval", "project", "portfolio", "config", "pattern", "dispatch", "ship", "work"}
+	expected := []string{"domain", "approval", "portfolio", "config", "pattern", "dispatch", "ship", "work"}
 	for _, cmd := range expected {
 		found := false
 		for _, c := range runner.rootCmd.Commands() {
@@ -289,12 +295,12 @@ func TestApprovalCommands(t *testing.T) {
 		},
 		{
 			name:    "approve approval",
-			args:    []string{"approval", "decide", "TEST-APPROVAL-001", "--approve"},
+			args:    []string{"approval", "decide", "01APP456XYZ", "--approve"},
 			wantErr: false,
 		},
 		{
 			name:    "reject approval with reason",
-			args:    []string{"approval", "decide", "TEST-APPROVAL-002", "--reject", "--reason", "Tests failing"},
+			args:    []string{"approval", "decide", "01APP789ABC", "--reject", "--reason", "Tests failing"},
 			wantErr: false,
 		},
 	}
@@ -302,6 +308,7 @@ func TestApprovalCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := NewTestRunner(t)
+			writeTestApprovals(t, testApprovals)
 			_, err := runner.Execute(tt.args...)
 			if tt.wantErr && err == nil {
 				t.Error("expected error but got none")
@@ -314,7 +321,12 @@ func TestApprovalCommands(t *testing.T) {
 }
 
 func TestApprovalJSONOutput(t *testing.T) {
+	// Use an unreachable API URL so the command falls back to local file data.
+	restore := setenv("FORGE_API_URL", "http://127.0.0.1:1")
+	defer restore()
+
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
 	var approvals []internal.Approval
 	err := runner.ExecuteJSON(&approvals, "approval", "list")
@@ -323,120 +335,6 @@ func TestApprovalJSONOutput(t *testing.T) {
 	}
 	if len(approvals) == 0 {
 		t.Error("expected at least one approval")
-	}
-}
-
-// ==================== Project Tests ====================
-
-func TestProjectCommands(t *testing.T) {
-	// Set up mock server for project API
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == "/api/projects" && r.Method == http.MethodGet:
-			result := internal.ProjectListResponse{
-				Count: 2,
-				Projects: []internal.Project{
-					{Key: "test-project", Name: "Test Project", Domain: "test-domain"},
-					{Key: "demo-project", Name: "Demo Project", Domain: "demo-domain"},
-				},
-			}
-			json.NewEncoder(w).Encode(result)
-		case strings.HasPrefix(r.URL.Path, "/api/projects/") && r.Method == http.MethodGet:
-			key := strings.TrimPrefix(r.URL.Path, "/api/projects/")
-			project := internal.Project{Key: key, Name: "Test Project", Domain: "test-domain"}
-			json.NewEncoder(w).Encode(project)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		}
-	}))
-	defer server.Close()
-
-	restore := setenv("FORGE_API_URL", server.URL)
-	defer restore()
-
-	runner := NewTestRunner(t)
-
-	tests := []struct {
-		name     string
-		args     []string
-		wantErr  bool
-		contains string
-	}{
-		{
-			name:     "list projects",
-			args:     []string{"project", "list"},
-			wantErr:  false,
-			contains: "Test Project",
-		},
-		{
-			name:     "list projects by domain",
-			args:     []string{"project", "list", "--domain", "test-domain"},
-			wantErr:  false,
-			contains: "test-domain",
-		},
-		{
-			name:     "show project",
-			args:     []string{"project", "show", "test-project"},
-			wantErr:  false,
-			contains: "test-project",
-		},
-		{
-			name:     "create project missing name",
-			args:     []string{"project", "create", "--domain", "test-domain"},
-			wantErr:  true,
-			contains: "name",
-		},
-		{
-			name:     "create project missing domain",
-			args:     []string{"project", "create", "--name", "Test Project"},
-			wantErr:  true,
-			contains: "domain",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output, err := runner.Execute(tt.args...)
-			if tt.wantErr && err == nil {
-				t.Errorf("expected error but got none, output: %s", output)
-			}
-			if !tt.wantErr && err != nil {
-				t.Errorf("unexpected error: %v, output: %s", err, output)
-			}
-			if tt.contains != "" && !strings.Contains(output, tt.contains) {
-				t.Errorf("expected output to contain %q, got: %s", tt.contains, output)
-			}
-		})
-	}
-}
-
-func TestProjectJSONOutput(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		result := internal.ProjectListResponse{
-			Count: 2,
-			Projects: []internal.Project{
-				{Key: "test-project", Name: "Test Project", Domain: "test-domain"},
-			},
-		}
-		json.NewEncoder(w).Encode(result)
-	}))
-	defer server.Close()
-
-	restore := setenv("FORGE_API_URL", server.URL)
-	defer restore()
-
-	runner := NewTestRunner(t)
-
-	var projects []internal.Project
-	err := runner.ExecuteJSON(&projects, "project", "list")
-	if err != nil {
-		t.Fatalf("project list --format json failed: %v", err)
-	}
-	if len(projects) == 0 {
-		t.Error("expected at least one project")
 	}
 }
 
@@ -746,8 +644,14 @@ func TestOutputFormats(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if strings.TrimSpace(output) != "" {
-			t.Errorf("quiet format should produce no output, got: %q", output)
+		// quiet format outputs one ID per line (domain keys only)
+		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+			if line == "" {
+				continue
+			}
+			if strings.ContainsAny(line, " \t") {
+				t.Errorf("quiet format should output bare IDs, got line with spaces: %q", line)
+			}
 		}
 	})
 }

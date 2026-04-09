@@ -29,6 +29,8 @@ type XNodeInfo struct {
 	Address       string    `json:"address"`
 	Status        string    `json:"status"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+	Version       string    `json:"version,omitempty"`
+	GitCommit     string    `json:"git_commit,omitempty"`
 }
 
 // nodeListCmd: forge node list
@@ -68,6 +70,13 @@ var nodeListCmd = &cobra.Command{
 			return enc.Encode(nodes)
 		}
 
+		if format == "quiet" {
+			for _, n := range nodes {
+				fmt.Println(n.ID)
+			}
+			return nil
+		}
+
 		if len(nodes) == 0 {
 			fmt.Println("No nodes registered in XNode mesh.")
 			fmt.Println("  Run `forge node register` or check daemon startup scripts.")
@@ -75,7 +84,7 @@ var nodeListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NODE\tHOSTNAME\tADDRESS\tSTATUS\tLAST HEARTBEAT")
+		fmt.Fprintln(w, "NODE\tHOSTNAME\tADDRESS\tSTATUS\tVERSION\tCOMMIT\tLAST HEARTBEAT")
 		now := time.Now()
 		for _, n := range nodes {
 			age := ""
@@ -83,8 +92,15 @@ var nodeListCmd = &cobra.Command{
 				d := now.Sub(n.LastHeartbeat).Truncate(time.Second)
 				age = d.String() + " ago"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				n.ID, n.Hostname, n.Address, statusSymbol(n.Status), age)
+			commit := n.GitCommit
+			if len(commit) > 7 {
+				commit = commit[:7]
+			}
+			// Subtle color hint: color the node ID and hostname columns.
+			nodeID := internal.ColorNode(n.ID, n.ID)
+			hostname := internal.ColorNode(n.Hostname, n.Hostname)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				nodeID, hostname, n.Address, statusSymbol(n.Status), n.Version, commit, age)
 		}
 		return w.Flush()
 	},
@@ -146,8 +162,8 @@ func showMeshStatus(format string) error {
 
 // pingNode tests connectivity to a named node
 func pingNode(nodeID, format string) error {
-	// Node addresses follow Tailscale Magic DNS: http://<node-id>:8081
-	nodeURL := fmt.Sprintf("http://%s:8081", nodeID)
+	// Node addresses follow Tailscale Magic DNS: http://<node-id>:<port>
+	nodeURL := fmt.Sprintf("http://%s:%s", nodeID, internal.ResolveAPIPort())
 
 	fmt.Printf("Pinging %s (%s)... ", nodeID, nodeURL)
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -227,16 +243,17 @@ func defaultAgentsForNode(nodeID string) []string {
 // detectNodeAddr attempts to auto-detect the node's public address.
 // It tries `tailscale ip -4` first, then falls back to hostname resolution.
 func detectNodeAddr() string {
+	apiPort := internal.ResolveAPIPort()
 	tsCmd := exec.Command("tailscale", "ip", "-4")
 	if out, err := tsCmd.Output(); err == nil {
 		ip := strings.TrimSpace(string(out))
 		if ip != "" {
-			return ip + ":8081"
+			return ip + ":" + apiPort
 		}
 	}
 	// Fallback: use os.Hostname as the address (Tailscale Magic DNS)
 	h, _ := os.Hostname()
-	return h + ":8081"
+	return h + ":" + apiPort
 }
 
 // nodeJoinCmd: forge node join
@@ -276,15 +293,12 @@ Examples:
 		} else {
 			// Ensure port suffix
 			if !strings.Contains(nodeAddr, ":") {
-				nodeAddr = nodeAddr + ":8081"
+				nodeAddr = nodeAddr + ":" + internal.ResolveAPIPort()
 			}
 		}
 
 		if hub == "" {
-			hub = os.Getenv("FORGE_API_URL")
-			if hub == "" {
-				hub = "http://localhost:8081"
-			}
+			hub = internal.ResolveControlPlaneURL()
 		}
 
 		// Determine agent list
@@ -515,16 +529,74 @@ Examples:
 	},
 }
 
+// nodeUnregisterCmd: forge node unregister <node-id>
+var nodeUnregisterCmd = &cobra.Command{
+	Use:   "unregister <node-id>",
+	Short: "Remove a node from the XNode mesh",
+	Long: `Unregister a node from the FORGE XNode mesh by sending DELETE /api/xnode/nodes/{name}
+to the daemon. If the node is not found, the command exits successfully (idempotent).
+
+Examples:
+  forge node unregister sati
+  forge node unregister vega --hub http://prya:8081`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		nodeID := args[0]
+		hub, _ := cmd.Flags().GetString("hub")
+		format, _ := cmd.Flags().GetString("format")
+
+		var client *internal.Client
+		if hub != "" {
+			client = internal.NewClientWithURL(internal.NormalizeAPIBaseURL(hub))
+		} else {
+			client = internal.NewClient()
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		resp, err := client.Delete(ctx, "/xnode/nodes/"+nodeID)
+		if err != nil {
+			return fmt.Errorf("node unregister: %w\n  Recovery: check daemon with: forge daemon status", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			if format == "json" {
+				fmt.Printf(`{"node":%q,"status":"not_found","message":"node was not registered"}`+"\n", nodeID)
+			} else {
+				fmt.Printf("Node %q not found (already unregistered or never registered)\n", nodeID)
+			}
+			return nil
+		}
+
+		if err := internal.CheckResponse(resp); err != nil {
+			return fmt.Errorf("node unregister %s: %w\n  Recovery: verify node ID with: forge node list", nodeID, err)
+		}
+
+		if format == "json" {
+			fmt.Printf(`{"node":%q,"status":"unregistered"}`+"\n", nodeID)
+		} else {
+			fmt.Printf("Node %q unregistered from XNode mesh.\n", nodeID)
+			fmt.Printf("  Verify: forge node list\n")
+		}
+		return nil
+	},
+}
+
 func init() {
-	// nodeCmd visible — node management is user-facing
 	nodeCmd.AddCommand(nodeListCmd)
 	nodeCmd.AddCommand(nodeStatusCmd)
 	nodeCmd.AddCommand(nodeJoinCmd)
+	nodeCmd.AddCommand(nodeUnregisterCmd)
+
+	// nodeUnregisterCmd flags
+	nodeUnregisterCmd.Flags().String("hub", "", "Hub URL (default: $FORGE_API_URL)")
 
 	// nodeJoinCmd flags
 	nodeJoinCmd.Flags().String("node-id", "", "Node ID (default: short hostname)")
-	nodeJoinCmd.Flags().String("node-addr", "", "Node address with port (default: tailscale ip -4, fallback to hostname:8081)")
-	nodeJoinCmd.Flags().String("hub", "", "Hub URL (default: $FORGE_API_URL or http://localhost:8081)")
+	nodeJoinCmd.Flags().String("node-addr", "", "Node address with port (default: tailscale ip -4, fallback to hostname:FORGE_API_PORT)")
+	nodeJoinCmd.Flags().String("hub", "", "Hub URL (default: $FORGE_API_URL or http://localhost:$FORGE_API_PORT)")
 	nodeJoinCmd.Flags().String("agents", "", "Space-separated agent names to start as work loops (default: convention table)")
 	nodeJoinCmd.Flags().Bool("check", false, "Status check only — verify hub reachability and show node list, no changes")
 	nodeJoinCmd.Flags().Bool("no-pull", false, "Skip git pull step")

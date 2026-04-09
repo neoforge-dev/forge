@@ -15,8 +15,21 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
+
+// clientVersion holds the CLI version, set once at startup via SetClientVersion.
+var clientVersion string
+
+// versionMismatchOnce ensures the version mismatch warning is printed at most once per session.
+var versionMismatchOnce sync.Once
+
+// SetClientVersion stores the CLI version so it can be sent in X-Forge-Version headers.
+// Call this once during CLI initialization before any requests are made.
+func SetClientVersion(v string) {
+	clientVersion = v
+}
 
 // DaemonUnreachableError indicates the CLI could not reach the API daemon.
 // It embeds a recovery hint directly in the error text for improved UX.
@@ -128,11 +141,16 @@ func NewClient(opts ...ClientOption) *Client {
 		},
 	}
 
+	retryMax := 3
+	if os.Getenv("FORGE_NO_RETRY") == "1" {
+		retryMax = 0
+	}
+
 	c := &Client{
 		httpClient: httpClient,
 		baseURL:    baseURL,
 		token:      os.Getenv("FORGE_API_TOKEN"),
-		retryMax:   3,
+		retryMax:   retryMax,
 		logger:     log.New(os.Stderr, "[FORGE-CLIENT] ", log.LstdFlags),
 		debug:      os.Getenv("FORGE_DEBUG") == "1",
 	}
@@ -219,6 +237,11 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*
 			req.Header.Set("Content-Type", "application/json")
 		}
 
+		// Send CLI version so daemon can log mismatches.
+		if clientVersion != "" {
+			req.Header.Set("X-Forge-Version", clientVersion)
+		}
+
 		// Authentication
 		if c.token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.token)
@@ -252,6 +275,19 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*
 			return nil, &DaemonUnreachableError{URL: c.baseURL, Err: err}
 		}
 		return nil, err
+	}
+
+	// Warn once if the daemon's version differs from the CLI version.
+	// Both sides must be non-"dev" to avoid noise during local development.
+	if resp != nil && clientVersion != "" && clientVersion != "dev" {
+		daemonVersion := resp.Header.Get("X-Forge-Version")
+		if daemonVersion != "" && daemonVersion != "dev" && daemonVersion != clientVersion {
+			versionMismatchOnce.Do(func() {
+				fmt.Fprintf(os.Stderr,
+					"Warning: CLI version %s differs from daemon version %s — run: forge daemon restart\n",
+					clientVersion, daemonVersion)
+			})
+		}
 	}
 
 	return resp, nil
@@ -291,6 +327,19 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}) (*http.
 // Delete performs a DELETE request.
 func (c *Client) Delete(ctx context.Context, path string) (*http.Response, error) {
 	return c.do(ctx, http.MethodDelete, path, nil)
+}
+
+// Patch performs a PATCH request.
+func (c *Client) Patch(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = bytes.NewReader(jsonBody)
+	}
+	return c.do(ctx, http.MethodPatch, path, bodyReader)
 }
 
 // DecodeJSON decodes a JSON response into the given value.
@@ -500,6 +549,27 @@ func (c *Client) ClaimTask(ctx context.Context, taskID string, agentID string) (
 		return result.Task, nil
 	}
 	return &Task{ID: taskID, Status: "claimed"}, nil
+}
+
+// AckTask acknowledges a claimed task, transitioning it from DISPATCHED to RUNNING.
+// This confirms the agent has started executing the task.
+func (c *Client) AckTask(ctx context.Context, taskID string, agentID string) (*Task, error) {
+	req := &AckTaskRequest{AgentID: agentID}
+	resp, err := c.Post(ctx, fmt.Sprintf("/tasks/%s/ack", taskID), req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := CheckResponse(resp); err != nil {
+		return nil, err
+	}
+
+	var task Task
+	if err := DecodeJSON(resp, &task); err != nil {
+		return nil, fmt.Errorf("failed to decode ack response: %w", err)
+	}
+
+	return &task, nil
 }
 
 // CompleteTask marks a task as complete.
@@ -825,10 +895,19 @@ func (c *Client) GetAgent(ctx context.Context, agentID string) (*AgentHealth, er
 // window usage percentage. contextPct is in the 0-100 range (the value shown
 // by the Claude status line); the API expects 0.0-1.0 so we divide by 100.
 func (c *Client) SendHeartbeat(ctx context.Context, agentID string, contextPct float64) error {
+	return c.SendHeartbeatWithState(ctx, agentID, contextPct, "")
+}
+
+// SendHeartbeatWithState sends a heartbeat with an optional work_state.
+// workState must be "idle", "working", or "blocked" (empty string is omitted).
+func (c *Client) SendHeartbeatWithState(ctx context.Context, agentID string, contextPct float64, workState string) error {
 	hostname, _ := os.Hostname()
 	payload := map[string]interface{}{
 		"context_pct": contextPct / 100.0,
 		"node":        hostname,
+	}
+	if workState != "" {
+		payload["work_state"] = workState
 	}
 	resp, err := c.Post(ctx, fmt.Sprintf("/agents/%s/heartbeat", agentID), payload)
 	if err != nil {

@@ -34,9 +34,12 @@ func NewTaskStore(db *sql.DB) *TaskStore {
 // GetTasksByState returns all tasks in a given state
 func (s *TaskStore) GetTasksByState(state TaskState) ([]Task, error) {
 	rows, err := s.db.Query(`
-		SELECT id, domain, project, type, priority, status, state, lane, assigned_to, 
-		       plan_version, plan_id, envelope_id, created_at, updated_at 
-		FROM tasks 
+		SELECT id, domain, project, type, priority, status, state, lane, assigned_to,
+		       plan_version, plan_id, envelope_id,
+		       origin, requester, source_channel,
+		       failure_context,
+		       created_at, updated_at
+		FROM tasks
 		WHERE state = ?`, state)
 	if err != nil {
 		return nil, fmt.Errorf("query tasks by state: %w", err)
@@ -48,10 +51,15 @@ func (s *TaskStore) GetTasksByState(state TaskState) ([]Task, error) {
 		var t Task
 		var createdAt, updatedAt string
 		var lane, assignedTo, planID, envelopeID sql.NullString
+		var origin, requester, sourceChannel sql.NullString
 		var planVersion sql.NullInt64
+		var failureContext sql.NullString
 		err := rows.Scan(
 			&t.ID, &t.Domain, &t.Project, &t.Type, &t.Priority, &t.Status, &t.State, &lane, &assignedTo,
-			&planVersion, &planID, &envelopeID, &createdAt, &updatedAt,
+			&planVersion, &planID, &envelopeID,
+			&origin, &requester, &sourceChannel,
+			&failureContext,
+			&createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
@@ -61,6 +69,10 @@ func (s *TaskStore) GetTasksByState(state TaskState) ([]Task, error) {
 		t.AssignedTo = assignedTo.String
 		t.PlanID = planID.String
 		t.EnvelopeID = envelopeID.String
+		t.Origin = origin.String
+		t.Requester = requester.String
+		t.SourceChannel = sourceChannel.String
+		t.FailureContext = failureContext.String
 		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 		tasks = append(tasks, t)
@@ -122,8 +134,10 @@ func (s *TaskStore) ClaimTask(taskID, agentID string) error {
 	now := time.Now().Format(time.RFC3339)
 
 	res, err := tx.Exec(
-		`UPDATE tasks SET state = ?, assigned_to = ?, started_at = ?, updated_at = ? WHERE id = ? AND state = ?`,
-		StateDispatched, agentID, now, now, taskID, StateQueued)
+		`UPDATE tasks SET state = ?, assigned_to = ?, started_at = ?, updated_at = ?,
+		 dispatch_attempts = dispatch_attempts + 1, last_dispatch_at = ?
+		 WHERE id = ? AND state = ?`,
+		StateDispatched, agentID, now, now, now, taskID, StateQueued)
 	if err != nil {
 		return fmt.Errorf("update task: %w", err)
 	}

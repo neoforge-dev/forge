@@ -21,11 +21,19 @@ type AgentHeartbeat struct {
 	AgentID      string    `json:"agent_id"`
 	Node         string    `json:"node"`
 	Status       string    `json:"status"`
+	WorkState    string    `json:"work_state,omitempty"` // "idle" | "working" | "blocked"
 	CurrentTask  *string   `json:"current_task_id,omitempty"`
 	ContextPct   float64   `json:"context_pct"`
 	Capabilities []string  `json:"capabilities,omitempty"`
 	LastSeen     time.Time `json:"last_seen"`
 	ConnectedAt  time.Time `json:"connected_at"`
+}
+
+// ValidWorkStates lists the allowed values for AgentHeartbeat.WorkState.
+var ValidWorkStates = map[string]bool{
+	"idle":    true,
+	"working": true,
+	"blocked": true,
 }
 
 func agentContextHandler(w http.ResponseWriter, r *http.Request) {
@@ -99,13 +107,14 @@ func agentHeartbeatReceive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var hbRequest struct {
-		AgentID    string  `json:"agent_id"`
-		Node       string  `json:"node"`
-		Status     string  `json:"status"`
-		TaskID     string  `json:"task_id,omitempty"`
-		Progress   int     `json:"progress"`
-		Context    float64 `json:"context"`
-		ContextPct float64 `json:"context_pct"`
+		AgentID    string   `json:"agent_id"`
+		Node       string   `json:"node"`
+		Status     string   `json:"status"`
+		WorkState  string   `json:"work_state,omitempty"`
+		TaskID     string   `json:"task_id,omitempty"`
+		Progress   int      `json:"progress"`
+		Context    *float64 `json:"context"`
+		ContextPct *float64 `json:"context_pct"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&hbRequest); err != nil {
@@ -117,10 +126,17 @@ func agentHeartbeatReceive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Accept context_pct as alias for context
-	if hbRequest.Context == 0 && hbRequest.ContextPct > 0 {
-		hbRequest.Context = hbRequest.ContextPct
+	// Resolve the effective context value from either field.
+	// Only update context_pct when the incoming payload explicitly provides a
+	// non-zero value; if both fields are absent or zero the existing DB value
+	// is preserved (cron heartbeats often omit this field).
+	var effectiveContext float64
+	if hbRequest.Context != nil && *hbRequest.Context > 0 {
+		effectiveContext = *hbRequest.Context
+	} else if hbRequest.ContextPct != nil && *hbRequest.ContextPct > 0 {
+		effectiveContext = *hbRequest.ContextPct
 	}
+	// effectiveContext == 0 means "not provided" — DB update logic below handles this.
 
 	// Resolve node: request body > NODE_ID env > os.Hostname()
 	node := hbRequest.Node
@@ -135,11 +151,18 @@ func agentHeartbeatReceive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate and resolve work_state. Default to "idle" if absent or invalid.
+	workState := hbRequest.WorkState
+	if !ValidWorkStates[workState] {
+		workState = "idle"
+	}
+
 	hb := AgentHeartbeat{
 		AgentID:     agentID,
 		Status:      hbRequest.Status,
+		WorkState:   workState,
 		Node:        node,
-		ContextPct:  hbRequest.Context,
+		ContextPct:  effectiveContext,
 		LastSeen:    time.Now(),
 		ConnectedAt: time.Now(),
 	}
@@ -157,12 +180,12 @@ func agentHeartbeatReceive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("💓 Heartbeat from %s: status=%s, task=%s, progress=%d%%, context=%.1f%%",
-		agentID, hb.Status, hbRequest.TaskID, hbRequest.Progress, hbRequest.Context)
+		agentID, hb.Status, hbRequest.TaskID, hbRequest.Progress, effectiveContext)
 
-	if hbRequest.Context > 70 {
-		log.Printf("⚠️ Agent %s context critical: %.1f%%", agentID, hbRequest.Context)
-	} else if hbRequest.Context > 50 {
-		log.Printf("⚡ Agent %s context warning: %.1f%%", agentID, hbRequest.Context)
+	if effectiveContext > 70 {
+		log.Printf("⚠️ Agent %s context critical: %.1f%%", agentID, effectiveContext)
+	} else if effectiveContext > 50 {
+		log.Printf("⚡ Agent %s context warning: %.1f%%", agentID, effectiveContext)
 	}
 
 	if stateMachine != nil && hbRequest.TaskID != "" {
@@ -181,9 +204,16 @@ func agentHeartbeatReceive(w http.ResponseWriter, r *http.Request) {
 		taskID = hbRequest.TaskID
 	}
 
-	err := UpdateAgentHeartbeat(agentID, hb.Node, hb.Status, taskID, hbRequest.Context)
+	// Only pass effectiveContext when it was explicitly provided (non-zero).
+	// When absent the existing context_pct in the DB is preserved via the
+	// conditional UPDATE (COALESCE path in UpdateAgentHeartbeatConditional).
+	var ctxPctPtr *float64
+	if effectiveContext > 0 {
+		ctxPctPtr = &effectiveContext
+	}
+	err := UpdateAgentHeartbeatConditional(agentID, hb.Node, hb.Status, taskID, workState, ctxPctPtr)
 	if err != nil {
-		log.Printf("WARN: failed to update agent_heartbeats for %s: %v", agentID, err)
+		log.Printf("WARN: failed to update agent_heartbeats for %s: %v — check DB connectivity and schema migrations", agentID, err)
 	}
 
 	// Default status to 'idle' if empty (DB CHECK constraint requires 'idle', 'busy', or 'wrapup')
@@ -199,7 +229,7 @@ func agentHeartbeatReceive(w http.ResponseWriter, r *http.Request) {
 		_, err = db.ExecContext(ctx,
 			`INSERT INTO agent_telemetry (agent_id, node, context_pct, task_id, status, tool, metadata, timestamp)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-			agentID, hb.Node, hbRequest.Context, taskID, status, "http", string(metadataJSON),
+			agentID, hb.Node, effectiveContext, taskID, status, "http", string(metadataJSON),
 		)
 		if err != nil {
 			log.Printf("telemetry insert warning: %v", err)
@@ -450,7 +480,14 @@ func agentsSSEHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ticker := time.NewTicker(5 * time.Second)
+	// Override ticker interval via env var for tests (FORGE_AGENTS_SSE_TICK_MS)
+	agentsTickInterval := 5 * time.Second
+	if v := os.Getenv("FORGE_AGENTS_SSE_TICK_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			agentsTickInterval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(agentsTickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -510,12 +547,13 @@ func agentByIDHandler(w http.ResponseWriter, r *http.Request) {
 	var a AgentHeartbeat
 	var currentTask sql.NullString
 	var capabilities sql.NullString
+	var workState sql.NullString
 	var lastSeen, connectedAt string
 
 	err := getDBConn().QueryRow(`
-		SELECT agent_id, node, status, current_task_id, context_pct, capabilities, last_seen, connected_at
+		SELECT agent_id, node, status, work_state, current_task_id, context_pct, capabilities, last_seen, connected_at
 		FROM agent_heartbeats
-		WHERE agent_id = ?`, id).Scan(&a.AgentID, &a.Node, &a.Status, &currentTask, &a.ContextPct, &capabilities, &lastSeen, &connectedAt)
+		WHERE agent_id = ?`, id).Scan(&a.AgentID, &a.Node, &a.Status, &workState, &currentTask, &a.ContextPct, &capabilities, &lastSeen, &connectedAt)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "agent not found", http.StatusNotFound)
@@ -530,6 +568,11 @@ func agentByIDHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if capabilities.Valid {
 		a.Capabilities = strings.Split(capabilities.String, ",")
+	}
+	if workState.Valid && workState.String != "" {
+		a.WorkState = workState.String
+	} else {
+		a.WorkState = "idle"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -593,7 +636,7 @@ func getAllAgentsHealth() ([]AgentHeartbeat, error) {
 		return nil, fmt.Errorf("database connection not initialized")
 	}
 	rows, err := db.Query(`
-		SELECT agent_id, node, status, current_task_id, context_pct, capabilities, last_seen, connected_at
+		SELECT agent_id, node, status, work_state, current_task_id, context_pct, capabilities, last_seen, connected_at
 		FROM agent_heartbeats
 		ORDER BY last_seen DESC
 	`)
@@ -615,9 +658,10 @@ func getAllAgentsHealth() ([]AgentHeartbeat, error) {
 		var a AgentHeartbeat
 		var currentTask sql.NullString
 		var capabilities sql.NullString
+		var workState sql.NullString
 		var lastSeen, connectedAt string
 
-		err := rows.Scan(&a.AgentID, &a.Node, &a.Status, &currentTask, &a.ContextPct, &capabilities, &lastSeen, &connectedAt)
+		err := rows.Scan(&a.AgentID, &a.Node, &a.Status, &workState, &currentTask, &a.ContextPct, &capabilities, &lastSeen, &connectedAt)
 		if err != nil {
 			continue
 		}
@@ -627,6 +671,11 @@ func getAllAgentsHealth() ([]AgentHeartbeat, error) {
 		}
 		if capabilities.Valid {
 			a.Capabilities = strings.Split(capabilities.String, ",")
+		}
+		if workState.Valid && workState.String != "" {
+			a.WorkState = workState.String
+		} else {
+			a.WorkState = "idle"
 		}
 		a.LastSeen, _ = time.Parse("2006-01-02 15:04:05", lastSeen)
 		a.ConnectedAt, _ = time.Parse("2006-01-02 15:04:05", connectedAt)
@@ -673,13 +722,14 @@ func getAgentHealth(agentID string) (*AgentHeartbeat, error) {
 	var a AgentHeartbeat
 	var currentTask sql.NullString
 	var capabilities sql.NullString
+	var workState sql.NullString
 	var lastSeen, connectedAt string
 
 	err := db.QueryRow(`
-		SELECT agent_id, node, status, current_task_id, context_pct, capabilities, last_seen, connected_at
+		SELECT agent_id, node, status, work_state, current_task_id, context_pct, capabilities, last_seen, connected_at
 		FROM agent_heartbeats
 		WHERE agent_id = ?
-	`, agentID).Scan(&a.AgentID, &a.Node, &a.Status, &currentTask, &a.ContextPct, &capabilities, &lastSeen, &connectedAt)
+	`, agentID).Scan(&a.AgentID, &a.Node, &a.Status, &workState, &currentTask, &a.ContextPct, &capabilities, &lastSeen, &connectedAt)
 
 	if err != nil {
 		return nil, err
@@ -690,6 +740,11 @@ func getAgentHealth(agentID string) (*AgentHeartbeat, error) {
 	}
 	if capabilities.Valid {
 		a.Capabilities = strings.Split(capabilities.String, ",")
+	}
+	if workState.Valid && workState.String != "" {
+		a.WorkState = workState.String
+	} else {
+		a.WorkState = "idle"
 	}
 	a.LastSeen, _ = time.Parse("2006-01-02 15:04:05", lastSeen)
 	a.ConnectedAt, _ = time.Parse("2006-01-02 15:04:05", connectedAt)
@@ -764,6 +819,7 @@ type agentFleetSummaryResponse struct {
 
 // agentFleetSummaryHandler_V2 serves a simplified GET /api/fleet/summary shape.
 // The canonical PWA handler is fleetSummaryHandler in handlers_pwa_bridge.go.
+// Uses getFleetCounts for consistency with all other status endpoints.
 func agentFleetSummaryHandler_V2(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -777,28 +833,22 @@ func agentFleetSummaryHandler_V2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02 15:04:05")
+	fc := getFleetCounts(ctx, db)
 
-	var summary agentFleetSummaryResponse
-	db.QueryRowContext(ctx, `
-		SELECT
-			COUNT(*),
-			COALESCE(SUM(CASE WHEN last_seen > ? THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN last_seen > ? AND (current_task_id IS NULL OR current_task_id = '') THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN last_seen <= ? THEN 1 ELSE 0 END), 0),
-			COUNT(DISTINCT node)
-		FROM agent_heartbeats
-	`, cutoff, cutoff, cutoff).Scan(
-		&summary.TotalAgents, &summary.ActiveAgents, &summary.IdleAgents,
-		&summary.OfflineAgents, &summary.NodeCount,
-	)
-	db.QueryRowContext(ctx, `
-		SELECT
-			COALESCE(SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'assigned' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'completed' AND updated_at >= date('now') THEN 1 ELSE 0 END), 0)
-		FROM tasks
-	`).Scan(&summary.TasksQueued, &summary.TasksAssigned, &summary.TasksCompletedToday)
+	// Node count is supplemental — not a canonical fleet count.
+	var nodeCount int
+	db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT node) FROM agent_heartbeats`).Scan(&nodeCount)
+
+	summary := agentFleetSummaryResponse{
+		TotalAgents:         fc.TotalAgents,
+		ActiveAgents:        fc.OnlineAgents,
+		IdleAgents:          fc.TotalAgents - fc.OnlineAgents,
+		OfflineAgents:       fc.TotalAgents - fc.OnlineAgents,
+		TasksQueued:         fc.QueuedTasks,
+		TasksAssigned:       fc.RunningTasks,
+		TasksCompletedToday: fc.CompletedTasks24h,
+		NodeCount:           nodeCount,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(summary)

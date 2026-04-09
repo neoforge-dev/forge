@@ -179,7 +179,8 @@ func TestPortfolioStageAdvance_NextStage(t *testing.T) {
 		{"deploy", "measure"},
 		{"measure", "monetize"},
 		{"monetize", "scale"},
-		{"scale", "kill"},
+		{"scale", "harvest"},
+		{"harvest", "kill"},
 	}
 	for _, tc := range cases {
 		idx := portfolioStageIndex(tc.from)
@@ -257,7 +258,7 @@ func TestPortfolioAdvance_DryRun(t *testing.T) {
 	}
 
 	runner := NewTestRunner(t)
-	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--dry-run")
+	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--dry-run", "--force")
 	if err != nil {
 		t.Fatalf("portfolio advance --dry-run: %v\n%s", err, output)
 	}
@@ -289,7 +290,7 @@ func TestPortfolioAdvance_WriteToFile(t *testing.T) {
 	t.Setenv("FORGE_PORTFOLIO_FILE", tempFile)
 
 	runner := NewTestRunner(t)
-	output, err := runner.Execute("portfolio", "advance", "voice-coach")
+	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--force")
 	if err != nil {
 		t.Fatalf("portfolio advance: %v\n%s", err, output)
 	}
@@ -319,7 +320,7 @@ func TestPortfolioAdvance_JumpToStage(t *testing.T) {
 	t.Setenv("FORGE_PORTFOLIO_FILE", tempFile)
 
 	runner := NewTestRunner(t)
-	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--to", "monetize")
+	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--to", "monetize", "--force")
 	if err != nil {
 		t.Fatalf("portfolio advance --to: %v\n%s", err, output)
 	}

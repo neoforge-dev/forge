@@ -31,7 +31,9 @@ func setupXNodeTestDB(t *testing.T) *sql.DB {
 			hostname TEXT NOT NULL,
 			address TEXT NOT NULL,
 			status TEXT NOT NULL,
-			last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			version TEXT NOT NULL DEFAULT '',
+			git_commit TEXT NOT NULL DEFAULT ''
 		);
 		CREATE TABLE xnode_tasks (
 			id TEXT PRIMARY KEY,
@@ -413,6 +415,7 @@ func TestXNodeStartInboxWorker(t *testing.T) {
 
 // TestXNodeProcessInbox_WithMessages verifies processInbox reads JSONL and writes ack files.
 func TestXNodeProcessInbox_WithMessages(t *testing.T) {
+	t.Setenv("FORGE_TAILSCALE_IP", "") // skip exec call — heartbeat_update for new node triggers detectTailscaleIP
 	xc, cleanup := setupXNodeHTTP(t)
 	defer cleanup()
 

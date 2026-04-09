@@ -1,0 +1,137 @@
+# DESIGN TEMPLATE — not yet wired to daemon code (S120 Phase 2.3)
+# Trinity dispatcher was removed in CLI v4. This file documents agent capabilities
+# for human reference. Use `forge agent list` for live agent state.
+# Agent Registry — capabilities, costs, routing signals
+# Last updated: 2026-03-16 S114
+
+agents:
+  minimax:
+    home_node: sati
+    provider: minimax
+    model: MiniMax-M2.5
+    cost_class: free          # no token limits observed
+    ram_gb: 0.8
+    weight: light
+    best_at: [feature, multi-file, implementation, docs, runbooks]
+    avoid_for: [go-test]
+    status: OK
+    stage_preference: idea    # docs/planning work
+
+  glm:
+    home_node: sati
+    provider: zhipu
+    model: GLM-5
+    cost_class: free
+    ram_gb: 0.8
+    weight: light
+    best_at: [feature, refactor, multi-file, implementation]
+    avoid_for: [go-test, ios-builds]
+    status: OK
+
+  kimi:
+    home_node: sati
+    provider: moonshot
+    model: Kimi-K2.5
+    cost_class: limited       # watch usage — gets stuck in "thinking" mode
+    ram_gb: 0.1
+    weight: light
+    best_at: [coverage, test, triage, rapid-fix]
+    avoid_for: [large-refactors]
+    quirks: "May get stuck in thinking loop — send /clear if context > 15%"
+    status: OK
+    stage_preference: build   # preferred for build-stage work
+
+  kimi-2:
+    home_node: sati
+    provider: moonshot
+    model: Kimi-K2.5
+    cost_class: limited
+    ram_gb: 0.1
+    weight: light
+    best_at: [coverage, test, triage, rapid-fix, parallel-work-with-kimi]
+    status: OK
+
+  gemini:
+    home_node: sati
+    provider: google
+    model: Gemini-3.1-Pro
+    cost_class: limited       # daily quota — check before heavy dispatch
+    ram_gb: 0.3
+    weight: light
+    best_at: [research, audits, code-review, structured-analysis, plan, architecture]
+    avoid_for: []
+    status: OK
+
+  pi:
+    home_node: sati
+    provider: google
+    model: Gemini-3-Flash
+    cost_class: free
+    ram_gb: 0.1
+    weight: light
+    best_at: [triage, rapid-fix, coverage, quick-edits, analysis, recommendations]
+    avoid_for: [large-refactors]
+    status: OK
+
+  opencode:
+    home_node: sati
+    provider: moonshot
+    model: Kimi-K2.5
+    cost_class: limited
+    ram_gb: 0.8
+    weight: light
+    best_at: [feature, multi-file, refactor, implementation]
+    avoid_for: []
+    status: OK
+    stage_preference: build
+
+  kilo:
+    home_node: sati
+    provider: minimax
+    model: MiniMax-M2.5
+    cost_class: free
+    ram_gb: 0.8
+    weight: light
+    best_at: [feature, multi-file, implementation, docs]
+    avoid_for: []
+    status: OK
+
+  claude:
+    home_node: sati
+    provider: anthropic
+    model: claude-sonnet-4-6
+    cost_class: expensive
+    ram_gb: 1.0
+    weight: light
+    best_at: [feature, refactor, multi-file, complex-reasoning, hard-bugs]
+    avoid_for: []
+    status: OK
+    stage_preference: deploy
+
+  cursor:
+    home_node: sati
+    provider: anthropic
+    model: claude-sonnet-4-6
+    cost_class: expensive
+    ram_gb: 0.5
+    weight: light
+    best_at: [interactive-edit, targeted-fix, human-steered]
+    avoid_for: [autonomous-tasks]
+    status: OK
+
+  cursor-2:
+    home_node: sati
+    provider: anthropic
+    model: claude-sonnet-4-6
+    cost_class: expensive
+    ram_gb: 0.5
+    weight: light
+    best_at: [interactive-edit, targeted-fix, human-steered]
+    avoid_for: [autonomous-tasks]
+    status: OK
+
+# Status codes Trinity should honor:
+# OK       — dispatch freely
+# CAUTION  — low quota, use only if best fit
+# COOLDOWN — do not dispatch until manually cleared
+# OFFLINE  — agent not running, skip

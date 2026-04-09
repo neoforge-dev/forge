@@ -2,6 +2,63 @@
 
 **Council Decision S118** — canonical test file convention.
 
+## Coverage Floor Policy (Council Decision)
+
+### Minimum Coverage Requirement
+
+- **Floor:** 60% coverage minimum for all new code
+- **Structural Ceiling:** ~83.4% (due to OS-dependent functions in skip-list)
+- **Target:** 70-80% for most modules
+
+### How the Skip-List Works
+
+The skip-list documents functions that are **intentionally untested** because they depend on OS state, live processes, or external systems that cannot be mocked without major refactoring. These functions create a **structural ceiling** on achievable coverage.
+
+**Key principle:** Do NOT waste cycles trying to cover skip-listed functions. Focus testing effort on business logic, handlers, and state machines.
+
+### Checking Coverage
+
+```bash
+# Generate coverage profile
+go test -coverprofile=cover.out ./...
+
+# View coverage by function
+go tool cover -func=cover.out
+
+# View HTML report
+go tool cover -html=cover.out -o cover.html
+```
+
+### CI Integration
+
+**Required:** CI must fail the build if coverage falls below 60%.
+
+```bash
+# Example CI check
+coverage=$(go test -coverprofile=cover.out ./... 2>&1 | grep -oP '\d+(\.\d+)?%' | head -1 | tr -d '%')
+if (( $(echo "$coverage < 60" | bc -l) )); then
+    echo "FAIL: Coverage $coverage% is below 60% floor"
+    exit 1
+fi
+```
+
+### Skip-List (Structural Ceiling — 83.4%)
+
+These functions are **intentionally untested** because they depend on OS state,
+live processes, or external systems that cannot be mocked without major refactoring.
+Do NOT waste cycles trying to cover them.
+
+| Function | File | Reason |
+|----------|------|--------|
+| `spawnAgent()` | `fleet_scaler.go` | Calls `tmux new-window` — spawns real tmux windows |
+| `readLiveRAMMB()` | `fleet_scaler.go` | Reads `/proc/meminfo` — OS-dependent |
+| `readLoadAverage()` | `fleet_scaler.go` | Reads `/proc/loadavg` — OS-dependent |
+| `tmuxSendKeys()` | `dispatch.go` | Requires live tmux session |
+| `startDaemon()` | `main.go` | Binds ports, starts goroutines |
+| `InitMetrics()` | `metrics.go` | Starts background goroutine with no stop mechanism |
+
+---
+
 ## Rule
 
 When writing tests for `cmd/forged/`, **always extend an existing canonical test file**.

@@ -63,3 +63,34 @@ func TestTaskComplete(t *testing.T) {
 		t.Logf("task complete: %v", err)
 	}
 }
+
+// TestTaskLogsCommand tests task logs command exists and requires task ID
+func TestTaskLogsCommand(t *testing.T) {
+	runner := NewTestRunner(t)
+
+	// Should fail without task ID
+	_, err := runner.Execute("task", "logs")
+	if err == nil {
+		t.Error("expected error for missing task ID")
+	}
+}
+
+// TestTaskLogsWithID tests task logs with a task ID
+func TestTaskLogsWithID(t *testing.T) {
+	runner := NewTestRunner(t)
+
+	_, err := runner.Execute("task", "logs", "01JQM123ABC")
+	if err != nil {
+		t.Logf("task logs (daemon may be unreachable): %v", err)
+	}
+}
+
+// TestTaskLogsJSON tests task logs with JSON format
+func TestTaskLogsJSON(t *testing.T) {
+	runner := NewTestRunner(t)
+
+	_, err := runner.Execute("task", "logs", "01JQM123ABC", "--format", "json")
+	if err != nil {
+		t.Logf("task logs --format json (daemon may be unreachable): %v", err)
+	}
+}

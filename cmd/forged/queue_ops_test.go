@@ -283,6 +283,52 @@ func TestQueueGetClaimableTasks(t *testing.T) {
 	}
 }
 
+func TestQueueGetClaimableTasks_ExcludesPendingDeps(t *testing.T) {
+	q, cleanup := setupTestQueue(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a dependency task (not yet completed).
+	depTask := Task{
+		ID: "dep-parent", Domain: "test", Project: "proj",
+		Type: TaskTypeFeature, Priority: 5, Status: TaskStatusQueued,
+	}
+	_ = q.Enqueue(ctx, depTask)
+
+	// Create a task that depends on depTask.
+	blockedTask := Task{
+		ID: "blocked-child", Domain: "test", Project: "proj",
+		Type: TaskTypeFeature, Priority: 5, Status: TaskStatusQueued,
+		Dependencies: []string{"dep-parent"},
+	}
+	_ = q.Enqueue(ctx, blockedTask)
+
+	// Create an independent claimable task.
+	freeTask := Task{
+		ID: "free-task", Domain: "test", Project: "proj",
+		Type: TaskTypeFeature, Priority: 5, Status: TaskStatusQueued,
+	}
+	_ = q.Enqueue(ctx, freeTask)
+
+	tasks, err := q.GetClaimableTasks(ctx, 10)
+	if err != nil {
+		t.Fatalf("GetClaimableTasks error: %v", err)
+	}
+
+	// Should return dep-parent and free-task, but NOT blocked-child.
+	for _, task := range tasks {
+		if task.ID == "blocked-child" {
+			t.Error("GetClaimableTasks returned a task with pending dependencies")
+		}
+	}
+
+	// Should have exactly 2 claimable tasks.
+	if len(tasks) != 2 {
+		t.Errorf("expected 2 claimable tasks, got %d", len(tasks))
+	}
+}
+
 // --- ReleaseTask ---
 
 func TestQueueReleaseTask(t *testing.T) {

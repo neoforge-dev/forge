@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -149,6 +150,8 @@ type Node struct {
 	Address       string    `json:"address"`
 	Status        string    `json:"status"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+	Version       string    `json:"version,omitempty"`
+	GitCommit     string    `json:"git_commit,omitempty"`
 }
 
 // XNodeTask represents a task distributed across nodes
@@ -204,6 +207,7 @@ func NewXNodeController(db *sql.DB, nodeID string) (*XNodeController, error) {
 func (xc *XNodeController) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/xnode/nodes", xc.ListNodesHandler)
 	mux.HandleFunc("/api/xnode/nodes/register", xc.RegisterHandler)
+	mux.HandleFunc("/api/xnode/nodes/", xc.DeleteNodeHandler)
 	mux.HandleFunc("/api/xnode/forward", xc.ForwardHandler)
 	mux.HandleFunc("/api/xnode/status", xc.StatusHandler)
 	mux.HandleFunc("/api/xnode/events", xc.SSEDeliveryHandler)
@@ -226,6 +230,10 @@ func (xc *XNodeController) StartHeartbeatMonitor(interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				// Self-heartbeat: keep this node alive in the nodes table
+				if err := xc.Heartbeat(ctx, xc.nodeID); err != nil {
+					log.Printf("[XNode] self-heartbeat failed: %v", err)
+				}
 				// Mark nodes as offline if no heartbeat for 10 minutes
 				threshold := time.Now().Add(-10 * time.Minute)
 				_, err := xc.db.Exec(`
@@ -243,14 +251,16 @@ func (xc *XNodeController) StartHeartbeatMonitor(interval time.Duration) {
 // RegisterNode adds or updates a node in the registry
 func (xc *XNodeController) RegisterNode(ctx context.Context, node Node) error {
 	_, err := xc.db.ExecContext(ctx, `
-		INSERT INTO nodes (id, hostname, address, status, last_heartbeat)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO nodes (id, hostname, address, status, last_heartbeat, version, git_commit)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			hostname = excluded.hostname,
 			address = excluded.address,
 			status = excluded.status,
-			last_heartbeat = excluded.last_heartbeat
-	`, node.ID, node.Hostname, node.Address, node.Status, node.LastHeartbeat)
+			last_heartbeat = excluded.last_heartbeat,
+			version = excluded.version,
+			git_commit = excluded.git_commit
+	`, node.ID, node.Hostname, node.Address, node.Status, node.LastHeartbeat, node.Version, node.GitCommit)
 	if err != nil {
 		return newXNodeDatabaseError("register node", err)
 	}
@@ -368,6 +378,14 @@ func (xc *XNodeController) ListInboxHandler(w http.ResponseWriter, r *http.Reque
 
 	entries, err := os.ReadDir(XNodeInboxDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"messages": allMessages,
+				"count":    0,
+			})
+			return
+		}
 		respondWithError(w, http.StatusInternalServerError, "Failed to read inbox", err.Error())
 		return
 	}
@@ -403,6 +421,14 @@ func (xc *XNodeController) ListAcksHandler(w http.ResponseWriter, r *http.Reques
 
 	entries, err := os.ReadDir(XNodeAcksDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"acks":  allAcks,
+				"count": 0,
+			})
+			return
+		}
 		respondWithError(w, http.StatusInternalServerError, "Failed to read acks", err.Error())
 		return
 	}
@@ -475,7 +501,10 @@ func (xc *XNodeController) RegisterHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (xc *XNodeController) ListNodesHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := xc.db.QueryContext(r.Context(), "SELECT id, hostname, address, status, last_heartbeat FROM nodes")
+	rows, err := xc.db.QueryContext(r.Context(), `
+		SELECT id, hostname, address, status, last_heartbeat,
+		       COALESCE(version, ''), COALESCE(git_commit, '')
+		FROM nodes`)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Database error",
 			fmt.Sprintf("Failed to query nodes: %v", err))
@@ -487,7 +516,7 @@ func (xc *XNodeController) ListNodesHandler(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var n Node
 		var lh string
-		if err := rows.Scan(&n.ID, &n.Hostname, &n.Address, &n.Status, &lh); err != nil {
+		if err := rows.Scan(&n.ID, &n.Hostname, &n.Address, &n.Status, &lh, &n.Version, &n.GitCommit); err != nil {
 			respondWithError(w, http.StatusInternalServerError, "Database error",
 				fmt.Sprintf("Failed to scan node row: %v", err))
 			return
@@ -498,6 +527,44 @@ func (xc *XNodeController) ListNodesHandler(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(nodes)
+}
+
+// DeleteNodeHandler handles DELETE /api/xnode/nodes/{id} — removes a node from the registry.
+func (xc *XNodeController) DeleteNodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		respondWithError(w, http.StatusMethodNotAllowed, "Method not allowed",
+			"Only DELETE requests are supported for node removal")
+		return
+	}
+
+	// Extract node ID from path: /api/xnode/nodes/{id}
+	nodeID := strings.TrimPrefix(r.URL.Path, "/api/xnode/nodes/")
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		respondWithError(w, http.StatusBadRequest, "Missing node ID",
+			"Node ID is required in the path: DELETE /api/xnode/nodes/{id}")
+		return
+	}
+
+	result, err := xc.db.ExecContext(r.Context(), `DELETE FROM nodes WHERE id = ?`, nodeID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Database error",
+			fmt.Sprintf("Failed to delete node %q: %v", nodeID, err))
+		return
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		respondWithError(w, http.StatusNotFound, "Node not found",
+			fmt.Sprintf("Node %q is not registered in the XNode mesh. Check: forge node list", nodeID))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"deleted": nodeID,
+	})
 }
 
 func (xc *XNodeController) ForwardHandler(w http.ResponseWriter, r *http.Request) {
@@ -607,8 +674,14 @@ func (xc *XNodeController) SSEDeliveryHandler(w http.ResponseWriter, r *http.Req
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	defer heartbeatTicker.Stop()
 
-	// Create a ticker for checking outbox updates (1 second)
-	checkTicker := time.NewTicker(1 * time.Second)
+	// Create a ticker for checking outbox updates (1 second; override via FORGE_XNODE_CHECK_TICK_MS for tests)
+	xnodeCheckInterval := 1 * time.Second
+	if v := os.Getenv("FORGE_XNODE_CHECK_TICK_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			xnodeCheckInterval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	checkTicker := time.NewTicker(xnodeCheckInterval)
 	defer checkTicker.Stop()
 
 	// Track last seen message IDs per target node

@@ -66,7 +66,8 @@ func fetchPendingApprovalCount(apiURL string) int {
 func init() {
 	// Flags for the status command
 	statusCmd.Flags().Bool("full", false, "Show full fleet standup (default is compact)")
-	statusCmd.Flags().Bool("json", false, "Output as JSON")
+	statusCmd.Flags().Bool("json", false, "Output as JSON (deprecated: use --format json)")
+	statusCmd.Flags().String("format", "table", "Output format: table or json")
 }
 
 // detectProfile returns the operational profile based on environment.
@@ -88,8 +89,17 @@ func detectProfile() string {
 // NOTE: statusCmd var is in main.go; we register the full implementation via init().
 func statusCmdImpl(cmd *cobra.Command, args []string) error {
 	full, _ := cmd.Flags().GetBool("full")
-	jsonOut, _ := cmd.Flags().GetBool("json")
 	_ = full // all info shown by default; --full kept for future expansion
+
+	// Resolve output format: --format (global persistent flag) takes precedence;
+	// fall back to legacy --json bool flag for backward compatibility.
+	format, _ := cmd.Flags().GetString("format")
+	if format == "table" || format == "" {
+		// Check if the legacy --json flag was explicitly set.
+		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+			format = "json"
+		}
+	}
 
 	profile := detectProfile()
 	now := time.Now().UTC()
@@ -97,12 +107,13 @@ func statusCmdImpl(cmd *cobra.Command, args []string) error {
 
 	// 1. Check control plane + local daemon.
 	controlPlaneOnline := checkControlPlane(controlPlaneURL)
-	localDaemonOnline := isPortListening("8081")
+	localAPIPort := internal.ResolveAPIPort()
+	localDaemonOnline := isPortListening(localAPIPort)
 	pid := 0
 	if localDaemonOnline {
 		pid, _ = readPIDFile()
 		if pid == 0 {
-			pid, _ = getPIDFromPort("8081")
+			pid, _ = getPIDFromPort(localAPIPort)
 		}
 	}
 
@@ -137,11 +148,18 @@ func statusCmdImpl(cmd *cobra.Command, args []string) error {
 		pendingApprovals = fetchPendingApprovalCount(controlPlaneURL)
 	}
 
-	if jsonOut {
+	switch format {
+	case "json":
 		return printStatusJSON(now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches, pendingApprovals)
+	case "quiet":
+		// Quiet mode: no output — exit 0 if healthy, exit 1 if unhealthy.
+		if !controlPlaneOnline {
+			os.Exit(1)
+		}
+		return nil
+	default:
+		return printStatusTable(profile, now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches, pendingApprovals)
 	}
-
-	return printStatusTable(profile, now, controlPlaneURL, controlPlaneOnline, localDaemonOnline, pid, agents, agentErr, taskSummary, commits, patrolCount, patrolErrors, pendingDispatches, pendingApprovals)
 }
 
 func fetchAgents(apiURL string) ([]agentHealthEntry, error) {
@@ -356,14 +374,17 @@ func printStatusTable(profile string, now time.Time, controlPlaneURL string, con
 	} else {
 		fmt.Printf("Control Plane: offline (%s)\n", controlPlaneURL)
 		fmt.Printf("\nCheck FORGE_API_URL or run: forge config set control_plane.url %s\n", internal.DefaultControlPlaneURL)
-		return nil
+		// Return a non-nil error so Cobra exits with code 1.
+		// main() will print "Error: <msg>" — keep the message terse since the
+		// recovery hint is already printed above.
+		return fmt.Errorf("control plane unreachable; see hints above")
 	}
 
 	if localDaemonOnline {
 		if pid > 0 {
-			fmt.Printf("Local Daemon: running (localhost:8081, pid %d)\n", pid)
+			fmt.Printf("Local Daemon: running (localhost:%s, pid %d)\n", internal.ResolveAPIPort(), pid)
 		} else {
-			fmt.Printf("Local Daemon: running (localhost:8081)\n")
+			fmt.Printf("Local Daemon: running (localhost:%s)\n", internal.ResolveAPIPort())
 		}
 	} else {
 		fmt.Printf("Local Daemon: offline\n")
@@ -391,7 +412,13 @@ func printStatusTable(profile string, now time.Time, controlPlaneURL string, con
 			if len(status) < 7 {
 				status = status + strings.Repeat(" ", 7-len(status))
 			}
-			fmt.Printf("  %-12s %s  ctx:%.1f%%%s\n", a.AgentID, status, a.ContextPct, taskPart)
+			// Color the agent ID by model prefix, node label by node name — subtle hints only.
+			agentLabel := internal.ColorModel(a.AgentID, fmt.Sprintf("%-12s", a.AgentID))
+			nodeLabel := ""
+			if a.Node != "" {
+				nodeLabel = " " + internal.ColorNode(a.Node, fmt.Sprintf("[%s]", a.Node))
+			}
+			fmt.Printf("  %s %s%s  ctx:%.1f%%%s\n", agentLabel, status, nodeLabel, a.ContextPct, taskPart)
 		}
 	}
 
@@ -444,35 +471,101 @@ func printStatusTable(profile string, now time.Time, controlPlaneURL string, con
 	return nil
 }
 
+// statusJSON is the structured JSON output for `forge status --format json`.
+type statusJSON struct {
+	Timestamp    string            `json:"timestamp"`
+	ControlPlane statusControlPlane `json:"control_plane"`
+	Daemon       statusDaemon       `json:"daemon"`
+	Agents       []statusAgent      `json:"agents"`
+	Queue        statusQueue        `json:"queue"`
+	Patrols      statusPatrols      `json:"patrols"`
+	RecentCommits []string          `json:"recent_commits,omitempty"`
+	PendingResults int              `json:"pending_results"`
+	PendingApprovals int            `json:"pending_approvals"`
+	AgentError   string            `json:"agent_error,omitempty"`
+}
+
+type statusControlPlane struct {
+	URL    string `json:"url"`
+	Status string `json:"status"`
+}
+
+type statusDaemon struct {
+	PID    int    `json:"pid"`
+	Status string `json:"status"`
+}
+
+type statusAgent struct {
+	ID         string  `json:"id"`
+	Node       string  `json:"node"`
+	Status     string  `json:"status"`
+	ContextPct float64 `json:"context_pct"`
+}
+
+type statusQueue struct {
+	Queued      int `json:"queued"`
+	Running     int `json:"running"`
+	Completed24h int `json:"completed_24h"`
+	Failed24h   int `json:"failed_24h"`
+}
+
+type statusPatrols struct {
+	Active int `json:"active"`
+	Errors int `json:"errors"`
+}
+
 func printStatusJSON(now time.Time, controlPlaneURL string, controlPlaneOnline, localDaemonOnline bool, pid int, agents []agentHealthEntry,
 	agentErr error, tasks taskStatusSummary, commits []string,
 	patrolCount, patrolErrors, pendingDispatches, pendingApprovals int) error {
 
-	onlineCount := 0
-	for _, a := range agents {
-		if a.Status == "online" {
-			onlineCount++
-		}
+	cpStatus := "offline"
+	if controlPlaneOnline {
+		cpStatus = "online"
+	}
+	daemonStatus := "offline"
+	if localDaemonOnline {
+		daemonStatus = "running"
 	}
 
-	out := map[string]interface{}{
-		"generated_at":         now.Format(time.RFC3339),
-		"control_plane_url":    controlPlaneURL,
-		"control_plane_online": controlPlaneOnline,
-		"local_daemon_online":  localDaemonOnline,
-		"local_daemon_pid":     pid,
-		"agents_online":        onlineCount,
-		"agents_registered":    len(agents),
-		"tasks":                tasks,
-		"commits":              commits,
-		"patrol_count":         patrolCount,
-		"patrol_errors_1h":     patrolErrors,
-		"pending_dispatches":   pendingDispatches,
-		"pending_approvals":    pendingApprovals,
+	agentList := make([]statusAgent, 0, len(agents))
+	for _, a := range agents {
+		agentList = append(agentList, statusAgent{
+			ID:         a.AgentID,
+			Node:       a.Node,
+			Status:     a.Status,
+			ContextPct: a.ContextPct,
+		})
+	}
+
+	out := statusJSON{
+		Timestamp: now.UTC().Format(time.RFC3339),
+		ControlPlane: statusControlPlane{
+			URL:    controlPlaneURL,
+			Status: cpStatus,
+		},
+		Daemon: statusDaemon{
+			PID:    pid,
+			Status: daemonStatus,
+		},
+		Agents: agentList,
+		Queue: statusQueue{
+			Queued:       tasks.Queued,
+			Running:      tasks.Running,
+			Completed24h: tasks.Completed,
+			Failed24h:    tasks.Failed,
+		},
+		Patrols: statusPatrols{
+			Active: patrolCount,
+			Errors: patrolErrors,
+		},
+		RecentCommits:    commits,
+		PendingResults:   pendingDispatches,
+		PendingApprovals: pendingApprovals,
 	}
 	if agentErr != nil {
-		out["agent_error"] = agentErr.Error()
+		out.AgentError = agentErr.Error()
 	}
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)

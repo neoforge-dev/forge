@@ -2,9 +2,12 @@
 //
 // Implements fleet management workflow commands:
 //   - forge fleet list       : List all agents from heartbeat files
-//   - forge fleet status     : Fleet health summary by node
-//   - forge fleet health     : Detailed health metrics across fleet
 //   - forge fleet broadcast  : Send messages to all agents
+//   - forge fleet windows    : Show tmux agent windows
+//   - forge fleet spawn/kill : Start/stop agents in tmux
+//   - forge fleet budget     : Token budget management
+//   - forge fleet metrics    : Fleet-wide metrics
+//   - forge fleet recommendations : Auto-scaling suggestions
 
 package main
 
@@ -14,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -56,63 +58,27 @@ type nodeHeartbeat struct {
 
 // fleetCmd is the workflow command for fleet-wide operations
 var fleetCmd = &cobra.Command{
-	Use:   "fleet",
-	Short: "Fleet-wide operations",
+	Use:     "fleet",
+	Aliases: []string{"fl"},
+	Short:   "Fleet-wide operations",
 	Long: `Operations across the entire FORGE fleet.
 
-Display fleet status, list agents, check health across all nodes, and broadcast
-messages to agents.
+Broadcast messages, manage tmux windows, and view metrics.
+To list agents use: forge agent list
 
 Examples:
-  # List all agents
-  forge fleet list
-
-  # Show fleet status overview
-  forge fleet status
-
-  # Detailed health check
-  forge fleet health
-
   # Broadcast message to all agents
   forge fleet broadcast "Deploy complete"
 
-  # Broadcast with filtering
-  forge fleet broadcast "Standby" --filter-state idle
+  # Show live tmux agent windows
+  forge fleet windows
+
+  # Spawn an agent
+  forge fleet spawn kimi
+
+  # Kill an agent window
+  forge fleet kill kimi
 `,
-}
-
-// fleetListCmd: forge fleet list
-var fleetListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all fleet agents",
-	Long:  "List all agents discovered from heartbeat files across all nodes.",
-	RunE:  runFleetList,
-}
-
-// fleetStatusWorkflowCmd: forge fleet status
-var fleetStatusWorkflowCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show fleet health summary",
-	Long:  "Display a summary of fleet health: agent counts per node and queue depth.",
-	RunE:  runFleetStatus,
-}
-
-// fleetHealthWorkflowCmd: forge fleet health
-var fleetHealthWorkflowCmd = &cobra.Command{
-	Use:   "health",
-	Short: "Detailed health check across fleet",
-	Long:  "Run detailed health checks across all fleet nodes.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		format, _ := cmd.Flags().GetString("format")
-
-		health, err := buildFleetHealth()
-		if err != nil {
-			return fmt.Errorf("failed to get fleet health: %w", err)
-		}
-
-		formatter := internal.NewFormatter(format, nil)
-		return formatter.FormatFleetHealth(health)
-	},
 }
 
 // fleetBroadcastWorkflowCmd: forge fleet broadcast "message"
@@ -122,152 +88,6 @@ var fleetBroadcastWorkflowCmd = &cobra.Command{
 	Long:  "Broadcast a message to all agents discovered from heartbeat files.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runFleetBroadcast,
-}
-
-// runFleetList implements forge fleet list.
-// It reads .forge/heartbeat/nodes/*.json and prints each agent.
-func runFleetList(cmd *cobra.Command, args []string) error {
-	format, _ := cmd.Flags().GetString("format")
-
-	heartbeats, err := readHeartbeats()
-	if err != nil {
-		return fmt.Errorf("failed to read heartbeat files: %w", err)
-	}
-
-	// Collect agents across all nodes, sorted by node then name.
-	type agentRow struct {
-		Name         string
-		Node         string
-		Status       string
-		Capabilities string
-	}
-
-	var rows []agentRow
-	for _, hb := range heartbeats {
-		caps := strings.Join(hb.Capabilities, ",")
-		for _, a := range hb.Agents {
-			node := a.Node
-			if node == "" {
-				node = hb.NodeID
-			}
-			rows = append(rows, agentRow{
-				Name:         a.Name,
-				Node:         node,
-				Status:       a.Status,
-				Capabilities: caps,
-			})
-		}
-	}
-
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Node != rows[j].Node {
-			return rows[i].Node < rows[j].Node
-		}
-		return rows[i].Name < rows[j].Name
-	})
-
-	switch format {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
-	case "quiet":
-		for _, r := range rows {
-			fmt.Println(r.Name)
-		}
-		return nil
-	default: // table
-		formatter := internal.NewFormatter(format, nil)
-		tw := formatter.NewTableWriter()
-		tw.WriteHeader("AGENT", "NODE", "STATUS", "CAPABILITIES")
-		for _, r := range rows {
-			tw.WriteRow(r.Name, r.Node, r.Status, r.Capabilities)
-		}
-		if err := tw.Flush(); err != nil {
-			return err
-		}
-		formatter.Printf("\nTotal: %d agents\n", len(rows))
-		return nil
-	}
-}
-
-// runFleetStatus implements forge fleet status.
-func runFleetStatus(cmd *cobra.Command, args []string) error {
-	format, _ := cmd.Flags().GetString("format")
-
-	heartbeats, err := readHeartbeats()
-	if err != nil {
-		return fmt.Errorf("failed to read heartbeat files: %w", err)
-	}
-
-	// If no heartbeat files, fall back to FleetStatus from xnode configs.
-	if len(heartbeats) == 0 {
-		status, err := buildFleetStatus()
-		if err != nil {
-			return fmt.Errorf("failed to get fleet status: %w", err)
-		}
-		formatter := internal.NewFormatter(format, nil)
-		return formatter.FormatFleetStatus(status)
-	}
-
-	type nodeSummary struct {
-		NodeID     string
-		AgentCount int
-		Active     int
-		QueueDepth int
-		HealthStr  string
-	}
-
-	var nodes []nodeSummary
-	totalAgents := 0
-
-	for _, hb := range heartbeats {
-		active := 0
-		for _, a := range hb.Agents {
-			if a.Status == "active" {
-				active++
-			}
-		}
-		nodes = append(nodes, nodeSummary{
-			NodeID:     hb.NodeID,
-			AgentCount: len(hb.Agents),
-			Active:     active,
-			QueueDepth: hb.Resources.QueueDepth,
-			HealthStr:  hb.Health.Status,
-		})
-		totalAgents += len(hb.Agents)
-	}
-
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].NodeID < nodes[j].NodeID
-	})
-
-	switch format {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		type jsonOut struct {
-			TotalAgents int           `json:"total_agents"`
-			Nodes       []nodeSummary `json:"nodes"`
-		}
-		return enc.Encode(jsonOut{TotalAgents: totalAgents, Nodes: nodes})
-	case "quiet":
-		for _, n := range nodes {
-			fmt.Printf("%s: %d agents\n", n.NodeID, n.AgentCount)
-		}
-		return nil
-	default: // table
-		formatter := internal.NewFormatter(format, nil)
-		formatter.Printf("Fleet: %d agents across %d nodes\n", totalAgents, len(nodes))
-		for _, n := range nodes {
-			formatter.Printf("  %s: %d active", n.NodeID, n.Active)
-			if n.QueueDepth > 0 {
-				formatter.Printf("  (queue: %d)", n.QueueDepth)
-			}
-			formatter.Printf("\n")
-		}
-		return nil
-	}
 }
 
 // runFleetBroadcast implements forge fleet broadcast.
@@ -370,212 +190,6 @@ func readHeartbeats() ([]nodeHeartbeat, error) {
 	})
 
 	return heartbeats, nil
-}
-
-// buildFleetStatus constructs fleet status — reads real heartbeat files first,
-// falls back to xnode-test configs when no heartbeat files are found.
-func buildFleetStatus() (*internal.FleetStatus, error) {
-	status := &internal.FleetStatus{
-		Nodes:       []internal.FleetNode{},
-		GeneratedAt: time.Now().UTC(),
-	}
-
-	heartbeats, err := readHeartbeats()
-	if err != nil {
-		return nil, err
-	}
-
-	if len(heartbeats) > 0 {
-		for _, hb := range heartbeats {
-			ramPercent := 0
-			if hb.Resources.RAMTotalMB > 0 {
-				used := hb.Resources.RAMTotalMB - hb.Resources.RAMAvailableMB
-				ramPercent = int(math.Round(float64(used) * 100 / float64(hb.Resources.RAMTotalMB)))
-			}
-
-			lastSeen := time.Now().UTC()
-			if t, err := time.Parse(time.RFC3339, hb.Timestamp); err == nil {
-				lastSeen = t
-			}
-
-			node := internal.FleetNode{
-				ID:           hb.NodeID,
-				Hostname:     hb.NodeID,
-				Status:       hb.Health.Status,
-				AgentCount:   len(hb.Agents),
-				QueueDepth:   hb.Resources.QueueDepth,
-				CPUPercent:   int(math.Round(hb.Resources.CPUUsagePercent)),
-				RAMPercent:   ramPercent,
-				Capabilities: hb.Capabilities,
-				LastSeen:     lastSeen,
-			}
-
-			status.Nodes = append(status.Nodes, node)
-			status.TotalAgents += len(hb.Agents)
-		}
-
-		status.TotalNodes = len(status.Nodes)
-		status.Healthy = status.TotalNodes
-		return status, nil
-	}
-
-	// Fallback: read from .forge/xnode-test/*/config.json
-	xnodeDir := filepath.Join(".forge", "xnode-test")
-	entries, err := os.ReadDir(xnodeDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return status, nil
-		}
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		configPath := filepath.Join(xnodeDir, entry.Name(), "config.json")
-		data, err := os.ReadFile(configPath)
-		if err != nil {
-			continue
-		}
-
-		var config struct {
-			NodeID       string   `json:"node_id"`
-			Hostname     string   `json:"hostname"`
-			Region       string   `json:"region"`
-			Capabilities []string `json:"capabilities"`
-		}
-
-		if err := json.Unmarshal(data, &config); err != nil {
-			continue
-		}
-
-		node := internal.FleetNode{
-			ID:           config.NodeID,
-			Hostname:     config.Hostname,
-			Region:       config.Region,
-			Capabilities: config.Capabilities,
-			Status:       "unknown",
-			LastSeen:     time.Now().UTC(),
-		}
-
-		status.Nodes = append(status.Nodes, node)
-	}
-
-	status.TotalNodes = len(status.Nodes)
-	status.Healthy = status.TotalNodes
-
-	return status, nil
-}
-
-// buildFleetHealth constructs fleet health report from real heartbeat files.
-func buildFleetHealth() (*internal.FleetHealth, error) {
-	health := &internal.FleetHealth{
-		Nodes:       []internal.NodeHealth{},
-		Issues:      []internal.FleetIssue{},
-		GeneratedAt: time.Now().UTC(),
-	}
-
-	heartbeats, err := readHeartbeats()
-	if err != nil {
-		return nil, err
-	}
-
-	if len(heartbeats) > 0 {
-		for _, hb := range heartbeats {
-			cpuPercent := int(math.Round(hb.Resources.CPUUsagePercent))
-
-			ramPercent := 0
-			if hb.Resources.RAMTotalMB > 0 {
-				used := hb.Resources.RAMTotalMB - hb.Resources.RAMAvailableMB
-				ramPercent = int(math.Round(float64(used) * 100 / float64(hb.Resources.RAMTotalMB)))
-			}
-
-			lastSeen := time.Now().UTC()
-			if t, err := time.Parse(time.RFC3339, hb.Timestamp); err == nil {
-				lastSeen = t
-			}
-
-			isHealthy := (hb.Health.Status == "healthy" || hb.Health.Status == "") && time.Since(lastSeen) < 10*time.Minute
-			var issues []string
-
-			if time.Since(lastSeen) >= 10*time.Minute {
-				issues = append(issues, fmt.Sprintf("stale heartbeat (%s ago)", time.Since(lastSeen).Round(time.Minute)))
-			}
-
-			if cpuPercent > 80 {
-				isHealthy = false
-				issues = append(issues, fmt.Sprintf("high CPU (%d%%)", cpuPercent))
-				health.Issues = append(health.Issues, internal.FleetIssue{
-					NodeID:  hb.NodeID,
-					Type:    "overloaded",
-					Details: fmt.Sprintf("CPU at %d%%", cpuPercent),
-				})
-			}
-
-			if ramPercent > 90 {
-				isHealthy = false
-				issues = append(issues, fmt.Sprintf("high RAM (%d%%)", ramPercent))
-				health.Issues = append(health.Issues, internal.FleetIssue{
-					NodeID:  hb.NodeID,
-					Type:    "overloaded",
-					Details: fmt.Sprintf("RAM at %d%%", ramPercent),
-				})
-			}
-
-			if isHealthy {
-				health.Healthy++
-			}
-
-			health.Nodes = append(health.Nodes, internal.NodeHealth{
-				NodeID:     hb.NodeID,
-				Status:     hb.Health.Status,
-				AgentCount: len(hb.Agents),
-				Healthy:    isHealthy,
-				CPUPercent: cpuPercent,
-				RAMPercent: ramPercent,
-				LastSeen:   lastSeen,
-				Issues:     issues,
-			})
-		}
-
-		health.TotalNodes = len(health.Nodes)
-		return health, nil
-	}
-
-	// Fallback: xnode-test configs (no real metrics available)
-	xnodeDir := filepath.Join(".forge", "xnode-test")
-	entries, err := os.ReadDir(xnodeDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return health, nil
-		}
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		nodeID := entry.Name()
-		configPath := filepath.Join(xnodeDir, nodeID, "config.json")
-		if _, err := os.Stat(configPath); err != nil {
-			continue
-		}
-
-		health.Healthy++
-		health.Nodes = append(health.Nodes, internal.NodeHealth{
-			NodeID:   nodeID,
-			Status:   "unknown",
-			Healthy:  true,
-			LastSeen: time.Now().UTC(),
-		})
-	}
-
-	health.TotalNodes = len(health.Nodes)
-	return health, nil
 }
 
 // fleetScaleRec mirrors the JSON written by the fleet-scale-recommend patrol.
@@ -817,17 +431,6 @@ var fleetBudgetResetCmd = &cobra.Command{
 	RunE:  runFleetBudgetReset,
 }
 
-// fleetInventoryCmd: forge fleet inventory
-var fleetInventoryCmd = &cobra.Command{
-	Use:   "inventory",
-	Short: "Show agent inventory with token status",
-	Long: `Display the full agent inventory combining tmux agent windows
-with token budget status for each agent type.
-
-Shows: agent type, provider, budget status, usage percentages, and busy/idle counts.`,
-	RunE: runFleetInventory,
-}
-
 func runFleetBudgetShow(cmd *cobra.Command, args []string) error {
 	format, _ := cmd.Flags().GetString("format")
 	node, _ := cmd.Flags().GetString("node")
@@ -968,122 +571,6 @@ func runFleetBudgetReset(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runFleetInventory(cmd *cobra.Command, args []string) error {
-	format, _ := cmd.Flags().GetString("format")
-	node, _ := cmd.Flags().GetString("node")
-
-	// Get tmux agents
-	windows, _ := discoverTmuxAgents("forge")
-	agentCounts := make(map[string]int)
-	for _, w := range windows {
-		agentCounts[w.Name]++
-	}
-
-	// Get token budgets
-	budget, _ := readTokenBudget(node)
-
-	// Build agent type to provider mapping
-	agentToProvider := map[string]string{
-		"claude": "anthropic", "amp": "anthropic",
-		"opencode": "openai", "kilo": "openai",
-		"gemini": "google",
-		"kimi": "moonshot",
-		"minimax": "minimax",
-		"pi": "inflection",
-		"cursor": "cursor",
-	}
-
-	type inventoryRow struct {
-		Type       string
-		Provider   string
-		Status     string
-		Monthly    int
-		Weekly     int
-		H5         int
-		Busy       int
-		Idle       int
-		Cooldown   string
-	}
-
-	var rows []inventoryRow
-	seenTypes := make(map[string]bool)
-
-	// Add providers from budget file
-	if budget != nil {
-		for name, p := range budget.Providers {
-			for _, agent := range p.Agents {
-				if seenTypes[agent] {
-					continue
-				}
-				seenTypes[agent] = true
-
-				busy := 0
-				idle := agentCounts[agent]
-				status := p.Status
-				monthly := p.Limits["monthly_pct"]
-				weekly := p.Limits["weekly_pct"]
-				h5 := p.Limits["5h_rolling_pct"]
-				cooldown := "—"
-				if p.CooldownUntil != nil && *p.CooldownUntil != "" {
-					if t, err := time.Parse(time.RFC3339, *p.CooldownUntil); err == nil {
-						remaining := time.Until(t)
-						if remaining > 0 {
-							cooldown = fmt.Sprintf("%dh", int(remaining.Hours()))
-						}
-					}
-				}
-
-				rows = append(rows, inventoryRow{
-					Type: agent, Provider: name, Status: status,
-					Monthly: monthly, Weekly: weekly, H5: h5,
-					Busy: busy, Idle: idle, Cooldown: cooldown,
-				})
-			}
-		}
-	}
-
-	// Add agents not in budget file
-	for agent, provider := range agentToProvider {
-		if seenTypes[agent] {
-			continue
-		}
-		seenTypes[agent] = true
-		idle := agentCounts[agent]
-		rows = append(rows, inventoryRow{
-			Type: agent, Provider: provider, Status: "UNKNOWN",
-			Monthly: 0, Weekly: 0, H5: 0,
-			Busy: 0, Idle: idle, Cooldown: "—",
-		})
-	}
-
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].Type < rows[j].Type
-	})
-
-	switch format {
-	case "json":
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
-	default:
-		formatter := internal.NewFormatter(format, nil)
-		hostname, _ := os.Hostname()
-		formatter.Printf("AGENT INVENTORY — node: %s — %s\n\n", hostname, time.Now().UTC().Format("2006-01-02 15:04 UTC"))
-		tw := formatter.NewTableWriter()
-		tw.WriteHeader("TYPE", "PROVIDER", "STATUS", "~MONTHLY", "~WEEKLY", "~5H", "BUSY", "IDLE", "COOLDOWN")
-		for _, r := range rows {
-			tw.WriteRow(r.Type, r.Provider, r.Status,
-				fmt.Sprintf("%d%%", r.Monthly), fmt.Sprintf("%d%%", r.Weekly), fmt.Sprintf("%d%%", r.H5),
-				fmt.Sprintf("%d", r.Busy), fmt.Sprintf("%d", r.Idle), r.Cooldown)
-		}
-		if err := tw.Flush(); err != nil {
-			return err
-		}
-		formatter.Printf("\nLegend: ~ = approximate | CAUTION = prefer substitute | COOLDOWN = spawn blocked\n")
-		return nil
-	}
-}
-
 func readTokenBudget(node string) (*tokenBudgetFile, error) {
 	forgeRoot := findForgeRoot()
 	if forgeRoot == "" {
@@ -1214,71 +701,6 @@ func writeTokenBudget(budget *tokenBudgetFile) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// nodeCapabilitiesResponse mirrors GET /api/fleet/node-capabilities from the v3 daemon.
-type nodeCapabilitiesResponse struct {
-	NodeID           string            `json:"node_id"`
-	HardCeiling      int               `json:"hard_ceiling"`
-	ForbiddenAgents  []string          `json:"forbidden_agents"`
-	AgentTiers       map[string]string `json:"agent_tiers"`
-	MediumAutoApprove bool             `json:"medium_auto_approve"`
-}
-
-// fleetCapabilitiesCmd: forge fleet capabilities
-var fleetCapabilitiesCmd = &cobra.Command{
-	Use:   "capabilities",
-	Short: "Show node capability manifest",
-	Long: `Show what agent types this node can spawn, hard ceilings, and approval policy.
-Reads from the v3 daemon API (ADR-035 Node Capability Manifest).`,
-	RunE: runFleetCapabilities,
-}
-
-func runFleetCapabilities(cmd *cobra.Command, args []string) error {
-	format, _ := cmd.Flags().GetString("format")
-	apiURL := os.Getenv("FORGE_API_URL")
-	if apiURL == "" {
-		apiURL = "http://localhost:8081"
-	}
-
-	// Fetch from daemon.
-	resp, err := fetchNodeCapabilities(apiURL)
-	if err != nil {
-		// Fallback: show compiled-in static values.
-		fmt.Printf("Daemon unavailable (%v) — showing compiled-in values\n\n", err)
-		resp = &nodeCapabilitiesResponse{
-			NodeID:           hostShortname(),
-			HardCeiling:      2,
-			ForbiddenAgents:  []string{},
-			AgentTiers:       map[string]string{"kimi": "lightweight", "gemini": "lightweight", "claude": "medium", "opencode": "heavy"},
-			MediumAutoApprove: false,
-		}
-	}
-
-	if format == "json" {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(resp)
-	}
-
-	fmt.Printf("Node: %s\n", resp.NodeID)
-	fmt.Printf("Hard ceiling: %d agents\n", resp.HardCeiling)
-	fmt.Printf("Medium-tier auto-approve: %v\n\n", resp.MediumAutoApprove)
-
-	if len(resp.ForbiddenAgents) > 0 {
-		fmt.Printf("Forbidden agents: %s\n\n", strings.Join(resp.ForbiddenAgents, ", "))
-	}
-
-	fmt.Printf("%-12s %s\n", "AGENT", "TIER")
-	fmt.Println(strings.Repeat("─", 28))
-	for agent, tier := range resp.AgentTiers {
-		autoMark := ""
-		if tier == "lightweight" || (tier == "medium" && resp.MediumAutoApprove) {
-			autoMark = " (auto-approve)"
-		}
-		fmt.Printf("%-12s %s%s\n", agent, tier, autoMark)
-	}
-	return nil
-}
-
 // fleetPlanCmd: forge fleet plan
 // Shows the orchestrator's next planned action (ADR-036 Phase 3 observability).
 var fleetPlanCmd = &cobra.Command{
@@ -1298,10 +720,7 @@ ADR-036 Phase 3 observability command.`,
 }
 
 func runFleetPlan(cmd *cobra.Command, args []string) error {
-	apiURL := os.Getenv("FORGE_API_URL")
-	if apiURL == "" {
-		apiURL = "http://localhost:8081"
-	}
+	apiURL := internal.ResolveControlPlaneURL()
 
 	hostname, _ := os.Hostname()
 	now := time.Now().UTC()
@@ -1453,20 +872,6 @@ func getNodeCeiling(nodeID string) int {
 	return 4 // default single-node capacity
 }
 
-func fetchNodeCapabilities(apiURL string) (*nodeCapabilitiesResponse, error) {
-	url := strings.TrimRight(apiURL, "/") + "/api/fleet/node-capabilities"
-	r, err := http.Get(url) //nolint:noctx
-	if err != nil {
-		return nil, err
-	}
-	defer r.Body.Close()
-	var caps nodeCapabilitiesResponse
-	if err := json.NewDecoder(r.Body).Decode(&caps); err != nil {
-		return nil, fmt.Errorf("decode capabilities: %w", err)
-	}
-	return &caps, nil
-}
-
 func hostShortname() string {
 	h, err := os.Hostname()
 	if err != nil {
@@ -1590,10 +995,7 @@ Examples:
 		}
 
 		startCmd := agentStartCmd(agentName)
-		apiURL := os.Getenv("FORGE_API_URL")
-		if apiURL == "" {
-			apiURL = "http://localhost:8081"
-		}
+		apiURL := internal.ResolveControlPlaneURL()
 		envPrefix := fmt.Sprintf("FORGE_AGENT_TYPE=fleet FORGE_AGENT_NAME=%s FORGE_API_URL=%s", agentName, apiURL)
 		fullCmd := fmt.Sprintf("%s %s", envPrefix, startCmd)
 
@@ -1632,7 +1034,7 @@ Examples:
 		if err := exec.Command("tmux", "send-keys", "-t", target, "-l", fullCmd).Run(); err != nil {
 			return fmt.Errorf("failed to send start command to %s: %w", target, err)
 		}
-		if err := exec.Command("tmux", "send-keys", "-t", target, "", "Enter").Run(); err != nil {
+		if err := exec.Command("tmux", "send-keys", "-t", target, "Enter").Run(); err != nil {
 			return fmt.Errorf("failed to send Enter to %s: %w", target, err)
 		}
 
@@ -1794,16 +1196,11 @@ Examples:
 }
 
 func init() {
-	// fleetCmd visible — orchestrators need fleet management
+	fleetCmd.Hidden = true
 	// Add subcommands
-	fleetCmd.AddCommand(fleetListCmd)
-	fleetCmd.AddCommand(fleetStatusWorkflowCmd)
-	fleetCmd.AddCommand(fleetHealthWorkflowCmd)
 	fleetCmd.AddCommand(fleetBroadcastWorkflowCmd)
 	fleetCmd.AddCommand(fleetWindowsCmd)
 	fleetCmd.AddCommand(fleetBudgetCmd)
-	fleetCmd.AddCommand(fleetInventoryCmd)
-	fleetCmd.AddCommand(fleetCapabilitiesCmd)
 	fleetCmd.AddCommand(fleetRecommendationsCmd)
 	fleetCmd.AddCommand(fleetSpawnCmd)
 	fleetCmd.AddCommand(fleetKillCmd)
@@ -1839,7 +1236,6 @@ func init() {
 	fleetBudgetSetCmd.Flags().Int("weekly-pct", -1, "Weekly usage percentage (0-100)")
 	fleetBudgetSetCmd.Flags().Int("5h-pct", -1, "5-hour rolling usage percentage (0-100)")
 	fleetBudgetResetCmd.Flags().String("node", "", "Node to reset budget for")
-	fleetInventoryCmd.Flags().String("node", "", "Node to read budget from")
 
 	// Register with root command
 	// fleetCmd registered in main.go

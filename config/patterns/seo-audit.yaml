@@ -1,0 +1,45 @@
+id: seo-audit
+name: SEO Audit
+description: Pattern for performing technical SEO analysis on websites
+tags:
+  - seo
+  - analytics
+automation:
+  - search_engine_optimization
+steps:
+  - type: shell
+    name: run-crawler
+    command: "node /Users/moltbot/work/FORGE/cmd/seo-audit/crawler.py --url ${url} --domain ${domain} --output-format json"
+  - type: complete
+    name: generate-report
+    command: "cat /Users/moltbot/work/FORGE/cmd/seo-audit/reports/* --output-format markdown --domain ${domain} --output-path ${output_path}"
+  - type: dispatch
+    name: run-lighthouse
+    command: "forge dispatch send forge:pi --file .forge/seo-audit/lighthouse.md --domain ${domain} --count 1"
+    args: "json --output-file": /Users/moltbot/work/FORGE/cmd/seo-audit/lighthouse.md"
+
+  - type: complete
+    name: cleanup
+    command: "rm -f ${output_path}"
+  - type: dispatch
+    name: dispatch-to-agents
+    command: |
+      for agent in ${agents}:
+          echo "Dispatching ${count} agents to run this SEO audit in each domain..."
+          echo "Output: ${output_path}"
+        done
+    - run-sphinx-build:
+      sphinx-build -b docs/ && read them
+    - rm build artifacts
+    - remove site from index if not in performing as expected
+    - commit changes to ready for human review
+      echo "Reporting completed for ${domain}: ${domain}. Please commit."
+    }
+
+    command: "git add ."
+    git commit -m "feat: add seo audit patterns (ADR-006, ADR-007 for CODE pattern), human gates: Ghr-007, content gates)"
+    - Perf gates (if needed)
+    - Security gates
+    - approval gates
+
+    - etc.

@@ -1,0 +1,93 @@
+name: Deploy Interview Simulator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-backend:
+    name: Run Backend Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/interview-simulator/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run pytest --tb=short -q
+
+  build-frontend:
+    name: Build Frontend
+    needs: test-backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/interview-simulator/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: services/interview-simulator/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: services/interview-simulator/frontend/dist
+
+  deploy-backend:
+    name: Deploy Backend to Railway
+    needs: test-backend
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: services/interview-simulator/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  deploy-frontend:
+    name: Deploy Frontend to Cloudflare Pages
+    needs: [test-backend, build-frontend]
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: services/interview-simulator/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: services/interview-simulator/frontend/dist
+
+      - name: Deploy to Cloudflare Pages
+        run: npx wrangler pages deploy dist --project-name interview-simulator
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

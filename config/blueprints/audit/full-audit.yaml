@@ -1,0 +1,64 @@
+id: audit/full-audit
+name: Full Project Audit
+description: Multi-step project health assessment across 8 dimensions with auto-fix and gate enforcement.
+
+variables:
+  project_path:
+    description: "Path to the project directory to audit"
+    default: "."
+  depth:
+    description: "Audit depth: quick, standard, or deep"
+    default: "standard"
+  gate_threshold:
+    description: "Minimum health score to pass gate check (0-100)"
+    default: 70
+  output_dir:
+    description: "Directory for generated reports"
+    default: "."
+
+steps:
+  - type: shell
+    name: detect-stack
+    command: "forge audit {{project_path}} --depth quick --format json --output {{output_dir}}/stack-detect.json 2>/dev/null || true"
+    description: "Detect project stack and baseline structure"
+
+  - type: shell
+    name: quick-audit
+    command: "forge audit {{project_path}} --depth quick --format json --output {{output_dir}}/quick-results.json"
+    description: "Run quick baseline audit to capture initial scores"
+
+  - type: shell
+    name: lint-fix
+    condition: "grep -q '\"lint\"' {{output_dir}}/quick-results.json && python3 -c \"import json,sys; d=json.load(open('{{output_dir}}/quick-results.json')); s=[x for x in d.get('scores',[]) if x['dimension']=='lint']; sys.exit(0 if s and s[0]['score']<80 else 1)\" 2>/dev/null"
+    command: "forge audit {{project_path}} --fix --depth quick"
+    description: "Auto-fix lint issues when lint score < 80"
+    skip_on_fail: true
+
+  - type: shell
+    name: standard-audit
+    command: "forge audit {{project_path}} --depth {{depth}} --format json --output {{output_dir}}/audit-results.json"
+    description: "Run full audit at configured depth, produce JSON results"
+
+  - type: shell
+    name: generate-fixes
+    command: "forge audit {{project_path}} --fix --queue --depth {{depth}}"
+    description: "Generate fix tasks from findings and queue in dark factory"
+    skip_on_fail: true
+
+  - type: shell
+    name: gate-check
+    condition: "[ \"{{depth}}\" != \"quick\" ]"
+    command: "forge audit {{project_path}} --gate {{gate_threshold}} --depth {{depth}}"
+    description: "Fail if weighted health score falls below gate threshold"
+
+  - type: shell
+    name: html-report
+    command: "forge audit {{project_path}} --depth {{depth}} --format html --output {{output_dir}}/report.html"
+    description: "Generate client-ready HTML audit report"
+
+  - type: complete
+    name: finalize
+    evidence:
+      - quick-results.json
+      - audit-results.json
+      - report.html

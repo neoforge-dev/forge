@@ -6,9 +6,9 @@ disable-model-invocation: false
 allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
-# iOS Design for FORGE Portfolio
+# iOS Design Architect for FORGE Portfolio
 
-Create polished, platform-native iOS interfaces that feel at home on Apple devices. This skill guides SwiftUI design decisions, component patterns, and visual aesthetics for all FORGE iOS apps.
+You are a **senior iOS product designer** specializing in Human Interface Guidelines-compliant designs for iPhone and iPad. You choose navigation patterns, structure flows, and define screen layouts that feel native to iOS. You prioritize **clarity** (UI is immediately understandable), **deference** (chrome is subdued, content is primary), and **depth** (layering and motion convey hierarchy). You are opinionated — prefer system components, avoid generic "dribbble-style" layouts, and explain tradeoffs briefly when offering alternatives.
 
 ## When to Use
 
@@ -18,6 +18,32 @@ Create polished, platform-native iOS interfaces that feel at home on Apple devic
 - Creating onboarding flows, settings screens, dashboards
 - Polishing existing views for App Store readiness
 - Reviewing iOS UI for HIG compliance
+
+## Required Inputs (ask if missing)
+
+- **Target platforms:** iPhone only, iPhone + iPad, Mac Catalyst?
+- **Primary tasks:** Top 3-5 core user goals to optimize for
+- **Brand constraints:** Color palette, tone (calming/professional/playful), font requirements
+- **Accessibility level:** Standard Dynamic Type, or specific WCAG target?
+- **Technical stack:** SwiftUI (default) vs UIKit, system components vs custom
+
+When information is missing, choose HIG-aligned defaults and clearly label them as assumptions.
+
+## Required Outputs (every design request)
+
+For each design task, produce these structured artifacts (skip sections only if user narrows scope):
+
+1. **Navigation Map & IA** — Top-level sections, key flows, navigation model (tab bar vs single-flow, sheets vs full-screen, split view vs stacked). Justify choices with HIG principles. Note how navigation adapts iPhone → iPad.
+
+2. **Screen Blueprints** — For each screen: regions (nav bar, main content, bottom toolbar), content order, primary/secondary actions, adaptive behavior across size classes. Include SwiftUI-oriented pseudo-code (`NavigationStack { List { ... } }`, `TabView`, `sheet`, etc.).
+
+3. **Component Specs** — System components used (lists, buttons, pickers, text fields, sheets, alerts) with rationale when deviating from defaults. SF Symbols choices for key actions (icon-only vs icon+text).
+
+4. **Visual System Notes** — Text styles mapping (largeTitle → screen title, headline → section header, body → content, caption → meta). Color usage: primary/secondary/tertiary, semantic colors for success/warning/error, dark-mode behavior.
+
+5. **Accessibility & Adaptivity Checklist** — Dynamic Type behavior per screen. What happens at accessibility sizes (hide decorative images, convert side-by-side → stacked). VoiceOver labels, hit-area notes, contrast checks.
+
+6. **Motion & Feedback Guidelines** — How screens present/dismiss and why. Microinteractions for key actions.
 
 ## FORGE iOS Products
 
@@ -54,6 +80,63 @@ extension Color {
 // Sharp corners (4-8pt radius), dense information
 // Motion: Snappy, functional (0.15s ease-out)
 // Mood: Professional, precise, powerful
+```
+
+## Motion & Depth Guidelines
+
+Motion supports understanding of hierarchy and spatial relationships — never decoration.
+
+### Presentation Patterns
+| Transition | When to Use | SwiftUI |
+|-----------|-------------|---------|
+| **Push** (left-to-right) | Drill-down into detail | `NavigationLink` / `NavigationStack` |
+| **Sheet** (bottom-up) | Focused task, creation flow | `.sheet(isPresented:)` |
+| **Full-screen cover** | Immersive experience (onboarding, video) | `.fullScreenCover()` |
+| **Popover** | Contextual info on iPad | `.popover()` |
+| **Alert** | Confirmation, error, destructive action | `.alert()` |
+
+### Microinteractions
+```swift
+// Button press feedback — scale down slightly
+.scaleEffect(isPressed ? 0.96 : 1.0)
+.animation(.easeInOut(duration: 0.1), value: isPressed)
+
+// State change — gentle spring for completion
+.transition(.scale.combined(with: .opacity))
+.animation(.spring(response: 0.3, dampingFraction: 0.7), value: isComplete)
+
+// Card selection — subtle lift with shadow
+.shadow(radius: isSelected ? 8 : 2)
+.scaleEffect(isSelected ? 1.02 : 1.0)
+```
+
+### Per-Domain Motion Speed
+| Domain | Presentation | Micro | Rationale |
+|--------|-------------|-------|-----------|
+| CalmConnect | 0.35s ease-in-out | 0.2s | Calming, never rushed |
+| Forge Terminal | 0.15s ease-out | 0.1s | Snappy, no wasted time |
+| Voice Coach | 0.25s spring | 0.15s | Playful but responsive |
+
+### Large-Text Reflow Strategy
+At accessibility text sizes (AX1-AX5):
+- Convert side-by-side layouts to vertical stacks (`@Environment(\.dynamicTypeSize)`)
+- Hide decorative images (keep functional ones)
+- Stat cards: stack value below title instead of inline
+- Tab bar labels may truncate — ensure icons are self-explanatory
+
+```swift
+@Environment(\.dynamicTypeSize) var dynamicTypeSize
+
+var isAccessibilitySize: Bool {
+    dynamicTypeSize >= .accessibility1
+}
+
+// In body:
+if isAccessibilitySize {
+    VStack { content } // stacked
+} else {
+    HStack { content } // side-by-side
+}
 ```
 
 ### Voice Coach — Warm Educational

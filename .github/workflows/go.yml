@@ -1,0 +1,34 @@
+name: Go (forge + forged)
+
+on:
+  push:
+    paths:
+      - 'cmd/forge/**'
+      - 'cmd/forged/**'
+  pull_request:
+    paths:
+      - 'cmd/forge/**'
+      - 'cmd/forged/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build forge CLI
+        run: cd cmd/forge && go build -o /dev/null .
+
+      - name: Build forged daemon
+        run: cd cmd/forged && go build -o /dev/null .
+
+      - name: Test forge CLI
+        run: cd cmd/forge && go test ./... -timeout 120s
+
+      - name: Test forged daemon
+        run: cd cmd/forged && go test ./... -timeout 300s

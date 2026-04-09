@@ -27,6 +27,14 @@ import (
 	// "github.com/neoforge-dev/forge/cmd/forged/db"
 )
 
+// Build-time version metadata — injected via ldflags:
+//   -X main.Version=v1.2.3 -X main.GitCommit=abc1234 -X main.BuildTime=2026-03-20T00:00:00Z
+var (
+	Version   = "dev"
+	GitCommit = "unknown"
+	BuildTime = "unknown"
+)
+
 var hub *Hub
 var taskQueue TaskQueue
 var planManager PlanManager
@@ -212,6 +220,86 @@ func UpdateAgentHeartbeat(agentID, node, status, taskID string, contextPct float
 			context_pct = excluded.context_pct,
 			last_seen = datetime('now')
 	`, agentID, node, status, taskID, contextPct)
+	return err
+}
+
+// UpdateAgentWorkState sets the work_state column for a single agent.
+// workState must be one of: "idle", "working", "blocked".
+// Invalid values are silently coerced to "idle".
+func UpdateAgentWorkState(agentID, workState string) error {
+	if workState != "idle" && workState != "working" && workState != "blocked" {
+		workState = "idle"
+	}
+	db := getDBConn()
+	if db == nil {
+		return fmt.Errorf("database connection not initialised")
+	}
+	_, err := db.Exec(`
+		UPDATE agent_heartbeats SET work_state = ? WHERE agent_id = ?
+	`, workState, agentID)
+	return err
+}
+
+// UpdateAgentHeartbeatConditional upserts an agent heartbeat row but only updates
+// context_pct when the caller explicitly provides a non-nil value.  Passing nil
+// preserves the existing context_pct in the database, preventing cron-based
+// heartbeats (which omit the field) from resetting the value to 0.
+// workState must be "idle", "working", or "blocked"; empty string preserves existing value.
+// S188 fix: heartbeats that don't send work_state no longer reset "working" → "idle".
+func UpdateAgentHeartbeatConditional(agentID, node, status, taskID, workState string, contextPct *float64) error {
+	preserveWorkState := workState == ""
+	if workState == "" {
+		workState = "idle" // only for INSERT (new agents); UPDATE preserves existing
+	}
+
+	if preserveWorkState {
+		// Agent didn't send work_state — preserve whatever dispatcher set.
+		if contextPct != nil {
+			_, err := getDBConn().Exec(`
+				INSERT INTO agent_heartbeats (agent_id, node, status, work_state, current_task_id, context_pct, last_seen)
+				VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+				ON CONFLICT(agent_id) DO UPDATE SET
+					node = excluded.node, status = excluded.status,
+					current_task_id = excluded.current_task_id,
+					context_pct = excluded.context_pct,
+					last_seen = datetime('now')
+			`, agentID, node, status, workState, taskID, *contextPct)
+			return err
+		}
+		_, err := getDBConn().Exec(`
+			INSERT INTO agent_heartbeats (agent_id, node, status, work_state, current_task_id, context_pct, last_seen)
+			VALUES (?, ?, ?, ?, ?, 0, datetime('now'))
+			ON CONFLICT(agent_id) DO UPDATE SET
+				node = excluded.node, status = excluded.status,
+				current_task_id = excluded.current_task_id,
+				last_seen = datetime('now')
+		`, agentID, node, status, workState, taskID)
+		return err
+	}
+
+	// Agent explicitly sent work_state — use it.
+	if contextPct != nil {
+		_, err := getDBConn().Exec(`
+			INSERT INTO agent_heartbeats (agent_id, node, status, work_state, current_task_id, context_pct, last_seen)
+			VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+			ON CONFLICT(agent_id) DO UPDATE SET
+				node = excluded.node, status = excluded.status,
+				work_state = excluded.work_state,
+				current_task_id = excluded.current_task_id,
+				context_pct = excluded.context_pct,
+				last_seen = datetime('now')
+		`, agentID, node, status, workState, taskID, *contextPct)
+		return err
+	}
+	_, err := getDBConn().Exec(`
+		INSERT INTO agent_heartbeats (agent_id, node, status, work_state, current_task_id, context_pct, last_seen)
+		VALUES (?, ?, ?, ?, ?, 0, datetime('now'))
+		ON CONFLICT(agent_id) DO UPDATE SET
+			node = excluded.node, status = excluded.status,
+			work_state = excluded.work_state,
+			current_task_id = excluded.current_task_id,
+			last_seen = datetime('now')
+	`, agentID, node, status, workState, taskID)
 	return err
 }
 
@@ -691,6 +779,15 @@ func withTimeout(h http.HandlerFunc, timeout time.Duration) http.Handler {
 	return middleware.TimeoutMiddleware(timeout)(h)
 }
 
+// versionHeaderMiddleware injects the daemon build version into every response
+// so CLI clients can detect version mismatches early.
+func versionHeaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Forge-Version", Version)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	hub = NewHub()
 
@@ -993,6 +1090,23 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
+	// S173 E1.1: Reset all agents to offline on daemon startup.
+	// Agents will re-register via heartbeat when they reconnect.
+	// This prevents ghost agents from surviving daemon restarts.
+	if result, err := database.Exec(`UPDATE agent_heartbeats SET status = 'offline' WHERE status IN ('connected', 'online')`); err != nil {
+		log.Printf("[startup] WARNING: failed to reset agent statuses: %v", err)
+	} else if n, _ := result.RowsAffected(); n > 0 {
+		log.Printf("[startup] Reset %d agent(s) to offline (will re-register via heartbeat)", n)
+	}
+
+	// Prune old completed/failed tasks on startup (48h retention)
+	pruned, pruneErr := pruneOldTasks(database, 48*time.Hour)
+	if pruneErr != nil {
+		log.Printf("[startup] task prune failed: %v", pruneErr)
+	} else if pruned > 0 {
+		log.Printf("[startup] pruned %d completed/failed tasks older than 48h", pruned)
+	}
+
 	// Initialize task queue
 	q, err := NewTaskQueueFromDB(database)
 	if err != nil {
@@ -1018,7 +1132,7 @@ func main() {
 		log.Println("LeaseManager initialized")
 	}
 
-	startStateSyncJob(database, 10*time.Minute)
+	startStateSyncJob(context.Background(), database, 10*time.Minute)
 	log.Println("State sync job started (10m interval)")
 
 	// Start lease recovery job — scans for expired leases every 5 minutes
@@ -1132,17 +1246,6 @@ func main() {
 	patrolSystem.SetContextManager(contextManager)
 	patrolSystem.SetRoyalJelly(royalJelly)
 
-	// Add context threshold patrol (runs every 5 minutes)
-	patrolSystem.AddContextPatrol(ContextAwarePatrol{
-		Patrol: Patrol{
-			ID:       "context-threshold",
-			Name:     "Context Threshold Monitor",
-			Schedule: 5 * time.Minute,
-			Action:   func(ctx context.Context, db *sql.DB) error { return nil }, // Handled by checkContextThreshold
-		},
-		cm: contextManager,
-	})
-
 	patrolSystem.Start()
 	defer patrolSystem.Stop()
 	globalPatrolSystem = patrolSystem // expose to HTTP handler (GET /api/patrols)
@@ -1230,6 +1333,8 @@ func main() {
 		Address:       selfAddress,
 		Status:        "online",
 		LastHeartbeat: time.Now(),
+		Version:       Version,
+		GitCommit:     GitCommit,
 	}
 	if err := xnodeController.RegisterNode(context.Background(), selfNode); err != nil {
 		log.Printf("WARN: failed to self-register node %s: %v", nodeID, err)
@@ -1252,10 +1357,28 @@ func main() {
 	// Announce this node to known peers over HTTP (Tailscale).
 	// KNOWN_PEERS is a comma-separated list of peer HTTP base URLs,
 	// e.g. "http://sati:8081,http://nova:8081"
+	// Falls back to FORGE_API_URL if KNOWN_PEERS is empty (remote nodes).
+	// Skips if FORGE_API_URL points to localhost (hub doesn't announce to itself).
 	// Fires immediately at startup, then repeats every 5 minutes to keep status "online".
-	go func() {
+	getPeers := func() []string {
 		peersEnv := os.Getenv("KNOWN_PEERS")
-		if peersEnv == "" {
+		if peersEnv != "" {
+			return strings.Split(peersEnv, ",")
+		}
+		// Fallback to FORGE_API_URL for remote nodes
+		apiURL := os.Getenv("FORGE_API_URL")
+		if apiURL == "" {
+			return nil
+		}
+		// Skip localhost - hub doesn't need to announce to itself
+		if strings.Contains(apiURL, "localhost") || strings.Contains(apiURL, "127.0.0.1") {
+			return nil
+		}
+		return []string{apiURL}
+	}
+	go func() {
+		peers := getPeers()
+		if len(peers) == 0 {
 			return
 		}
 		announceToPeers := func() {
@@ -1265,7 +1388,7 @@ func main() {
 			if regErr := xnodeController.RegisterNode(context.Background(), selfNode); regErr != nil {
 				log.Printf("[XNode] self-registration refresh failed: %v", regErr)
 			}
-			for _, peer := range strings.Split(peersEnv, ",") {
+			for _, peer := range peers {
 				peer = strings.TrimSpace(peer)
 				if peer != "" {
 					announceNodeToPeer(peer, selfNode)
@@ -1285,11 +1408,7 @@ func main() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			peersEnv := os.Getenv("KNOWN_PEERS")
-			if peersEnv == "" {
-				continue
-			}
-			peers := strings.Split(peersEnv, ",")
+			peers := getPeers()
 			for _, peer := range peers {
 				peer = strings.TrimSpace(peer)
 				if peer == "" {
@@ -1359,6 +1478,7 @@ func main() {
 	mux.HandleFunc("/api/patrol-executions", patrolExecutionsHandler)
 	mux.HandleFunc("/dash", dashHandler)
 	mux.HandleFunc("/ui/patrol/", uiPatrolDrillDownHandler)
+	mux.HandleFunc("/ui/domains", uiDomainsHandler)
 	mux.HandleFunc("/ui", uiFleetHandler)
 	mux.HandleFunc("/api/fleet/snapshot", fleetSnapshotHandler)
 	mux.HandleFunc("/api/fleet/recommendations", fleetRecommendationsHandler)
@@ -1408,11 +1528,16 @@ func main() {
 			agentTasksHandler(w, r)
 			return
 		}
+		if strings.HasSuffix(path, "/cooldown") {
+			agentCooldownHandler(w, r)
+			return
+		}
 		// Try agent by ID
 		agentByIDHandler(w, r)
 	})
 	// ADR-014: SSE stream must be registered before /api/agents wildcard
 	mux.HandleFunc("/api/agents/stream", agentsSSEHandler)
+	mux.HandleFunc("/api/agents/cooldowns", agentCooldownsHandler)
 	mux.HandleFunc("/api/agents", agentsHandler)
 	mux.HandleFunc("/api/notifications", notificationsHandler)
 	mux.HandleFunc("/api/notifications/", notificationActionHandler)
@@ -1446,6 +1571,10 @@ func main() {
 		}
 		if strings.HasSuffix(taskID, "/claim") {
 			claimTaskHandler(w, r)
+			return
+		}
+		if strings.HasSuffix(taskID, "/ack") {
+			ackTaskHandler(w, r)
 			return
 		}
 		if strings.HasSuffix(taskID, "/abandon") {
@@ -1505,6 +1634,9 @@ func main() {
 	mux.HandleFunc("/api/projects", projectsHandler)
 	mux.HandleFunc("/api/projects/", projectByIDHandler)
 
+	// Domains API
+	mux.HandleFunc("/api/domains/", PatchDomainHandler)
+
 	// Agents API handled via /api/agents/ above
 
 	// Workers API
@@ -1556,6 +1688,20 @@ func main() {
 	// agent types each node can spawn (respects ForbiddenAgentTypes + ceilings).
 	mux.HandleFunc("/api/fleet/node-capabilities", nodeCapabilitiesHandler)
 
+	// Apple Watch FORGE Terminal: push device registry + watch-optimized summary.
+	mux.HandleFunc("/api/push/register", pushRegisterHandler)
+	mux.HandleFunc("/api/push/devices", pushDevicesHandler)
+	mux.HandleFunc("/api/watch/summary", watchSummaryHandler)
+
+	// Wire watch summary handler to the already-initialized approval service.
+	watchSummaryApprovalService = approvalService
+
+	// Voice mode: NLU command dispatch, vocabulary, transcription stub, analytics.
+	mux.HandleFunc("/api/voice/command", voiceCommandHandler)
+	mux.HandleFunc("/api/voice/vocabulary", voiceVocabularyHandler)
+	mux.HandleFunc("/api/voice/transcribe", voiceTranscribeHandler)
+	mux.HandleFunc("/api/voice/analytics", voiceAnalyticsHandler)
+
 	// ADR-014: Relay delivery endpoints.
 	mux.HandleFunc("/api/relay/deliveries", relayDeliveriesHandler) // GET /api/relay/deliveries
 	mux.HandleFunc("/api/relay/dispatch", relayDispatchHandler)     // POST /api/relay/dispatch
@@ -1582,7 +1728,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: middleware.RateLimitMiddleware(middleware.TimeoutMiddleware(middleware.DefaultTimeout)(LoggingMiddleware(AuthMiddleware(authManager)(mux)))),
+		Handler: versionHeaderMiddleware(middleware.RateLimitMiddleware(middleware.TimeoutMiddleware(middleware.DefaultTimeout)(LoggingMiddleware(AuthMiddleware(authManager)(mux))))),
 	}
 
 	// Start WebSocket hub for real-time multinode communication
@@ -1610,21 +1756,72 @@ func main() {
 		}
 	}()
 
-	// Graceful shutdown
+	// Graceful shutdown with 30-second drain window.
+	// On SIGINT/SIGTERM:
+	//   1. Flip serverHealthy to false so /health returns 503 immediately,
+	//      signalling load balancers to stop routing new traffic.
+	//   2. Attempt a context-bounded graceful shutdown (30 s).
+	//   3. If the timeout expires before all connections drain, force-close.
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
+		sig := <-sigChan
 
-		log.Println("Shutting down servers...")
-		server.Shutdown(nil)
-		wsServer.Shutdown(nil)
+		shutdownStart := time.Now()
+		log.Printf("Shutdown signal received (%s). Marking server unhealthy and beginning 30s drain...", sig)
+
+		// Signal the health endpoint to return 503 so load balancers drain us.
+		serverHealthy.Store(false)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Shut down both servers concurrently and collect errors.
+		httpErr := make(chan error, 1)
+		wsErr := make(chan error, 1)
+		go func() { httpErr <- server.Shutdown(ctx) }()
+		go func() { wsErr <- wsServer.Shutdown(ctx) }()
+
+		httpShutErr := <-httpErr
+		wsShutErr := <-wsErr
+
+		elapsed := time.Since(shutdownStart).Round(time.Millisecond)
+
+		if httpShutErr == context.DeadlineExceeded || wsShutErr == context.DeadlineExceeded {
+			log.Printf("Graceful shutdown timed out after %s — forcing connection close", elapsed)
+			server.Close()
+			wsServer.Close()
+		} else {
+			if httpShutErr != nil {
+				log.Printf("HTTP server shutdown error: %v", httpShutErr)
+			}
+			if wsShutErr != nil {
+				log.Printf("WebSocket server shutdown error: %v", wsShutErr)
+			}
+			log.Printf("Servers shut down cleanly in %s", elapsed)
+		}
 	}()
 
 	log.Printf("FORGE v3 Status API starting on :%s", port)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+// pruneOldTasks deletes completed/failed tasks older than the given retention period.
+// Called once on daemon startup to keep the tasks table lean.
+// Returns the number of rows deleted and any error.
+func pruneOldTasks(db *sql.DB, retention time.Duration) (int, error) {
+	threshold := time.Now().Add(-retention).Format(time.RFC3339)
+	result, err := db.Exec(
+		`DELETE FROM tasks WHERE status IN ('completed', 'failed') AND updated_at < ?`,
+		threshold,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
 }
 
 // announceNodeToPeer POSTs this node's registration to a peer daemon over Tailscale HTTP.

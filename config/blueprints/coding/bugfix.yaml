@@ -1,0 +1,18 @@
+id: coding/bugfix
+name: Bug Fix
+description: Blueprint for fixing a bug with pre-checks, implementation, and verification.
+steps:
+  - type: check
+    name: reproduce
+    command: "forge check"
+  - type: dispatch
+    name: fix
+    agent: auto
+  - type: check
+    name: verify-fix
+    command: "cd cmd/forged && go test . -timeout 120s -count=1"
+  - type: complete
+    name: finalize
+    evidence:
+      - tests
+      - regression

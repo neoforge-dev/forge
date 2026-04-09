@@ -75,10 +75,14 @@ func (h *PWADashboardHandler) handleSummary(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Override dashboard-computed counts with canonical fleet counts so that
+	// this endpoint reports identical numbers to all other status endpoints.
+	fc := getFleetCounts(ctx, h.dashboard.db)
+
 	summary := PWADashboardSummary{
-		TotalAgents:       data.Summary.TotalAgents,
-		ActiveAgentsCount: data.Summary.BusyAgents,
-		IdleAgentsCount:   data.Summary.IdleAgents,
+		TotalAgents:       fc.TotalAgents,
+		ActiveAgentsCount: fc.OnlineAgents,
+		IdleAgentsCount:   fc.TotalAgents - fc.OnlineAgents,
 		ErrorAgentsCount:  data.Summary.ErrorAgents,
 		PausedAgentsCount: 0,
 		SystemStatus:      data.Summary.SystemHealth,
@@ -101,8 +105,8 @@ func (h *PWADashboardHandler) handleSummary(w http.ResponseWriter, r *http.Reque
 	}
 
 	summary.TaskThroughput = PWATaskThroughput{
-		TotalToday:      data.Summary.TotalTasks,
-		InProgressToday: data.Summary.ActiveTasks,
+		TotalToday:      fc.QueuedTasks + fc.RunningTasks + fc.CompletedTasks24h,
+		InProgressToday: fc.RunningTasks,
 		SuccessRate:     100.0, // Default for now
 		ByType:          make(map[string]int),
 	}
@@ -196,19 +200,21 @@ func fleetSummaryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var totalTasks, p0, p1, p2 int
-	db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('completed', 'abandoned', 'failed')").Scan(&totalTasks)
+	// Canonical counts — consistent with all other status endpoints.
+	fc := getFleetCounts(r.Context(), db)
+
+	// Priority breakdown for queued+running tasks (informational only — not part of canonical counts).
+	var p0, p1, p2 int
 	db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('completed', 'abandoned', 'failed') AND priority >= 8").Scan(&p0)
 	db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('completed', 'abandoned', 'failed') AND priority >= 5 AND priority < 8").Scan(&p1)
 	db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tasks WHERE status NOT IN ('completed', 'abandoned', 'failed') AND priority < 5").Scan(&p2)
 
-	var pendingResults int
-	db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tasks WHERE status = 'assigned'").Scan(&pendingResults)
+	activeTasks := fc.QueuedTasks + fc.RunningTasks
 
 	summary := PWAFleetSummary{
-		TaskSummary: PWAFleetSummaryTasks{Total: totalTasks, P0: p0, P1: p1, P2: p2},
-		DispatchSummary: PWAFleetSummaryDispatch{Active: pendingResults, PendingResults: pendingResults},
-		Health: PWAFleetSummaryHealth{UptimeHours: 2, OnlineNodes: 1},
+		TaskSummary: PWAFleetSummaryTasks{Total: activeTasks, P0: p0, P1: p1, P2: p2},
+		DispatchSummary: PWAFleetSummaryDispatch{Active: fc.RunningTasks, PendingResults: fc.RunningTasks},
+		Health: PWAFleetSummaryHealth{UptimeHours: 2, OnlineNodes: 1, TotalAgents: fc.TotalAgents},
 		Nodes: []PWAFleetSummaryNode{},
 	}
 

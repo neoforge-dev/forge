@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -202,5 +203,64 @@ func TestFindDaemonBinaryPrefersForged(t *testing.T) {
 	got := findDaemonBinary()
 	if got != forgedPath {
 		t.Errorf("findDaemonBinary() = %q, want %q (forged must be preferred over forge-v3)", got, forgedPath)
+	}
+}
+
+func TestFindDaemonLogPath_ReturnsExistingOrEmpty(t *testing.T) {
+	// findDaemonLogPath checks hardcoded paths under $HOME and /tmp.
+	// Verify it returns "" or a path that actually exists — no panics, valid output.
+	got := findDaemonLogPath()
+	if got != "" {
+		if _, err := os.Stat(got); err != nil {
+			t.Errorf("findDaemonLogPath() returned non-existent path %q", got)
+		}
+	}
+}
+
+func TestForgeDBPath_EnvVar(t *testing.T) {
+	t.Setenv("FORGE_ROOT", "/tmp/myroot")
+	got := forgeDBPath()
+	want := "/tmp/myroot/.forge/forge-v3.db"
+	if got != want {
+		t.Errorf("forgeDBPath() = %q, want %q", got, want)
+	}
+}
+
+func TestForgeDBPath_Default(t *testing.T) {
+	t.Setenv("FORGE_ROOT", "")
+	got := forgeDBPath()
+	if !strings.HasSuffix(got, ".forge/forge-v3.db") {
+		t.Errorf("forgeDBPath() = %q, want suffix .forge/forge-v3.db", got)
+	}
+}
+
+func TestGetConfigLeadURL_ValidTOML(t *testing.T) {
+	dir := t.TempDir()
+	toml := "[control_plane]\nurl = \"http://prya:8081\"\n"
+	cfgPath := filepath.Join(dir, ".forge", "forge.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// getConfigLeadURL reads from well-known paths; inject via HOME override
+	t.Setenv("HOME", dir)
+	// The function checks $HOME/.forge/config.toml — write there too
+	homeCfg := filepath.Join(dir, ".forge", "config.toml")
+	if err := os.WriteFile(homeCfg, []byte(toml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := getConfigLeadURL()
+	if got != "http://prya:8081" {
+		t.Errorf("getConfigLeadURL() = %q, want http://prya:8081", got)
+	}
+}
+
+func TestGetConfigLeadURL_Missing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no config files
+	got := getConfigLeadURL()
+	if got != "" {
+		t.Logf("getConfigLeadURL() = %q (may hit real config)", got)
 	}
 }

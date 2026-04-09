@@ -189,6 +189,9 @@ func (f *Formatter) FormatTasks(tasks []Task) error {
 		}
 		return f.WriteCSV(headers, rows)
 	case FormatQuiet:
+		for _, t := range tasks {
+			fmt.Fprintf(f.writer, "%s\n", t.ID)
+		}
 		return nil
 	default: // table
 		tw := f.NewTableWriter()
@@ -294,17 +297,22 @@ func (f *Formatter) FormatAgents(agents []Agent) error {
 	case FormatJSON:
 		return f.WriteJSON(agents)
 	case FormatCSV:
-		headers := []string{"ID", "Node", "Status", "Role", "Tier", "Context%", "Current Task"}
+		headers := []string{"ID", "Node", "Status", "WorkState", "Role", "Tier", "Context%", "Current Task"}
 		rows := make([][]string, len(agents))
 		for i, a := range agents {
 			currentTask := "-"
 			if a.CurrentTask != nil {
 				currentTask = *a.CurrentTask
 			}
+			workState := a.WorkState
+			if workState == "" {
+				workState = "idle"
+			}
 			rows[i] = []string{
 				a.ID,
 				a.Node,
 				a.Status,
+				workState,
 				a.Role,
 				a.Tier,
 				fmt.Sprintf("%.1f%%", a.ContextPct),
@@ -313,19 +321,30 @@ func (f *Formatter) FormatAgents(agents []Agent) error {
 		}
 		return f.WriteCSV(headers, rows)
 	case FormatQuiet:
+		for _, a := range agents {
+			fmt.Fprintf(f.writer, "%s\n", a.ID)
+		}
 		return nil
 	default: // table
 		tw := f.NewTableWriter()
-		tw.WriteHeader("ID", "NODE", "STATUS", "ROLE", "TIER", "CONTEXT%", "CURRENT TASK")
+		tw.WriteHeader("ID", "NODE", "STATUS", "WORK STATE", "ROLE", "TIER", "CONTEXT%", "CURRENT TASK")
 		for _, a := range agents {
 			currentTask := "-"
 			if a.CurrentTask != nil {
 				currentTask = *a.CurrentTask
 			}
+			workState := a.WorkState
+			if workState == "" {
+				workState = "idle"
+			}
+			// Subtle color hints: agent ID by model prefix, node column by node name.
+			agentID := ColorModel(a.ID, truncate(a.ID, 20))
+			node := ColorNode(a.Node, truncate(a.Node, 12))
 			tw.WriteRow(
-				truncate(a.ID, 20),
-				truncate(a.Node, 12),
+				agentID,
+				node,
 				truncate(a.Status, 10),
+				truncate(workState, 10),
 				truncate(a.Role, 15),
 				truncate(a.Tier, 10),
 				fmt.Sprintf("%.1f%%", a.ContextPct),
@@ -348,9 +367,14 @@ func (f *Formatter) FormatAgentHealth(health *AgentHealth) error {
 		if health.CurrentTask != nil {
 			currentTask = *health.CurrentTask
 		}
+		workState := health.WorkState
+		if workState == "" {
+			workState = "idle"
+		}
 		f.Printf("Agent: %s\n", health.AgentID)
 		f.Printf("  Node:         %s\n", health.Node)
 		f.Printf("  Status:       %s\n", health.Status)
+		f.Printf("  Work State:   %s\n", workState)
 		f.Printf("  Context:      %.1f%%\n", health.ContextPct)
 		f.Printf("  Last Seen:    %s\n", health.LastSeen.Format("2006-01-02 15:04:05"))
 		f.Printf("  Connected At: %s\n", health.ConnectedAt.Format("2006-01-02 15:04:05"))
@@ -425,7 +449,7 @@ func (f *Formatter) FormatDomains(domains []Domain) error {
 	case FormatJSON:
 		return f.WriteJSON(domains)
 	case FormatCSV:
-		headers := []string{"Key", "Display Name", "Frontend", "Products", "Active", "MRR", "Deploy Status"}
+		headers := []string{"Key", "Display Name", "Owner", "Frontend", "Products", "Active", "MRR", "Deploy Status"}
 		rows := make([][]string, len(domains))
 		for i, d := range domains {
 			products := strings.Join(d.Products, ", ")
@@ -435,6 +459,7 @@ func (f *Formatter) FormatDomains(domains []Domain) error {
 			rows[i] = []string{
 				d.Key,
 				d.DisplayName,
+				d.Owner,
 				d.FrontendTier,
 				products,
 				fmt.Sprintf("%t", d.Active),
@@ -444,23 +469,30 @@ func (f *Formatter) FormatDomains(domains []Domain) error {
 		}
 		return f.WriteCSV(headers, rows)
 	case FormatQuiet:
+		for _, d := range domains {
+			fmt.Fprintf(f.writer, "%s\n", d.Key)
+		}
 		return nil
 	default: // table
 		tw := f.NewTableWriter()
-		tw.WriteHeader("KEY", "DISPLAY NAME", "FRONTEND", "PRODUCTS", "ACTIVE", "MRR", "DEPLOY")
+		tw.WriteHeader("KEY", "DISPLAY NAME", "OWNER", "PRODUCTS", "ACTIVE", "MRR", "DEPLOY")
 		for _, d := range domains {
 			products := strings.Join(d.Products, ", ")
 			if len(products) > 20 {
 				products = products[:17] + "..."
 			}
+			owner := d.Owner
+			if owner != "" {
+				owner = NodeColor(owner) + owner + ColorReset
+			}
 			tw.WriteRow(
 				truncate(d.Key, 20),
-				truncate(d.DisplayName, 20),
-				truncate(d.FrontendTier, 10),
+				truncate(d.DisplayName, 16),
+				owner,
 				truncate(products, 20),
 				fmt.Sprintf("%t", d.Active),
 				fmt.Sprintf("$%d", d.Business.CurrentMRR),
-				truncate(d.Business.DeployStatus, 10),
+				truncate(d.Business.DeployStatus, 12),
 			)
 		}
 		return tw.Flush()
@@ -477,6 +509,9 @@ func (f *Formatter) FormatDomainDetail(domain *Domain) error {
 	default: // table
 		f.Printf("Domain: %s\n", domain.Key)
 		f.Printf("  Display Name:    %s\n", domain.DisplayName)
+		if domain.Owner != "" {
+			f.Printf("  Owner:           %s%s%s\n", NodeColor(domain.Owner), domain.Owner, ColorReset)
+		}
 		f.Printf("  Frontend:        %s\n", domain.FrontendTier)
 		f.Printf("  Active:          %t\n", domain.Active)
 		if len(domain.Compliance) > 0 {
@@ -1056,6 +1091,9 @@ func (f *Formatter) FormatPatrols(patrols interface{}) error {
 		}
 		return f.WriteCSV(headers, rows)
 	case FormatQuiet:
+		for _, p := range patrolList {
+			fmt.Fprintf(f.writer, "%s\n", p.ID)
+		}
 		return nil
 	default: // table
 		tw := f.NewTableWriter()

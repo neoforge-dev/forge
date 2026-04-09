@@ -44,12 +44,32 @@ type PatrolSystem struct {
 
 // NewPatrolSystem creates a new patrol system
 func NewPatrolSystem(db *sql.DB) *PatrolSystem {
-	return &PatrolSystem{
+	ps := &PatrolSystem{
 		db:             db,
 		patrols:        StandardPatrols(),
 		contextPatrols: []ContextAwarePatrol{},
 		stop:           make(chan struct{}),
 	}
+	// Clean up ghost patrol rows from pre-consolidation — delete execution
+	// records for patrol IDs that no longer exist in StandardPatrols().
+	if db != nil {
+		liveIDs := make(map[string]bool, len(ps.patrols))
+		for _, p := range ps.patrols {
+			liveIDs[p.ID] = true
+		}
+		rows, err := db.Query(`SELECT DISTINCT patrol_id FROM patrol_executions`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var pid string
+				if rows.Scan(&pid) == nil && !liveIDs[pid] {
+					db.Exec(`DELETE FROM patrol_executions WHERE patrol_id = ?`, pid)
+					log.Printf("[PatrolSystem] Cleaned ghost patrol rows: %s", pid)
+				}
+			}
+		}
+	}
+	return ps
 }
 
 // SetContextManager sets the context manager for context-aware patrols
@@ -67,11 +87,27 @@ func (ps *PatrolSystem) AddContextPatrol(p ContextAwarePatrol) {
 	ps.contextPatrols = append(ps.contextPatrols, p)
 }
 
+// isDarkFactoryEnabled returns true if FORGE_DARK_FACTORY env var is "true" or "1".
+// Default is false — dark-factory patrols are disabled until explicitly enabled.
+func isDarkFactoryEnabled() bool {
+	v := os.Getenv("FORGE_DARK_FACTORY")
+	return v == "true" || v == "1"
+}
+
 // StandardPatrols returns the standard patrols. Overlapping patrols have been
 // consolidated into wrapper functions to reduce log spam and cognitive load.
-// Original count: 30. Current count: 25.
+// Original count: 38. Current count: 22 base + 3 dark-factory (gated by FORGE_DARK_FACTORY).
+// Council A1: harness-gap patrol dropped (unanimous, 2026-03-28).
+// Council A2: task-timeout + stale-task-ttl + dispatch-timeout + phantom-task-cleanup
+//             consolidated into task-lifecycle (approved with conditions, 2026-03-28).
+// Council S195 P1 + S196 T3: patrol consolidation 38→25 (S195: approved 3-0 2026-04-05; S196: applied 2026-04-05).
+//   S196 killed: agent-ttl-cleanup, doc-drift, research-expiry, result-verification,
+//                content-auto-approve, state-freshness, patterns-extraction, context-threshold.
+//   S195 killed: queue-depth, daily-digest, royal-jelly-staleness, rails8-drift, git-cleanup.
+//   Merged: xnode-ack-processor + xnode-retry-serializer → xnode-sync.
+// Dark-factory patrols (auto-promote, result-monitor, work-strategy) require FORGE_DARK_FACTORY=true.
 func StandardPatrols() []Patrol {
-	return []Patrol{
+	patrols := []Patrol{
 		// --- Agent health (merged: health-check + heartbeat-ttl + agent-liveness) ---
 		{
 			ID:       "agent-health",
@@ -79,11 +115,14 @@ func StandardPatrols() []Patrol {
 			Schedule: 2 * time.Minute,
 			Action:   agentHealthPatrol,
 		},
+		// --- Task lifecycle (merged: task-timeout + stale-task-ttl + dispatch-timeout + phantom-task-cleanup) ---
+		// Council A2: consolidated to reduce patrol table size. Each sub-function runs at its
+		// original effective frequency via taskLifecycleCounter (see taskLifecyclePatrol).
 		{
-			ID:       "task-timeout",
-			Name:     "Task Timeout Handler",
-			Schedule: 5 * time.Minute,
-			Action:   handleTimedOutTasks,
+			ID:       "task-lifecycle",
+			Name:     "Task Lifecycle (timeout + stale-ttl + dispatch-timeout + phantom-cleanup)",
+			Schedule: 1 * time.Minute, // Keep 1min for phantom-cleanup responsiveness
+			Action:   taskLifecyclePatrol,
 		},
 		{
 			ID:       "approval-expiry",
@@ -98,27 +137,15 @@ func StandardPatrols() []Patrol {
 			Action:   syncRoyalJelly,
 		},
 		{
-			ID:       "git-cleanup",
-			Name:     "Git Cleanup",
-			Schedule: 1 * time.Hour,
-			Action:   cleanStaleBranches,
-		},
-		{
-			ID:       "queue-depth",
-			Name:     "Queue Depth Monitor",
-			Schedule: 5 * time.Minute,
-			Action:   monitorQueueDepth,
-		},
-		{
 			ID:       "worktree-prune",
 			Name:     "Worktree Prune (ADR-024)",
-			Schedule: 1 * time.Hour,
+			Schedule: 6 * time.Hour,
 			Action:   pruneStaleWorktrees,
 		},
 		{
 			ID:       "metrics-rollup",
 			Name:     "Metrics Rollup (ADR-27)",
-			Schedule: 1 * time.Minute,
+			Schedule: 15 * time.Minute,
 			Action:   computeMetricsRollups,
 		},
 		{
@@ -127,19 +154,8 @@ func StandardPatrols() []Patrol {
 			Schedule: 2 * time.Minute,
 			Action:   requeueRetriableTasks,
 		},
-		{
-			ID:       "auto-promote",
-			Name:     "Auto-Promote Completed Lane Tasks (ADR-033)",
-			Schedule: 5 * time.Minute,
-			Action:   autoPromoteCompletedTasksInLane,
-		},
-		// --- Result file processing (merged: result-monitor + result-ingest) ---
-		{
-			ID:       "result-monitor",
-			Name:     "Result File Monitor (result-monitor + result-ingest)",
-			Schedule: 2 * time.Minute,
-			Action:   resultMonitorPatrol,
-		},
+		// auto-promote: dark-factory (gated — see isDarkFactoryEnabled)
+		// result-monitor: dark-factory (gated — see isDarkFactoryEnabled)
 		{
 			ID:       "confidence-approve",
 			Name:     "Confidence-Score Auto-Approve (ADR-033 F3)",
@@ -152,12 +168,12 @@ func StandardPatrols() []Patrol {
 			Schedule: 5 * time.Minute,
 			Action:   checkBinaryFreshness,
 		},
-		// --- Fleet scaling (merged: fleet-scale-recommend + fleet-deflate-recommend) ---
+		// --- Fleet scaling (merged: fleet-scale + fleet-auto into one patrol) ---
 		{
-			ID:       "fleet-scale",
-			Name:     "Fleet Scale (scale-recommend + deflate-recommend)",
+			ID:       "fleet-scaling",
+			Name:     "Fleet Scaling (recommend + execute + deflate)",
 			Schedule: 2 * time.Minute,
-			Action:   fleetScalePatrol,
+			Action:   fleetScalingPatrol,
 		},
 		{
 			ID:       "token-budget",
@@ -168,27 +184,15 @@ func StandardPatrols() []Patrol {
 		{
 			ID:       "council-cleanup",
 			Name:     "Council TTL Cleanup (ADR-035 P2)",
-			Schedule: 2 * time.Minute,
+			Schedule: 10 * time.Minute,
 			Action:   councilCleanupPatrol,
 		},
-		// --- Fleet execution (merged: fleet-auto-exec + fleet-auto-deflate) ---
+		// work-strategy: dark-factory (gated — see isDarkFactoryEnabled)
 		{
-			ID:       "fleet-auto",
-			Name:     "Fleet Auto (auto-exec + auto-deflate)",
-			Schedule: 2 * time.Minute,
-			Action:   fleetAutoPatrol,
-		},
-		{
-			ID:       "work-strategy",
-			Name:     "Orchestrator Work Strategy (ADR-036 P4)",
-			Schedule: 10 * time.Minute,
-			Action:   orchestratorWorkStrategyPatrol,
-		},
-		{
-			ID:       "stale-task-ttl",
-			Name:     "Stale Task TTL — Re-queue/Abandon Dead Agent Tasks",
-			Schedule: 5 * time.Minute,
-			Action:   staleTaskTTLPatrol,
+			ID:       "task-dispatcher",
+			Name:     "Task Queue → Tmux Dispatcher (S173)",
+			Schedule: 30 * time.Second,
+			Action:   taskDispatcherPatrol,
 		},
 		{
 			ID:       "data-retention",
@@ -199,32 +203,16 @@ func StandardPatrols() []Patrol {
 		{
 			ID:       "node-metrics-push",
 			Name:     "Node Metrics Push to Lead (ADR-027)",
-			Schedule: 1 * time.Minute,
+			Schedule: 10 * time.Minute,
 			Action:   nodeMetricsPushPatrol,
 		},
+		// --- XNode sync (merged: xnode-ack-processor + xnode-retry-serializer) ---
+		// Council S195 P1: consolidated to reduce patrol count.
 		{
-			ID:       "dispatch-timeout",
-			Name:     "Dispatch Timeout (mark TIMEOUT after 2h)",
-			Schedule: 15 * time.Minute,
-			Action:   dispatchTimeoutPatrol,
-		},
-		{
-			ID:       "daily-digest",
-			Name:     "Daily Digest Generator",
-			Schedule: 24 * time.Hour,
-			Action:   dailyDigestPatrol,
-		},
-		{
-			ID:       "xnode-ack-processor",
-			Name:     "XNode Ack Processor (ADR-023)",
+			ID:       "xnode-sync",
+			Name:     "XNode Sync (ack-processor + retry-serializer, ADR-023)",
 			Schedule: 2 * time.Minute,
-			Action:   xnodeAckProcessorPatrol,
-		},
-		{
-			ID:       "xnode-retry-serializer",
-			Name:     "XNode Retry Serializer (ADR-023)",
-			Schedule: 5 * time.Minute,
-			Action:   xnodeRetrySerializerPatrol,
+			Action:   xnodeSyncPatrol,
 		},
 		{
 			ID:       "orchestrator-auto",
@@ -239,24 +227,58 @@ func StandardPatrols() []Patrol {
 			Action:   messageRelayPatrol,
 		},
 		{
-			ID:       "agent-ttl-cleanup",
-			Name:     "Agent TTL Cleanup (24h stale removal)",
-			Schedule: 6 * time.Hour,
-			Action:   agentTTLCleanup,
-		},
-		{
-			ID:       "doc-drift",
-			Name:     "Doc Drift — key docs staleness check (hygiene)",
-			Schedule: 6 * time.Hour,
-			Action:   docDriftPatrol,
-		},
-		{
 			ID:       "dispatch-hygiene",
 			Name:     "Dispatch Hygiene — archive stale dispatch and result files (Council S118)",
-			Schedule: 24 * time.Hour,
+			Schedule: 7 * 24 * time.Hour,
 			Action:   dispatchHygienePatrol,
 		},
+		{
+			ID:       "stale-dispatch",
+			Name:     "Stale Dispatch ACK — requeue tasks stuck in DISPATCHED > 10min (Epic 4)",
+			Schedule: 5 * time.Minute,
+			Action:   staleDispatchPatrol,
+		},
+		{
+			ID:       "agent-recovery",
+			Name:     "Agent Auto-Recovery (S173 Epic 1)",
+			Schedule: 1 * time.Minute,
+			Action:   agentAutoRecoveryPatrol,
+		},
+		{
+			ID:       "context-compaction",
+			Name:     "Context Compaction — warn/compact agents approaching context ceiling",
+			Schedule: 10 * time.Minute,
+			Action:   contextCompactionPatrol,
+		},
+		{
+			ID:       "voice-health",
+			Name:     "Voice Command Health — success rate and confidence trend monitoring",
+			Schedule: 2 * time.Minute,
+			Action:   voiceHealthPatrol,
+		},
 	}
+
+	if isDarkFactoryEnabled() {
+		patrols = append(patrols,
+			Patrol{ID: "auto-promote", Name: "Auto-Promote Completed Lane Tasks (ADR-033)", Schedule: 5 * time.Minute, Action: autoPromoteCompletedTasksInLane},
+			Patrol{ID: "result-monitor", Name: "Result File Monitor (result-monitor + result-ingest)", Schedule: 2 * time.Minute, Action: resultMonitorPatrol},
+			Patrol{ID: "work-strategy", Name: "Orchestrator Work Strategy (ADR-036 P4)", Schedule: 10 * time.Minute, Action: orchestratorWorkStrategyPatrol},
+		)
+	}
+
+	return patrols
+}
+
+// DisablePatrol removes a patrol from the active set by ID. Used for emergency rollback.
+func (ps *PatrolSystem) DisablePatrol(id string) bool {
+	for i, p := range ps.patrols {
+		if p.ID == id {
+			ps.patrols = append(ps.patrols[:i], ps.patrols[i+1:]...)
+			log.Printf("[Patrol:%s] Disabled (emergency rollback)", id)
+			return true
+		}
+	}
+	return false
 }
 
 func checkAgentHealth(ctx context.Context, db *sql.DB) error {
@@ -330,23 +352,79 @@ func checkAgentHealth(ctx context.Context, db *sql.DB) error {
 }
 
 // markStaleHeartbeatsOffline marks agents in agent_heartbeats as offline if they
-// haven't sent a heartbeat in > 10 minutes. This is the ADR-027 heartbeat TTL patrol
+// haven't sent a heartbeat in > 3 minutes. This is the ADR-027 heartbeat TTL patrol
 // and complements checkAgentHealth which targets the legacy agents table.
+//
+// Node-level heuristic (Bug A2): before marking agents offline, the function
+// groups stale candidates by node.  If ALL agents on a given node are stale
+// simultaneously (and the node has more than one registered agent), the patrol
+// logs a warning that the cron heartbeat-refresh script may have stopped running
+// on that node, rather than attributing the silence to individual agent crashes.
 func markStaleHeartbeatsOffline(ctx context.Context, db *sql.DB) error {
-	tenMinutesAgo := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+	threeMinutesAgo := time.Now().Add(-3 * time.Minute).UTC().Format(time.RFC3339)
+
+	// --- Node-level cron diagnostics ---
+	// Count total agents per node, then count stale agents per node.  When the
+	// two counts match for any node that has >1 agent, that is a strong signal
+	// the heartbeat-refresh cron is broken on that node rather than all agents
+	// crashing simultaneously.
+	staleRows, err := db.QueryContext(ctx, `
+		SELECT node, COUNT(*) AS stale_count
+		FROM agent_heartbeats
+		WHERE last_seen < ?
+		AND status != 'offline'
+		GROUP BY node
+	`, threeMinutesAgo)
+	if err == nil {
+		defer staleRows.Close()
+
+		// Build map of node -> stale count
+		staleByNode := make(map[string]int)
+		for staleRows.Next() {
+			var node string
+			var cnt int
+			if scanErr := staleRows.Scan(&node, &cnt); scanErr == nil {
+				staleByNode[node] = cnt
+			}
+		}
+		staleRows.Close() // close early so we can run the next query
+
+		if len(staleByNode) > 0 {
+			// Total agents per node
+			totalRows, qErr := db.QueryContext(ctx, `
+				SELECT node, COUNT(*) AS total_count
+				FROM agent_heartbeats
+				GROUP BY node
+			`)
+			if qErr == nil {
+				defer totalRows.Close()
+				for totalRows.Next() {
+					var node string
+					var total int
+					if scanErr := totalRows.Scan(&node, &total); scanErr == nil {
+						if stale, ok := staleByNode[node]; ok && total > 1 && stale == total {
+							log.Printf("[Patrol:heartbeat-ttl] WARNING: all %d agents on node %q are simultaneously stale — heartbeat-refresh cron may be broken on that node. Recovery: SSH to %s and run: .forge/scripts/heartbeat-refresh.sh", total, node, node)
+						}
+					}
+				}
+				totalRows.Close()
+			}
+		}
+	}
+	// --- end node-level diagnostics ---
 
 	result, err := db.ExecContext(ctx, `
 		UPDATE agent_heartbeats
 		SET status = 'offline'
 		WHERE last_seen < ?
 		AND status != 'offline'
-	`, tenMinutesAgo)
+	`, threeMinutesAgo)
 	if err != nil {
 		return fmt.Errorf("mark stale heartbeats offline: %w", err)
 	}
 
 	if rows, _ := result.RowsAffected(); rows > 0 {
-		log.Printf("[Patrol:heartbeat-ttl] Marked %d stale agents offline (no heartbeat > 10min)", rows)
+		log.Printf("[Patrol:heartbeat-ttl] Marked %d stale agents offline (no heartbeat > 3min)", rows)
 	}
 
 	return nil
@@ -372,28 +450,64 @@ func agentTTLCleanup(ctx context.Context, db *sql.DB) error {
 }
 
 // requeueRetriableTasks automatically requeues failed tasks that have retry_count < 3
-// and have been failed for at least 60 seconds
+// and have been failed for at least 60 seconds. It builds a failure_context JSON
+// blob for each task so downstream agents can make remediation-aware decisions.
 func requeueRetriableTasks(ctx context.Context, db *sql.DB) error {
-	// Requeue FAILED tasks with retry_count < 3, failed > 60s ago
 	sixtySecondsAgo := time.Now().Add(-60 * time.Second).UTC().Format(time.RFC3339)
-	result, err := db.ExecContext(ctx, `
-		UPDATE tasks
-		SET status = 'queued',
-			state = 'QUEUED',
-			assigned_to = NULL,
-			updated_at = datetime('now')
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, COALESCE(error, ''), COALESCE(result, ''), retry_count
+		FROM tasks
 		WHERE status = 'failed'
 		AND (state = 'FAILED' OR state IS NULL)
 		AND retry_count < 3
 		AND updated_at < ?
 	`, sixtySecondsAgo)
 	if err != nil {
-		return fmt.Errorf("auto-requeue: %w", err)
+		return fmt.Errorf("auto-requeue query: %w", err)
 	}
-	if rows, _ := result.RowsAffected(); rows > 0 {
-		log.Printf("[Patrol:auto-requeue] Requeued %d retriable failed tasks", rows)
+	defer rows.Close()
+
+	requeued := 0
+	for rows.Next() {
+		var id, taskError, taskResult string
+		var retryCount int
+		if err := rows.Scan(&id, &taskError, &taskResult, &retryCount); err != nil {
+			continue
+		}
+		// Truncate to avoid bloating DB
+		if len(taskError) > 500 {
+			taskError = taskError[:500]
+		}
+		if len(taskResult) > 200 {
+			taskResult = taskResult[:200]
+		}
+		// Use json.Marshal for safe encoding (handles newlines, quotes, etc.)
+		fcMap := map[string]interface{}{
+			"attempt":     retryCount + 1,
+			"error":       taskError,
+			"output_tail": taskResult,
+		}
+		fcBytes, _ := json.Marshal(fcMap)
+		fc := string(fcBytes)
+
+		_, execErr := db.ExecContext(ctx, `
+			UPDATE tasks
+			SET status = 'queued', state = 'QUEUED',
+				assigned_to = NULL,
+				failure_context = ?,
+				updated_at = datetime('now')
+			WHERE id = ?
+		`, fc, id)
+		if execErr != nil {
+			log.Printf("[Patrol:auto-requeue] requeue error %s: %v", id, execErr)
+			continue
+		}
+		requeued++
 	}
-	return nil
+	if requeued > 0 {
+		log.Printf("[Patrol:auto-requeue] Requeued %d tasks with failure context", requeued)
+	}
+	return rows.Err()
 }
 
 func handleTimedOutTasks(ctx context.Context, db *sql.DB) error {
@@ -592,6 +706,40 @@ func syncRoyalJelly(ctx context.Context, db *sql.DB) error {
 		log.Printf("[Patrol:context-sync] Synced %d context envelopes", syncCount)
 	}
 
+	// Royal Jelly staleness detection (ADR-052 Phase 2)
+	// Skip symlinks (P2-2) and node-level contexts (P2-1: low-frequency, only update on handoffs)
+	nodeContexts := map[string]bool{
+		"forge": true, "gaea": true, "nova": true, "oc": true, "prya": true, "sati": true,
+		"archive": true, "pace": true,
+	}
+	staleThreshold := 7 * 24 * time.Hour
+	if entries, err := os.ReadDir(contextDir); err == nil {
+		var staleDomains []string
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			// Skip symlinks — they duplicate real domain dirs
+			if entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			// Skip node-level contexts — they only update on handoffs (expected staleness)
+			if nodeContexts[entry.Name()] {
+				continue
+			}
+			lcPath := filepath.Join(contextDir, entry.Name(), "lead-context.md")
+			if info, err := os.Stat(lcPath); err == nil {
+				if time.Since(info.ModTime()) > staleThreshold {
+					staleDomains = append(staleDomains, entry.Name())
+				}
+			}
+		}
+		if len(staleDomains) > 0 {
+			log.Printf("[Patrol:royal-jelly] Stale contexts detected: count=%d domains=%s threshold=7d",
+				len(staleDomains), strings.Join(staleDomains, ", "))
+		}
+	}
+
 	return nil
 }
 
@@ -627,86 +775,6 @@ func buildLeadContextFromEnvelope(domain, summary string, decisions []Decision, 
 	b.WriteString("*Auto-generated by Royal Jelly sync*\n")
 
 	return b.String()
-}
-
-func cleanStaleBranches(ctx context.Context, db *sql.DB) error {
-	// Clean up branches older than 7 days
-	// Look for branches matching pattern node/*/TASK-* or similar
-
-	// Get list of branches from git
-	cmd := exec.CommandContext(ctx, "git", "branch", "-r", "--format=%(refname:short) %(committerdate:short)")
-	cmd.Dir = "."
-
-	output, err := cmd.Output()
-	if err != nil {
-		// Git command failed, not critical
-		return nil
-	}
-
-	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
-	var staleBranches []string
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-
-		branch := parts[0]
-		dateStr := parts[1]
-
-		// Only process origin/ branches
-		if !strings.HasPrefix(branch, "origin/") {
-			continue
-		}
-
-		// Check if it's a node branch
-		branchName := strings.TrimPrefix(branch, "origin/")
-		if !strings.HasPrefix(branchName, "node/") {
-			continue
-		}
-
-		// Parse date
-		commitDate, err := time.Parse("2006-01-02", dateStr)
-		if err != nil {
-			continue
-		}
-
-		if commitDate.Before(sevenDaysAgo) {
-			staleBranches = append(staleBranches, branchName)
-		}
-	}
-
-	if len(staleBranches) > 0 {
-		log.Printf("[Patrol:git-cleanup] Found %d stale branches older than 7 days", len(staleBranches))
-		// Note: Actually deleting branches requires careful consideration
-		// For now, we just log them. In production, this might archive them
-		// or mark them for human review.
-	}
-
-	return nil
-}
-
-func monitorQueueDepth(ctx context.Context, db *sql.DB) error {
-	// Monitor queue depth and alert if too high
-	var count int
-	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM tasks
-		WHERE status IN (?, ?)
-	`, TaskStatusQueued, TaskStatusRequested).Scan(&count)
-
-	if err != nil {
-		return fmt.Errorf("count queued tasks: %w", err)
-	}
-
-	if count > 100 {
-		log.Printf("[Patrol:queue-depth] WARNING: Queue depth is %d (threshold: 100)", count)
-	} else if count > 50 {
-		log.Printf("[Patrol:queue-depth] INFO: Queue depth is %d", count)
-	}
-
-	return nil
 }
 
 // pruneStaleWorktrees removes worktrees for completed/failed tasks (ADR-024).
@@ -1036,6 +1104,15 @@ func monitorResultFiles(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 
+		// NOTE: Per-task Telegram alerts removed (S179+ — too noisy).
+		// Task completions are batched in the daily digest and gate alerts.
+		// Only alert on genuinely important events (failures, blockers, gates).
+
+		// Best-effort quality gate results insertion — never blocks auto-completion.
+		// Pass full file content so structured <!-- QUALITY_GATE --> blocks are detected
+		// before falling back to regex heuristics on the summary.
+		go insertQualityGateResults(ctx, db, taskID, string(content))
+
 		// Move to processed/
 		dest := filepath.Join(processedDir, e.Name())
 		if mvErr := os.Rename(filePath, dest); mvErr != nil {
@@ -1316,6 +1393,33 @@ func checkBinaryFreshness(ctx context.Context, db *sql.DB) error {
 	binaryPath := filepath.Join(root, "cmd", "forged", "forged")
 	srcDir := filepath.Join(root, "cmd", "forged")
 
+	// Cooldown: skip if a recent build failure exists (retry after 1 hour or when new source arrives)
+	failureReport := filepath.Join(root, ".forge", "heartbeat", "results", "binary-build-failure.md")
+	if failInfo, err := os.Stat(failureReport); err == nil {
+		failAge := time.Since(failInfo.ModTime())
+		if failAge < 1*time.Hour {
+			// Check if new source arrived after the failure
+			// (newestSrc computation happens later, so do a quick check here)
+			entries, _ := os.ReadDir(filepath.Join(root, "cmd", "forged"))
+			var newestSrcQuick time.Time
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+					if info, err2 := e.Info(); err2 == nil && info.ModTime().After(newestSrcQuick) {
+						newestSrcQuick = info.ModTime()
+					}
+				}
+			}
+			if newestSrcQuick.Before(failInfo.ModTime()) {
+				return nil // No new source since failure — cooldown active
+			}
+			// New source arrived after failure — remove stale report and retry
+			_ = os.Remove(failureReport)
+		} else {
+			// Cooldown expired — remove stale report
+			_ = os.Remove(failureReport)
+		}
+	}
+
 	binaryInfo, err := os.Stat(binaryPath)
 	if err != nil {
 		return nil // binary missing in test/CI context — skip
@@ -1389,22 +1493,22 @@ func checkBinaryFreshness(ctx context.Context, db *sql.DB) error {
 }
 
 // agentLivenessPatrol detects "zombie" agents: agents that have a heartbeat row
-// in agent_heartbeats but whose last_seen is older than 5 minutes (stale).
+// in agent_heartbeats but whose last_seen is older than 3 minutes (stale).
 // Per kimi council wildcard (ADR-035): prevents task loss from silent agents.
 //
 // Phase 2 P1 action: mark zombie status in agent_heartbeats + log.
 // Phase 2 P2 (future): auto-deflate and respawn via deflation compound gate.
 func agentLivenessPatrol(ctx context.Context, db *sql.DB) error {
-	tenMinutesAgo := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+	threeMinutesAgo := time.Now().Add(-3 * time.Minute).UTC().Format(time.RFC3339)
 
-	// Find agents that are non-offline but haven't sent a heartbeat in >10min.
+	// Find agents that are non-offline but haven't sent a heartbeat in >3min.
 	rows, err := db.QueryContext(ctx, `
 		SELECT agent_id, node, status, last_seen, current_task_id
 		FROM agent_heartbeats
 		WHERE last_seen < ?
 		AND status != 'offline'
 		AND status != 'zombie'
-	`, tenMinutesAgo)
+	`, threeMinutesAgo)
 	if err != nil {
 		return fmt.Errorf("agentLiveness query: %w", err)
 	}
@@ -1683,83 +1787,16 @@ func resultIngestPatrol(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// dailyDigestPatrol generates a daily summary markdown file in .forge/heartbeat/results/.
-// Idempotent: if the file already exists for today, it does nothing. (Task #52 — opencode dispatch)
-func dailyDigestPatrol(ctx context.Context, db *sql.DB) error {
-	forgeRoot := os.Getenv("FORGE_ROOT")
-	if forgeRoot == "" {
-		forgeRoot = "."
+// xnodeSyncPatrol is a merged patrol combining xnodeAckProcessorPatrol and
+// xnodeRetrySerializerPatrol. Council S195 P1: consolidated 2026-04-05.
+// Runs both sequentially; errors from each are logged but do not abort the other.
+func xnodeSyncPatrol(ctx context.Context, db *sql.DB) error {
+	if err := xnodeAckProcessorPatrol(ctx, db); err != nil {
+		log.Printf("[xnode-sync] ack-processor error: %v", err)
 	}
-
-	today := time.Now().UTC().Format("2006-01-02")
-	outPath := filepath.Join(forgeRoot, ".forge/heartbeat/results", "daily-digest-"+today+".md")
-
-	// Idempotent: skip if already exists
-	if _, err := os.Stat(outPath); err == nil {
-		return nil
+	if err := xnodeRetrySerializerPatrol(ctx, db); err != nil {
+		log.Printf("[xnode-sync] retry-serializer error: %v", err)
 	}
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
-		log.Printf("[Patrol:daily-digest] failed to create results dir: %v", err)
-		return nil
-	}
-
-	// Query task stats for last 24h
-	completedCount := 0
-	failedCount := 0
-	patrolErrorCount := 0
-
-	row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE status='completed' AND updated_at > datetime('now','-24 hours')`)
-	_ = row.Scan(&completedCount)
-
-	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE status IN ('failed','abandoned') AND updated_at > datetime('now','-24 hours')`)
-	_ = row.Scan(&failedCount)
-
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM patrol_executions WHERE status='error' AND started_at > datetime('now','-24 hours')`).Scan(&patrolErrorCount); err != nil {
-		// patrol_executions may not exist yet; ignore
-		patrolErrorCount = 0
-	}
-
-	// Recent git commits
-	var commitLines []string
-	gitOut, err := exec.CommandContext(ctx, "git", "log", "--oneline", "--since=24 hours ago").Output()
-	if err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(gitOut)), "\n") {
-			if line != "" {
-				commitLines = append(commitLines, "- "+line)
-			}
-		}
-	}
-
-	commitSection := "_No commits in last 24h_"
-	if len(commitLines) > 0 {
-		commitSection = strings.Join(commitLines, "\n")
-	}
-
-	now := time.Now().UTC()
-	content := fmt.Sprintf(`# FORGE Daily Digest — %s
-
-**Generated:** %s UTC
-
-## Tasks (24h)
-- Completed: %d
-- Failed/Abandoned: %d
-
-## Patrols
-- Errors: %d
-
-## Recent Commits
-%s
-`, today, now.Format("2006-01-02 15:04"), completedCount, failedCount, patrolErrorCount, commitSection)
-
-	if err := os.WriteFile(outPath, []byte(content), 0644); err != nil {
-		log.Printf("[Patrol:daily-digest] failed to write digest: %v", err)
-		return nil
-	}
-
-	log.Printf("[Patrol:daily-digest] wrote %s (completed=%d failed=%d patrol_errors=%d commits=%d)",
-		outPath, completedCount, failedCount, patrolErrorCount, len(commitLines))
 	return nil
 }
 
@@ -1976,6 +2013,21 @@ func fleetAutoPatrol(ctx context.Context, db *sql.DB) error {
 	return fleetAutoDeflatePatrol(ctx, db)
 }
 
+// fleetScalingPatrol merges fleet-scale and fleet-auto into one patrol.
+// Runs the full cycle: recommend scaling, recommend deflation, execute scaling, execute deflation.
+func fleetScalingPatrol(ctx context.Context, db *sql.DB) error {
+	if err := fleetScaleRecommendPatrol(ctx, db); err != nil {
+		log.Printf("[Patrol:fleet-scaling] fleetScaleRecommendPatrol: %v", err)
+	}
+	if err := fleetDeflateRecommendPatrol(ctx, db); err != nil {
+		log.Printf("[Patrol:fleet-scaling] fleetDeflateRecommendPatrol: %v", err)
+	}
+	if err := fleetAutoExecutePatrol(ctx, db); err != nil {
+		log.Printf("[Patrol:fleet-scaling] fleetAutoExecutePatrol: %v", err)
+	}
+	return fleetAutoDeflatePatrol(ctx, db)
+}
+
 // docDriftPatrol checks key documentation files for staleness (last modified
 // older than 14 days). Stale files are reported in .forge/reports/doc-drift.md.
 // Returns nil even when stale files are found — the report file is the artifact.
@@ -2136,4 +2188,588 @@ func dispatchHygienePatrol(ctx context.Context, db *sql.DB) error {
 
 	log.Printf("[Patrol:dispatch-hygiene] archived=%d dispatches, %d results", dispatchArchived, resultsArchived)
 	return nil
+}
+
+// researchExpiryPatrol scans .forge/heartbeat/results/ for research reports
+// older than 3 days that haven't been reflected in portfolio-state.yaml.
+// Writes a warning report to .forge/reports/research-expiry.md.
+// Council S159 P0: prevents the 30-min stale-state reconciliation gap.
+// Schedule: 6 hours (group: hygiene).
+func researchExpiryPatrol(ctx context.Context, db *sql.DB) error {
+	const expiryThreshold = 3 * 24 * time.Hour
+
+	root := forgeRoot()
+	resultsDir := filepath.Join(root, ".forge", "heartbeat", "results")
+	portfolioPath := filepath.Join(root, "config", "portfolio", "portfolio-state.yaml")
+
+	// Read portfolio-state.yaml modification time as a proxy for "last reconciled."
+	portfolioInfo, err := os.Stat(portfolioPath)
+	if err != nil {
+		// No portfolio file — nothing to reconcile against.
+		log.Printf("[Patrol:research-expiry] portfolio-state.yaml not found, skipping")
+		return nil
+	}
+	portfolioModTime := portfolioInfo.ModTime()
+
+	// Scan results directory for *research* files.
+	entries, err := os.ReadDir(resultsDir)
+	if err != nil {
+		// Directory missing is not an error — just no results yet.
+		log.Printf("[Patrol:research-expiry] results dir not found, skipping")
+		return nil
+	}
+
+	now := time.Now()
+	type staleReport struct {
+		Name    string
+		DaysOld int
+		ModTime time.Time
+	}
+	var stale []staleReport
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// Only check files matching *research* pattern.
+		if !strings.Contains(name, "research") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		age := now.Sub(info.ModTime())
+		// Report is stale if: older than threshold AND newer than last portfolio update.
+		// (If portfolio was updated AFTER the report, it's been reconciled.)
+		if age > expiryThreshold && info.ModTime().After(portfolioModTime) {
+			stale = append(stale, staleReport{
+				Name:    name,
+				DaysOld: int(age.Hours() / 24),
+				ModTime: info.ModTime(),
+			})
+		}
+	}
+
+	// Build report.
+	var sb strings.Builder
+	sb.WriteString("# Research Expiry Report\n\n")
+	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", now.UTC().Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Expiry threshold: %d days\n", int(expiryThreshold.Hours()/24)))
+	sb.WriteString(fmt.Sprintf("Portfolio last updated: %s\n\n", portfolioModTime.UTC().Format("2006-01-02 15:04")))
+
+	if len(stale) == 0 {
+		sb.WriteString("No stale research reports found. All findings have been reconciled.\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("## Stale Reports (%d)\n\n", len(stale)))
+		sb.WriteString("These research reports are >3 days old and were created AFTER the last portfolio update.\n")
+		sb.WriteString("**Action required:** Run portfolio reconciliation or update portfolio-state.yaml.\n\n")
+		for _, r := range stale {
+			sb.WriteString(fmt.Sprintf("- `%s` — %d days old (created: %s)\n",
+				r.Name, r.DaysOld, r.ModTime.UTC().Format("2006-01-02")))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Write report.
+	reportDir := filepath.Join(root, ".forge", "reports")
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return fmt.Errorf("research-expiry mkdir: %w", err)
+	}
+	reportPath := filepath.Join(reportDir, "research-expiry.md")
+	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("research-expiry write: %w", err)
+	}
+
+	if len(stale) > 0 {
+		log.Printf("[Patrol:research-expiry] WARNING: %d stale research reports need reconciliation — %s", len(stale), reportPath)
+	} else {
+		log.Printf("[Patrol:research-expiry] all research reports reconciled")
+	}
+
+	return nil
+}
+
+// taskLifecycleCounter tracks invocations of taskLifecyclePatrol so that heavier
+// sub-functions can run at their original effective frequencies rather than every minute.
+var taskLifecycleCounter int
+
+// taskLifecyclePatrol is the consolidated task lifecycle patrol (Council A2, 2026-03-28).
+// It replaces four separate patrols — task-timeout, stale-task-ttl, dispatch-timeout,
+// and phantom-task-cleanup — with a single 1-minute entry.  Each sub-function retains
+// its own code path and runs at its original effective frequency:
+//
+//   - phantom-cleanup:   every invocation  → effective period: 1 min  (was 1 min)
+//   - task-timeout:      every 5th tick    → effective period: 5 min  (was 5 min)
+//   - stale-task-ttl:    every 5th tick    → effective period: 5 min  (was 5 min)
+//   - dispatch-timeout:  every 15th tick   → effective period: 15 min (was 15 min)
+//
+// Errors from sub-functions are logged but do not abort the other sub-functions.
+func taskLifecyclePatrol(ctx context.Context, db *sql.DB) error {
+	taskLifecycleCounter++
+
+	// Sub-function 1: Phantom task auto-complete (Council S157) — every invocation (1 min effective).
+	if err := phantomTaskAutoCompletePatrol(ctx, db); err != nil {
+		log.Printf("[task-lifecycle] phantom-cleanup error: %v", err)
+	}
+
+	// Sub-function 2: Task timeout — every 5th invocation (5 min effective).
+	if taskLifecycleCounter%5 == 0 {
+		if err := handleTimedOutTasks(ctx, db); err != nil {
+			log.Printf("[task-lifecycle] task-timeout error: %v", err)
+		}
+	}
+
+	// Sub-function 3: Stale task TTL — every 5th invocation (5 min effective).
+	if taskLifecycleCounter%5 == 0 {
+		if err := staleTaskTTLPatrol(ctx, db); err != nil {
+			log.Printf("[task-lifecycle] stale-task-ttl error: %v", err)
+		}
+	}
+
+	// Sub-function 4: Dispatch timeout (mark TIMEOUT after 2h) — every 15th invocation (15 min effective).
+	if taskLifecycleCounter%15 == 0 {
+		if err := dispatchTimeoutPatrol(ctx, db); err != nil {
+			log.Printf("[task-lifecycle] dispatch-timeout error: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// harnessGapPatrol scans for tasks that exhausted retries (retry_count >= 3)
+// and auto-creates coverage tasks so the failure mode gets a test case.
+// Deduplicates by checking if a patrol:harness-gap task already references the original.
+//
+// Deprecated: removed from StandardPatrols() by Council A1 (unanimous, 2026-03-28).
+// Kept for existing tests and potential future re-enablement.
+func harnessGapPatrol(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT t.id, t.title, t.domain, t.project,
+		       COALESCE(t.error, ''), COALESCE(t.failure_context, '')
+		FROM tasks t
+		WHERE t.state = 'FAILED' AND t.retry_count >= 3
+		AND t.updated_at > datetime('now', '-7 days')
+		AND NOT EXISTS (
+			SELECT 1 FROM tasks t2
+			WHERE t2.origin = 'patrol:harness-gap'
+			AND instr(t2.description, t.id) > 0
+		)
+		LIMIT 10
+	`)
+	if err != nil {
+		return fmt.Errorf("harness-gap query: %w", err)
+	}
+	defer rows.Close()
+
+	created := 0
+	for rows.Next() {
+		var origID, title, domain, project, taskError, failureCtx string
+		if err := rows.Scan(&origID, &title, &domain, &project, &taskError, &failureCtx); err != nil {
+			continue
+		}
+		if domain == "" {
+			domain = "forge"
+		}
+		if project == "" {
+			project = "infrastructure"
+		}
+
+		taskID := "HG-" + generateULID()
+
+		desc := fmt.Sprintf("## Harness Gap\n\nOriginal task `%s` failed %s.\n\n**Title:** %s\n\n**Error:** %s\n\n**Failure Context:** %s\n\n**Action:** Add a test case that covers this failure mode so it cannot regress silently.",
+			origID, "3x (retries exhausted)", title, taskError, failureCtx)
+
+		_, execErr := db.ExecContext(ctx, `
+			INSERT INTO tasks (id, domain, project, type, priority, status, state,
+			                   title, description, origin, created_at, updated_at)
+			VALUES (?, ?, ?, 'bugfix', 7, 'queued', 'QUEUED',
+			        ?, ?, 'patrol:harness-gap', datetime('now'), datetime('now'))
+		`, taskID, domain, project,
+			fmt.Sprintf("Coverage gap: %s", truncateStr(title, 60)),
+			desc)
+		if execErr != nil {
+			log.Printf("[Patrol:harness-gap] insert error for %s: %v", origID, execErr)
+			continue
+		}
+		log.Printf("[Patrol:harness-gap] Created coverage task %s for failed %s", taskID, origID)
+		created++
+	}
+	if created > 0 {
+		log.Printf("[Patrol:harness-gap] Created %d coverage tasks from exhausted failures", created)
+	}
+	return rows.Err()
+}
+
+// staleDispatchPatrol requeues tasks that have been stuck in DISPATCHED state for
+// more than 10 minutes without an ACK (Epic 4 — dispatch reliability).
+//
+// Logic:
+//   - If dispatch_attempts >= max_retries: transition to FAILED (max retries exceeded).
+//   - Else: reset to QUEUED for the next dispatch attempt, incrementing dispatch_attempts.
+func staleDispatchPatrol(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, COALESCE(assigned_to, ''), dispatch_attempts, max_retries
+		FROM tasks
+		WHERE state = 'DISPATCHED'
+		AND updated_at < datetime('now', '-10 minutes')
+	`)
+	if err != nil {
+		return fmt.Errorf("stale-dispatch query: %w", err)
+	}
+	defer rows.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	failed := 0
+	requeued := 0
+
+	for rows.Next() {
+		var id, assignedTo string
+		var attempts, maxRetries int
+		if err := rows.Scan(&id, &assignedTo, &attempts, &maxRetries); err != nil {
+			log.Printf("[Patrol:stale-dispatch] scan error: %v", err)
+			continue
+		}
+
+		if attempts >= maxRetries {
+			// Exhausted retries — mark FAILED permanently.
+			_, execErr := db.ExecContext(ctx, `
+				UPDATE tasks
+				SET state = 'FAILED', status = 'failed',
+				    error = 'dispatch max retries exceeded: agent did not ACK within 10 minutes',
+				    assigned_to = NULL, updated_at = ?
+				WHERE id = ? AND state = 'DISPATCHED'
+			`, now, id)
+			if execErr != nil {
+				log.Printf("[Patrol:stale-dispatch] fail update error %s: %v", id, execErr)
+				continue
+			}
+			log.Printf("[Patrol:stale-dispatch] FAILED task %s (attempts=%d >= max=%d, agent=%s)", id, attempts, maxRetries, assignedTo)
+			failed++
+		} else {
+			// Reset to QUEUED for re-dispatch. dispatch_attempts already counted the failed
+			// attempt during ClaimTask/ClaimTransition, so we just clear the state fields.
+			_, execErr := db.ExecContext(ctx, `
+				UPDATE tasks
+				SET state = 'QUEUED', status = 'queued',
+				    assigned_to = NULL, started_at = NULL, updated_at = ?
+				WHERE id = ? AND state = 'DISPATCHED'
+			`, now, id)
+			if execErr != nil {
+				log.Printf("[Patrol:stale-dispatch] requeue error %s: %v", id, execErr)
+				continue
+			}
+			log.Printf("[Patrol:stale-dispatch] requeued task %s (attempt %d/%d, agent=%s did not ACK)", id, attempts, maxRetries, assignedTo)
+			requeued++
+		}
+	}
+
+	if failed+requeued > 0 {
+		log.Printf("[Patrol:stale-dispatch] processed %d stale dispatches: %d requeued, %d failed", failed+requeued, requeued, failed)
+	}
+	return rows.Err()
+}
+
+// contextCompactionPatrol detects agents approaching their context window ceiling and
+// marks them for handoff/compaction before they stall. This prevents the 3am dark-factory
+// stall where agents hit ~75% context and can no longer accept new work.
+//
+// Thresholds:
+//   - context_pct > 75: WARNING — set status to "wrapup" so orchestrator knows to handoff
+//   - context_pct > 90: CRITICAL — set status to "wrapup" with a restart flag in the log
+//
+// The patrol is advisory only — it never terminates agents. It returns nil always.
+func contextCompactionPatrol(ctx context.Context, db *sql.DB) error {
+	// Ensure context_pct column exists in agent_heartbeats — add it if absent.
+	// This is a safety net for nodes that skipped migration 010.
+	var colExists int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM pragma_table_info('agent_heartbeats') WHERE name='context_pct'
+	`).Scan(&colExists)
+	if err == nil && colExists == 0 {
+		if _, alterErr := db.ExecContext(ctx, `ALTER TABLE agent_heartbeats ADD COLUMN context_pct REAL DEFAULT 0`); alterErr != nil {
+			log.Printf("[context-compaction] could not add context_pct column: %v", alterErr)
+		} else {
+			log.Printf("[context-compaction] added missing context_pct column to agent_heartbeats")
+		}
+	}
+
+	// Query all non-offline agents with meaningful context usage (> 0).
+	rows, err := db.QueryContext(ctx, `
+		SELECT agent_id, COALESCE(context_pct, 0), COALESCE(status, 'idle')
+		FROM agent_heartbeats
+		WHERE status != 'offline'
+		AND COALESCE(context_pct, 0) > 0
+	`)
+	if err != nil {
+		// Table may not exist yet on a fresh node — treat as no agents.
+		log.Printf("[context-compaction] query error (skipping): %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	type agentCtx struct {
+		id         string
+		contextPct float64
+		status     string
+	}
+
+	var warn, critical []agentCtx
+
+	for rows.Next() {
+		var a agentCtx
+		if err := rows.Scan(&a.id, &a.contextPct, &a.status); err != nil {
+			continue
+		}
+		if a.contextPct > 90 {
+			critical = append(critical, a)
+		} else if a.contextPct > 75 {
+			warn = append(warn, a)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[context-compaction] rows error: %v", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	for _, a := range warn {
+		log.Printf("[context-compaction] WARNING agent=%s context=%.1f%% action=wrapup", a.id, a.contextPct)
+		if a.status != "wrapup" {
+			_, _ = db.ExecContext(ctx, `
+				UPDATE agent_heartbeats SET status = 'wrapup', last_seen = ? WHERE agent_id = ?
+			`, now, a.id)
+		}
+	}
+
+	for _, a := range critical {
+		log.Printf("[context-compaction] CRITICAL agent=%s context=%.1f%% action=restart-needed", a.id, a.contextPct)
+		if a.status != "wrapup" {
+			_, _ = db.ExecContext(ctx, `
+				UPDATE agent_heartbeats SET status = 'wrapup', last_seen = ? WHERE agent_id = ?
+			`, now, a.id)
+		}
+	}
+
+	total := len(warn) + len(critical)
+	if total > 0 {
+		log.Printf("[context-compaction] processed %d agents: %d warn (>75%%), %d critical (>90%%)", total, len(warn), len(critical))
+	}
+
+	return nil
+}
+
+// stateFreshnessGitTimestamp is the function used by stateFreshnessPatrol to
+// retrieve the last-commit Unix timestamp for a file. It is a package-level
+// variable so tests can replace it without spawning real git processes.
+var stateFreshnessGitTimestamp = func(root, relPath string) (int64, error) {
+	out, err := exec.Command(
+		"git", "-C", root, "log", "-1", "--format=%ct", "--", relPath,
+	).Output()
+	if err != nil {
+		return 0, fmt.Errorf("git log %s: %w", relPath, err)
+	}
+	ts := strings.TrimSpace(string(out))
+	if ts == "" {
+		return 0, nil // file not yet committed
+	}
+	var epoch int64
+	if _, err := fmt.Sscanf(ts, "%d", &epoch); err != nil {
+		return 0, fmt.Errorf("parse timestamp %q: %w", ts, err)
+	}
+	return epoch, nil
+}
+
+// stateFreshnessPatrol checks the last-commit date for key state files
+// (docs/PROMPT-*.md, docs/PLAN.md, docs/BACKLOG.md) and reports files that
+// have not been updated recently. Warn threshold: 3 days. Critical (auto-
+// archive proposal) threshold: 14 days. Report: .forge/reports/state-freshness.md.
+// Council S194. Schedule: 24 hours.
+func stateFreshnessPatrol(ctx context.Context, db *sql.DB) error {
+	const warnDays = 3
+	const criticalDays = 14
+
+	root := forgeRoot()
+
+	// Resolve docs/PROMPT-*.md glob, plus fixed files.
+	promptMatches, _ := filepath.Glob(filepath.Join(root, "docs", "PROMPT-*.md"))
+	targets := make([]string, 0, len(promptMatches)+2)
+	for _, abs := range promptMatches {
+		rel, _ := filepath.Rel(root, abs)
+		targets = append(targets, rel)
+	}
+	targets = append(targets, "docs/PLAN.md", "docs/BACKLOG.md")
+
+	type fileStatus struct {
+		Path      string
+		DaysSince int
+		Status    string // fresh / stale / critical / unknown
+	}
+
+	now := time.Now().Unix()
+	var stale []fileStatus
+	allStatuses := make([]fileStatus, 0, len(targets))
+
+	for _, rel := range targets {
+		epoch, err := stateFreshnessGitTimestamp(root, rel)
+		if err != nil {
+			log.Printf("[Patrol:state-freshness] git error for %s: %v", rel, err)
+			continue
+		}
+		var days int
+		status := "fresh"
+		if epoch == 0 {
+			days = -1
+			status = "unknown" // never committed
+		} else {
+			days = int((now - epoch) / 86400)
+			if days >= criticalDays {
+				status = "critical"
+			} else if days >= warnDays {
+				status = "stale"
+			}
+		}
+		fs := fileStatus{Path: rel, DaysSince: days, Status: status}
+		allStatuses = append(allStatuses, fs)
+		if status == "stale" || status == "critical" {
+			stale = append(stale, fs)
+		}
+	}
+
+	// Build report markdown.
+	var sb strings.Builder
+	sb.WriteString("# State Freshness Report\n\n")
+	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", time.Now().UTC().Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Warn threshold: %d days | Critical threshold: %d days\n\n", warnDays, criticalDays))
+
+	sb.WriteString("## File Status\n\n")
+	sb.WriteString("| File | Days Since Commit | Status |\n")
+	sb.WriteString("|------|------------------|--------|\n")
+	for _, fs := range allStatuses {
+		daysStr := fmt.Sprintf("%d", fs.DaysSince)
+		if fs.DaysSince < 0 {
+			daysStr = "never committed"
+		}
+		sb.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", fs.Path, daysStr, fs.Status))
+	}
+	sb.WriteString("\n")
+
+	if len(stale) > 0 {
+		sb.WriteString(fmt.Sprintf("## Action Required (%d stale)\n\n", len(stale)))
+		for _, fs := range stale {
+			action := "update this file"
+			if fs.Status == "critical" {
+				action = "auto-archive proposal: file has not been updated in 14+ days"
+			}
+			sb.WriteString(fmt.Sprintf("- `%s` (%d days) — %s\n", fs.Path, fs.DaysSince, action))
+		}
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("All state files are up to date.\n")
+	}
+
+	reportDir := filepath.Join(root, ".forge", "reports")
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return fmt.Errorf("state-freshness mkdir: %w", err)
+	}
+	reportPath := filepath.Join(reportDir, "state-freshness.md")
+	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("state-freshness write: %w", err)
+	}
+
+	if len(stale) > 0 {
+		log.Printf("[Patrol:state-freshness] WARNING: %d stale state files — report: %s", len(stale), reportPath)
+	} else {
+		log.Printf("[Patrol:state-freshness] all %d state files are fresh", len(allStatuses))
+	}
+
+	return nil
+}
+
+// patternsExtractionPatrol scans recent heartbeat results and counts entries in
+// docs/PATTERNS.md and docs/COMMON_MISTAKES.md to surface extraction opportunities.
+// Report: .forge/reports/patterns-extraction.md. Schedule: 24 hours (flywheel).
+func patternsExtractionPatrol(ctx context.Context, db *sql.DB) error {
+	root := forgeRoot()
+	now := time.Now()
+	cutoff := now.Add(-48 * time.Hour)
+
+	// Count .md result files modified in last 48h.
+	resultsDir := filepath.Join(root, ".forge", "heartbeat", "results")
+	var resultCount int
+	if entries, err := os.ReadDir(resultsDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			info, err := e.Info()
+			if err == nil && info.ModTime().After(cutoff) {
+				resultCount++
+			}
+		}
+	}
+
+	// Count ## headings in docs/PATTERNS.md.
+	patternCount := countMarkdownH2Headings(filepath.Join(root, "docs", "PATTERNS.md"))
+	mistakeCount := countMarkdownH2Headings(filepath.Join(root, "docs", "COMMON_MISTAKES.md"))
+
+	// Build report.
+	var sb strings.Builder
+	sb.WriteString("# Patterns Extraction Report\n\n")
+	sb.WriteString(fmt.Sprintf("Generated: %s\n\n", now.UTC().Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Recent result files (last 48h): **%d**\n\n", resultCount))
+	sb.WriteString(fmt.Sprintf("Entries in PATTERNS.md: **%d**\n\n", patternCount))
+	sb.WriteString(fmt.Sprintf("Entries in COMMON_MISTAKES.md: **%d**\n\n", mistakeCount))
+
+	if resultCount > 0 {
+		sb.WriteString("## Action\n\n")
+		sb.WriteString(fmt.Sprintf("Review %d recent result files and extract new patterns or common mistakes.\n", resultCount))
+		sb.WriteString("Dispatch to gemini/codex for analysis if the ratio of results to patterns is high.\n")
+	} else {
+		sb.WriteString("No recent result files to process.\n")
+	}
+
+	reportDir := filepath.Join(root, ".forge", "reports")
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return fmt.Errorf("patterns-extraction mkdir: %w", err)
+	}
+	reportPath := filepath.Join(reportDir, "patterns-extraction.md")
+	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("patterns-extraction write: %w", err)
+	}
+
+	log.Printf("[Patrol:patterns-extraction] results=%d patterns=%d mistakes=%d", resultCount, patternCount, mistakeCount)
+	return nil
+}
+
+// countMarkdownH2Headings counts the number of "## " headings in a file.
+// Returns 0 if the file cannot be read.
+func countMarkdownH2Headings(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "## ") {
+			count++
+		}
+	}
+	return count
+}
+
+// fileExists returns true if path exists and is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// dirExists returns true if path exists and is a directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

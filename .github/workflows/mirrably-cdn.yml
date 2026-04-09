@@ -1,0 +1,78 @@
+# Consolidated widget CDN for cdn.mirrably.com (TASK-BRAVE-CORE-600).
+# Builds eyewear + jewelry + makeup Vite bundles, aggregates apps/mirrably-cdn/dist, optional Pages deploy.
+
+name: mirrably-cdn
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mirrably-cdn/**'
+      - 'apps/forge-tryon/**'
+      - 'apps/forge-tryon-jewelry/**'
+      - 'apps/forge-tryon-makeup/**'
+      - 'packages/mirrably-core/**'
+      - 'packages/mirrably-renderer/**'
+      - 'packages/mirrably-tracking/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+  pull_request:
+    paths:
+      - 'apps/mirrably-cdn/**'
+      - 'apps/forge-tryon/**'
+      - 'apps/forge-tryon-jewelry/**'
+      - 'apps/forge-tryon-makeup/**'
+      - 'packages/mirrably-core/**'
+      - 'packages/mirrably-renderer/**'
+      - 'packages/mirrably-tracking/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build consolidated CDN
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Build widgets
+        run: |
+          pnpm --filter forge-tryon run build
+          pnpm --filter forge-tryon-jewelry run build
+          pnpm --filter forge-tryon-makeup run build:vite
+
+      - name: Aggregate dist
+        run: pnpm --filter mirrably-cdn run build
+
+      - name: Upload CDN artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirrably-cdn-dist
+          path: apps/mirrably-cdn/dist/
+          retention-days: 14
+
+      - name: Deploy to Cloudflare Pages
+        if: >
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          secrets.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: pages deploy apps/mirrably-cdn/dist --project-name=mirrably-cdn

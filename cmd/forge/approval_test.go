@@ -2,12 +2,71 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/neoforge-dev/forge/internal"
 )
 
+// writeTestApprovals creates a .forge/approvals/approvals.json with the given
+// approvals in the current working directory (which tests chdir to a temp dir).
+func writeTestApprovals(t *testing.T, approvals []internal.Approval) {
+	t.Helper()
+	dir := filepath.Join(".forge", "approvals")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("create approvals dir: %v", err)
+	}
+	data, err := json.MarshalIndent(approvals, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal approvals: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "approvals.json"), data, 0644); err != nil {
+		t.Fatalf("write approvals: %v", err)
+	}
+}
+
+// testApprovals is a small set of real approval records used across tests.
+var testApprovals = []internal.Approval{
+	{
+		ID:          "01APP456XYZ",
+		Type:        "merge",
+		Tier:        "phone",
+		Domain:      "codeswiftr-com",
+		Project:     "interview-simulator",
+		Title:       "Merge PR #42: Add OAuth2 login",
+		Confidence:  0.82,
+		RiskScore:   0.15,
+		Status:      "pending",
+		RequestedBy: "kimi",
+		RequestedAt: time.Now().Add(-2 * time.Hour),
+		ExpiresAt:   time.Now().Add(22 * time.Hour),
+	},
+	{
+		ID:          "01APP789ABC",
+		Type:        "deploy",
+		Tier:        "watch",
+		Domain:      "brandfocus-ai",
+		Project:     "voice-coach",
+		Title:       "Deploy to staging",
+		Confidence:  0.96,
+		RiskScore:   0.05,
+		Status:      "pending",
+		RequestedBy: "minimax",
+		RequestedAt: time.Now().Add(-30 * time.Minute),
+		ExpiresAt:   time.Now().Add(23 * time.Hour),
+	},
+}
+
 func TestApprovalList(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
 
 	// Test basic list
@@ -36,6 +95,12 @@ func TestApprovalList(t *testing.T) {
 }
 
 func TestApprovalListPending(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
 
 	// Test list with pending filter
@@ -47,8 +112,8 @@ func TestApprovalListPending(t *testing.T) {
 
 func TestApprovalShow(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test show with existing approval (use demo data ID)
 	_, err := runner.Execute("approval", "show", "01APP456XYZ")
 	if err != nil {
 		t.Errorf("approval show failed: %v", err)
@@ -56,6 +121,12 @@ func TestApprovalShow(t *testing.T) {
 }
 
 func TestApprovalShowNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
 
 	// Test show with non-existent approval
@@ -67,8 +138,8 @@ func TestApprovalShowNotFound(t *testing.T) {
 
 func TestApprovalDecideApprove(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test approve decision (use demo data ID)
 	_, err := runner.Execute("approval", "decide", "01APP456XYZ", "--approve", "--reason", "Looks good")
 	if err != nil {
 		t.Errorf("approval decide --approve failed: %v", err)
@@ -77,8 +148,8 @@ func TestApprovalDecideApprove(t *testing.T) {
 
 func TestApprovalDecideReject(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test reject decision (use demo data ID)
 	_, err := runner.Execute("approval", "decide", "01APP789ABC", "--reject", "--reason", "Needs revision")
 	if err != nil {
 		t.Errorf("approval decide --reject failed: %v", err)
@@ -96,13 +167,18 @@ func TestApprovalDecideMissingApproval(t *testing.T) {
 }
 
 func TestApprovalDecideMissingDecision(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
 
 	// Reset flags in case a previous test set them (cobra uses global command instances).
 	approvalDecideCmd.Flags().Set("approve", "false")
 	approvalDecideCmd.Flags().Set("reject", "false")
 
-	// Test decide without decision flag (use demo data ID)
 	_, err := runner.Execute("approval", "decide", "01APP456XYZ")
 	if err == nil {
 		t.Errorf("Expected error for missing decision flag, got nil")
@@ -111,8 +187,8 @@ func TestApprovalDecideMissingDecision(t *testing.T) {
 
 func TestApprovalDecideJsonFormat(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test decide with json format (use demo data ID)
 	_, err := runner.Execute("approval", "decide", "01APP456XYZ", "--approve", "--format", "json")
 	if err != nil {
 		t.Errorf("approval decide --format json failed: %v", err)
@@ -121,8 +197,8 @@ func TestApprovalDecideJsonFormat(t *testing.T) {
 
 func TestApprovalShowJsonFormat(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test show with json format (use demo data ID)
 	_, err := runner.Execute("approval", "show", "01APP456XYZ", "--format", "json")
 	if err != nil {
 		t.Errorf("approval show --format json failed: %v", err)
@@ -131,47 +207,48 @@ func TestApprovalShowJsonFormat(t *testing.T) {
 
 func TestApprovalShowQuietFormat(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test show with quiet format (use demo data ID)
 	_, err := runner.Execute("approval", "show", "01APP456XYZ", "--format", "quiet")
 	if err != nil {
 		t.Errorf("approval show --format quiet failed: %v", err)
 	}
 }
 
-func TestApprovalListWithDemoData(t *testing.T) {
-	runner := NewTestRunner(t)
+func TestApprovalListEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
 
-	// Test that demo data is returned when no approvals directory
+	// No approvals file — expect empty results (no error)
+	runner := NewTestRunner(t)
 	_, err := runner.Execute("approval", "list")
 	if err != nil {
-		t.Errorf("approval list with demo data failed: %v", err)
+		t.Errorf("approval list with no data should succeed with empty results: %v", err)
 	}
 }
 
 func TestApprovalLoadFromDirectory(t *testing.T) {
-	// Create temp approvals directory
 	tmpDir := t.TempDir()
-	approvalsDir := filepath.Join(tmpDir, ".forge", "approvals")
-	err := os.MkdirAll(approvalsDir, 0755)
-	if err != nil {
-		t.Skipf("Cannot create temp directory: %v", err)
-	}
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
 
-	// Note: This test verifies the function handles empty directory
-	// The actual load logic returns demo data when directory doesn't have files
+	// Create empty approvals directory (no approvals.json)
+	os.MkdirAll(".forge/approvals", 0755)
+
 	runner := NewTestRunner(t)
-	_, err = runner.Execute("approval", "list")
+	_, err := runner.Execute("approval", "list")
 	if err != nil {
-		t.Errorf("approval list failed: %v", err)
+		t.Errorf("approval list with empty dir should succeed: %v", err)
 	}
 }
 
 func TestApprovalSaveEmpty(t *testing.T) {
 	runner := NewTestRunner(t)
+	writeTestApprovals(t, testApprovals)
 
-	// Test that save doesn't fail (it's a no-op currently)
-	// We test this indirectly through decide command (use demo data ID)
 	_, err := runner.Execute("approval", "decide", "01APP456XYZ", "--approve")
 	if err != nil {
 		t.Errorf("approval decide should work: %v", err)

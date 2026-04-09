@@ -48,7 +48,7 @@ forge/
 │   │   ├── ios_harness/   # iOS build/test automation
 │   │   └── ...
 │   └── tests/             # Test suite
-├── portfolio/             # MVP project submodules (11 domains)
+├── services/ apps/ ios/ tools/ games/ research/  # Products by type
 ├── forge-shared/          # Shared libraries across projects
 ├── docs/                  # Documentation
 └── .forge/                # Runtime state (gitignored)

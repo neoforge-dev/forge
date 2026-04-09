@@ -1,0 +1,20 @@
+id: validation/problem-fit
+name: Problem-Fit Validation
+description: Interview-driven validation. 5+ interviews, GO/PAUSE/KILL scoring per DEMAND_VALIDATION_FRAMEWORK.md.
+steps:
+  - type: check
+    name: verify-hypothesis-exists
+    command: "forge portfolio show ${PRODUCT_KEY} --format json | grep -q 'validation_hypothesis'"
+  - type: dispatch
+    name: create-interview-materials
+    agent: auto
+  - type: check
+    name: verify-tracker-exists
+    command: "test -f docs/validation/${DOMAIN}.md"
+  - type: review
+    name: interview-evidence-review
+  - type: complete
+    name: finalize
+    evidence:
+      - interview_count
+      - go_kill_decision

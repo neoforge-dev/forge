@@ -11,9 +11,8 @@ import (
 
 // TestLoadApprovalsComprehensive tests the loadApprovals function
 func TestLoadApprovalsComprehensive(t *testing.T) {
-	// Test 1: No approvals directory - should return demo
+	// Test 1: No approvals directory - should return nil, nil (empty results)
 	t.Run("NoApprovalsDir", func(t *testing.T) {
-		// Create temp dir and change to it
 		tmpDir := t.TempDir()
 		origDir, _ := os.Getwd()
 		os.Chdir(tmpDir)
@@ -23,145 +22,74 @@ func TestLoadApprovalsComprehensive(t *testing.T) {
 		if err != nil {
 			t.Fatalf("loadApprovals failed: %v", err)
 		}
-		// Should return demo approvals
-		if len(approvals) == 0 {
-			t.Error("expected demo approvals")
-		}
+		// No file = no approvals (nil is fine)
+		_ = approvals
 	})
 
-	// Test 2: Empty approvals directory - should return demo
+	// Test 2: Empty approvals directory (no approvals.json) - should return nil, nil
 	t.Run("EmptyApprovalsDir", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		origDir, _ := os.Getwd()
 		os.Chdir(tmpDir)
 		defer os.Chdir(origDir)
 
-		// Create empty approvals dir
 		os.MkdirAll(".forge/approvals", 0755)
 
 		approvals, err := loadApprovals()
 		if err != nil {
 			t.Fatalf("loadApprovals failed: %v", err)
 		}
-		if len(approvals) == 0 {
-			t.Error("expected demo approvals for empty dir")
+		// No approvals.json = no approvals
+		if len(approvals) != 0 {
+			t.Errorf("expected 0 approvals for missing file, got %d", len(approvals))
 		}
 	})
 
-	// Test 3: Approvals directory with invalid file - should return demo
+	// Test 3: Approvals directory with invalid approvals.json - should return error
 	t.Run("InvalidFile", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		origDir, _ := os.Getwd()
 		os.Chdir(tmpDir)
 		defer os.Chdir(origDir)
 
-		// Create approvals dir with invalid file
 		os.MkdirAll(".forge/approvals", 0755)
-		os.WriteFile(".forge/approvals/invalid.json", []byte("not valid json"), 0644)
+		os.WriteFile(".forge/approvals/approvals.json", []byte("not valid json"), 0644)
 
-		approvals, err := loadApprovals()
-		if err != nil {
-			t.Fatalf("loadApprovals failed: %v", err)
-		}
-		// Should return demo approvals due to invalid JSON
-		if len(approvals) == 0 {
-			t.Error("expected demo approvals for invalid file")
+		_, err := loadApprovals()
+		if err == nil {
+			t.Error("expected error for invalid approvals.json")
 		}
 	})
 
-	// Test 4: Approvals directory with _index.json - should skip it
-	t.Run("IndexFileSkipped", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		origDir, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(origDir)
-
-		// Create approvals dir with index file
-		os.MkdirAll(".forge/approvals", 0755)
-		os.WriteFile(".forge/approvals/_index.json", []byte("{}"), 0644)
-
-		approvals, err := loadApprovals()
-		if err != nil {
-			t.Fatalf("loadApprovals failed: %v", err)
-		}
-		// Should return demo approvals since no valid approval files
-		if len(approvals) == 0 {
-			t.Error("expected demo approvals")
-		}
-	})
-
-	// Test 5: Valid approval file
+	// Test 4: Valid approvals.json
 	t.Run("ValidApprovalFile", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		origDir, _ := os.Getwd()
 		os.Chdir(tmpDir)
 		defer os.Chdir(origDir)
 
-		// Create approvals dir with valid file
 		os.MkdirAll(".forge/approvals", 0755)
-		validApproval := internal.Approval{
-			ID:     "TEST-001",
-			Type:   "merge",
-			Domain: "test-domain",
-			Status: "pending",
+		validApprovals := []internal.Approval{
+			{
+				ID:     "TEST-001",
+				Type:   "merge",
+				Domain: "test-domain",
+				Status: "pending",
+			},
 		}
-		data, _ := json.Marshal(validApproval)
-		os.WriteFile(".forge/approvals/TEST-001.json", data, 0644)
+		data, _ := json.Marshal(validApprovals)
+		os.WriteFile(".forge/approvals/approvals.json", data, 0644)
 
 		approvals, err := loadApprovals()
 		if err != nil {
 			t.Fatalf("loadApprovals failed: %v", err)
 		}
-		// Should have our approval or demo
-		if len(approvals) == 0 {
-			t.Error("expected approvals")
-		}
-	})
-
-	// Test 6: Subdirectory should be skipped
-	t.Run("SubdirSkipped", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		origDir, _ := os.Getwd()
-		os.Chdir(tmpDir)
-		defer os.Chdir(origDir)
-
-		// Create approvals dir with subdirectory
-		os.MkdirAll(".forge/approvals/subdir", 0755)
-
-		approvals, err := loadApprovals()
-		if err != nil {
-			t.Fatalf("loadApprovals failed: %v", err)
-		}
-		if len(approvals) == 0 {
-			t.Error("expected demo approvals")
+		if len(approvals) != 1 || approvals[0].ID != "TEST-001" {
+			t.Errorf("expected TEST-001 approval, got %v", approvals)
 		}
 	})
 }
 
-// TestGetDemoApprovalsComprehensive tests getDemoApprovals
-func TestGetDemoApprovalsComprehensive(t *testing.T) {
-	t.Run("ReturnsApprovals", func(t *testing.T) {
-		approvals := getDemoApprovals()
-		if len(approvals) == 0 {
-			t.Error("expected demo approvals")
-		}
-	})
-
-	t.Run("ApprovalFields", func(t *testing.T) {
-		approvals := getDemoApprovals()
-		for _, a := range approvals {
-			if a.ID == "" {
-				t.Error("approval missing ID")
-			}
-			if a.Type == "" {
-				t.Error("approval missing Type")
-			}
-			if a.Status == "" {
-				t.Error("approval missing Status")
-			}
-		}
-	})
-}
 
 // TestSaveApprovalsComprehensive tests saveApprovals
 func TestSaveApprovalsComprehensive(t *testing.T) {

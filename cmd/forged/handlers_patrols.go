@@ -264,8 +264,11 @@ func fleetSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query all agents from agent_heartbeats
-	rows, err := db.Query(`
+	// Canonical counts — consistent with all other status endpoints.
+	fc := getFleetCounts(r.Context(), db)
+
+	// Query all agents from agent_heartbeats for per-node breakdown.
+	rows, err := db.QueryContext(r.Context(), `
 		SELECT agent_id, node, status, current_task_id, context_pct, last_seen
 		FROM agent_heartbeats
 		ORDER BY node, agent_id
@@ -285,7 +288,6 @@ func fleetSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 		LastSeen   string  `json:"last_seen"`
 	}
 	nodeAgents := make(map[string][]agentEntry)
-	var totalAgents int
 
 	for rows.Next() {
 		var agentID, node, status, lastSeen string
@@ -309,17 +311,10 @@ func fleetSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 			TaskID:     taskID,
 			LastSeen:   lastSeen,
 		})
-		totalAgents++
 	}
 	if err := rows.Err(); err != nil {
 		http.Error(w, fmt.Sprintf("failed to read agents: %v", err), http.StatusInternalServerError)
 		return
-	}
-
-	// Count queued tasks
-	var totalQueued int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'queued'`).Scan(&totalQueued); err != nil {
-		totalQueued = 0
 	}
 
 	// Build nodes array
@@ -334,7 +329,7 @@ func fleetSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, nodeEntry{
 			NodeID:     node,
 			AgentCount: len(agents),
-			QueueDepth: totalQueued, // shared queue
+			QueueDepth: fc.QueuedTasks, // shared queue
 			Agents:     agents,
 		})
 	}
@@ -342,8 +337,8 @@ func fleetSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"snapshot_at":  time.Now().UTC().Format(time.RFC3339),
 		"nodes":        nodes,
-		"total_agents": totalAgents,
-		"total_queued": totalQueued,
+		"total_agents": fc.TotalAgents,
+		"total_queued": fc.QueuedTasks,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

@@ -181,7 +181,7 @@ export NOTION_CONTENT_DATABASE_ID="your-content-db-id"
 3. Review drafts in Notion
 4. Add feedback in "Human Feedback" field
 5. Harness regenerates automatically
-6. Approve when node-2sfied
+6. Approve when satisfied
 
 ### Python Integration
 ```python

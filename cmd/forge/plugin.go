@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/neoforge-dev/forge/internal"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
@@ -422,13 +423,14 @@ func appendIfMissing(env []string, key, value string) []string {
 }
 
 func getControlPlaneURL() string {
+	// Env takes highest precedence, then cfg, then resolved default.
 	if url := os.Getenv("FORGE_API_URL"); url != "" {
 		return url
 	}
 	if cfg != nil && cfg.APIURL != "" {
 		return cfg.APIURL
 	}
-	return "http://localhost:8081"
+	return internal.ResolveDefaultControlPlaneURL()
 }
 
 func getNodeID() string {

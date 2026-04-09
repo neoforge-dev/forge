@@ -33,6 +33,10 @@ func TestTaskStore(t *testing.T) {
 			plan_version INTEGER DEFAULT 0,
 			plan_id TEXT,
 			envelope_id TEXT,
+			origin TEXT DEFAULT '',
+			requester TEXT DEFAULT '',
+			source_channel TEXT DEFAULT '',
+			failure_context TEXT DEFAULT '',
 			created_at TEXT DEFAULT (datetime('now')),
 			updated_at TEXT DEFAULT (datetime('now'))
 		);

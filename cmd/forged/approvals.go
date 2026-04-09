@@ -9,10 +9,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ApprovalType represents the type of approval requested
@@ -438,14 +443,51 @@ var defaultApprovalTierPolicies = map[string]ApprovalStagePolicyEntry{
 	"kill":     {Tier: TierWatch, ConfidenceThreshold: 1.0},
 }
 
+// approvalTierPoliciesOnce guards one-time loading of approval-tiers.yaml.
+var approvalTierPoliciesOnce sync.Once
+
+// approvalTierPoliciesCache holds the loaded (or default) stage→policy map.
+var approvalTierPoliciesCache map[string]ApprovalStagePolicyEntry
+
+// loadApprovalTierPolicies reads config/dark-factory/approval-tiers.yaml from
+// the forge root and returns a stage→policy map. It falls back to
+// defaultApprovalTierPolicies when the file is absent or cannot be parsed.
+// Results are cached after the first successful call.
+func loadApprovalTierPolicies() map[string]ApprovalStagePolicyEntry {
+	approvalTierPoliciesOnce.Do(func() {
+		approvalTierPoliciesCache = loadApprovalTierPoliciesFromRoot(forgeRoot())
+	})
+	return approvalTierPoliciesCache
+}
+
+// loadApprovalTierPoliciesFromRoot is the testable, root-parameterized variant
+// of loadApprovalTierPolicies. It does NOT use the sync.Once cache.
+func loadApprovalTierPoliciesFromRoot(root string) map[string]ApprovalStagePolicyEntry {
+	cfgPath := filepath.Join(root, "config", "dark-factory", "approval-tiers.yaml")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		// File absent or unreadable — fall back to hardcoded defaults.
+		return defaultApprovalTierPolicies
+	}
+	var cfg ApprovalTierConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil || len(cfg.ApprovalTiers) == 0 {
+		// Parse failure or empty file — fall back to hardcoded defaults.
+		return defaultApprovalTierPolicies
+	}
+	return cfg.ApprovalTiers
+}
+
 // GetApprovalTierForStage returns the ApprovalTier and confidence threshold for
 // a given portfolio stage. Returns ("", 0) for an empty stage. Falls back to
 // TierDesktop (safest) with threshold 0.0 for unknown stages.
+// Policies are sourced from config/dark-factory/approval-tiers.yaml when
+// available, otherwise from the hardcoded defaultApprovalTierPolicies.
 func GetApprovalTierForStage(stage string) (ApprovalTier, float64) {
 	if stage == "" {
 		return "", 0
 	}
-	if policy, ok := defaultApprovalTierPolicies[strings.ToLower(stage)]; ok {
+	policies := loadApprovalTierPolicies()
+	if policy, ok := policies[strings.ToLower(stage)]; ok {
 		return policy.Tier, policy.ConfidenceThreshold
 	}
 	return TierDesktop, 0.0 // unknown stage = safest default
@@ -864,12 +906,14 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 	}
 
 	var user string
+	var source string
 
 	// Support both JSON and form-encoded bodies (HTMX sends application/x-www-form-urlencoded)
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || strings.HasPrefix(ct, "multipart/form-data") {
 		if err := r.ParseForm(); err == nil {
 			user = r.FormValue("user")
+			source = r.FormValue("source")
 			// For "decide" action: read decision from form field
 			if action == "decide" {
 				decision := r.FormValue("decision")
@@ -878,8 +922,14 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 					action = "approve"
 				case "reject":
 					action = "reject"
+				case "defer":
+					action = "defer"
+				case "kill":
+					action = "kill"
+				case "extend":
+					action = "extend"
 				default:
-					http.Error(w, "decision must be approve or reject", http.StatusBadRequest)
+					http.Error(w, "decision must be approve, reject, defer, kill, or extend", http.StatusBadRequest)
 					return
 				}
 			}
@@ -888,9 +938,11 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 		var req struct {
 			User     string `json:"user"`
 			Decision string `json:"decision,omitempty"`
+			Source   string `json:"source,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 			user = req.User
+			source = req.Source
 			// For "decide" action: read decision from JSON field
 			if action == "decide" {
 				switch req.Decision {
@@ -898,12 +950,22 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 					action = "approve"
 				case "reject":
 					action = "reject"
+				case "defer":
+					action = "defer"
+				case "kill":
+					action = "kill"
+				case "extend":
+					action = "extend"
 				default:
-					http.Error(w, "decision must be approve or reject", http.StatusBadRequest)
+					http.Error(w, "decision must be approve, reject, defer, kill, or extend", http.StatusBadRequest)
 					return
 				}
 			}
 		}
+	}
+
+	if source == "" {
+		source = "dashboard"
 	}
 
 	if user == "" {
@@ -916,6 +978,12 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 		err = h.service.Approve(r.Context(), id, user)
 	case "reject":
 		err = h.service.Reject(r.Context(), id, user)
+	case "defer":
+		err = h.service.Reject(r.Context(), id, user) // reuse reject flow for now
+	case "kill":
+		err = h.service.Reject(r.Context(), id, user)
+	case "extend":
+		err = h.service.Approve(r.Context(), id, user)
 	default:
 		http.Error(w, fmt.Sprintf("unknown action: %s", action), http.StatusBadRequest)
 		return
@@ -930,6 +998,31 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// When the action results in an approval, complete the underlying task.
+	// This wires ProcessApprovedTask into the approval decision path so that
+	// tasks waiting in pending_approval state are automatically completed once
+	// a human approves.  Best-effort: failures are logged but never surfaced
+	// to the caller (approval itself already succeeded at this point).
+	if action == "approve" || action == "extend" {
+		if taskQueue != nil && globalApprovalService != nil {
+			go func() {
+				tai := NewTaskApprovalIntegration(taskQueue, globalApprovalService)
+				if procErr := tai.ProcessApprovedTask(context.Background(), id); procErr != nil {
+					log.Printf("[handleApprovalAction] ProcessApprovedTask(%s): %v", id, procErr)
+				}
+			}()
+		}
+	} else if action == "reject" || action == "defer" || action == "kill" {
+		if taskQueue != nil && globalApprovalService != nil {
+			go func() {
+				tai := NewTaskApprovalIntegration(taskQueue, globalApprovalService)
+				if procErr := tai.ProcessRejectedTask(context.Background(), id); procErr != nil {
+					log.Printf("[handleApprovalAction] ProcessRejectedTask(%s): %v", id, procErr)
+				}
+			}()
+		}
+	}
+
 	// Epic 2 Phase 4: when a merge-type approval is approved, trigger GitHub merge.
 	// Best-effort — never blocks the HTTP response.
 	if action == "approve" {
@@ -940,6 +1033,7 @@ func (h *ApprovalHandler) handleApprovalAction(w http.ResponseWriter, r *http.Re
 		"status":      action + "ed",
 		"approval_id": id,
 		"user":        user,
+		"source":      source,
 	})
 }
 

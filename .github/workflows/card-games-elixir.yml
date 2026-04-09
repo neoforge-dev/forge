@@ -1,0 +1,65 @@
+name: Card Games Elixir CI
+
+on:
+  push:
+    paths:
+      - 'games/card-games-elixir/**'
+  pull_request:
+    paths:
+      - 'games/card-games-elixir/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: card_games_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/card_games_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16'
+          otp-version: '26'
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            games/card-games-elixir/deps
+            games/card-games-elixir/_build
+          key: elixir-${{ runner.os }}-${{ hashFiles('games/card-games-elixir/mix.lock') }}
+
+      - name: Install deps
+        working-directory: games/card-games-elixir
+        run: mix deps.get
+
+      - name: Compile
+        working-directory: games/card-games-elixir
+        run: mix compile --warnings-as-errors
+
+      - name: Setup DB
+        working-directory: games/card-games-elixir
+        run: mix ecto.create && mix ecto.migrate
+
+      - name: Run tests
+        working-directory: games/card-games-elixir
+        run: mix test

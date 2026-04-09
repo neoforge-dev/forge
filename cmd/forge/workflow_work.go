@@ -79,7 +79,6 @@ FORGE_DOMAIN and FORGE_PROJECT (e.g. eval $(forge work -e domain/project)).
 }
 
 func init() {
-	// workCmd visible — agents need autonomous task claiming
 	rootCmd.AddCommand(workCmd)
 }
 
@@ -258,7 +257,7 @@ func runWorkDaemonWithConfig(agentID string, maxTasks int, cfg workDaemonConfig)
 		}
 		apiPort := os.Getenv("PORT")
 		if apiPort == "" {
-			apiPort = "8081"
+			apiPort = internal.ResolveAPIPort()
 		}
 		if nodeAddr != "" {
 			nodeAddr = nodeAddr + ":" + apiPort
@@ -361,6 +360,18 @@ func runWorkDaemonWithConfig(agentID string, maxTasks int, cfg workDaemonConfig)
 			emptyStreak = 0
 			errStreak = 0
 			fmt.Printf("[%s] Claimed task #%d\n", time.Now().Format("15:04:05"), claimed)
+
+			// ACK the task to transition DISPATCHED → RUNNING
+			if claimedTask != nil {
+				ackCtx, ackCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if _, ackErr := client.AckTask(ackCtx, claimedTask.ID, agentID); ackErr != nil {
+					fmt.Fprintf(os.Stderr, "[%s] ACK warning for task %s: %v\n",
+						time.Now().Format("15:04:05"), claimedTask.ID, ackErr)
+					// Non-fatal: task is still claimed, just not ACK'd yet
+				}
+				ackCancel()
+			}
+
 			if cfg.Execute && claimedTask != nil {
 				execCtx, execCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 				if execErr := executeTask(execCtx, client, claimedTask, agentID); execErr != nil {
@@ -407,30 +418,60 @@ func tryClaimTask(client *internal.Client, agentID string) error {
 }
 
 // tryClaimTaskCtx finds and claims the next available queued/requested task.
-// Returns the claimed Task on success, errNoTasks if the queue is empty, or
-// another error if the API call failed.
+// Returns the claimed Task on success, errNoTasks if the queue is empty or all
+// candidates are already assigned to other agents, or another error if the API
+// call failed.
+//
+// It fetches up to 5 candidates per status bucket so that tasks already
+// dispatched to other agents via tmux (which sets AssignedTo) are skipped
+// rather than attempted. Attempting to claim an already-assigned task causes a
+// 409 Conflict response which would increment the circuit-breaker error streak.
 func tryClaimTaskCtx(ctx context.Context, client *internal.Client, agentID string) (*internal.Task, error) {
-	// Get next queued or requested task (both are claimable per claimTaskHandler)
-	// Try "queued" first, then "requested" if no queued tasks
-	result, err := client.ListTasks(ctx, "queued", 1, "")
+	// Fetch up to 5 candidates so we can skip tasks already assigned elsewhere.
+	const candidateLimit = 5
+
+	// findEligible returns the first task from tasks that is either unassigned
+	// or already assigned to agentID (self-reclaim is fine).
+	findEligible := func(tasks []internal.Task) *internal.Task {
+		for i := range tasks {
+			t := &tasks[i]
+			if t.AssignedTo == "" || t.AssignedTo == agentID {
+				return t
+			}
+		}
+		return nil
+	}
+
+	// Try "queued" first.
+	result, err := client.ListTasks(ctx, "queued", candidateLimit, "")
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
-	if result == nil || len(result.Tasks) == 0 {
-		// Try "requested" status
-		result, err = client.ListTasks(ctx, "requested", 1, "")
+
+	var eligible *internal.Task
+	if result != nil && len(result.Tasks) > 0 {
+		eligible = findEligible(result.Tasks)
+	}
+
+	// Fall back to "requested" if no eligible queued task found.
+	if eligible == nil {
+		result, err = client.ListTasks(ctx, "requested", candidateLimit, "")
 		if err != nil {
 			return nil, fmt.Errorf("list tasks: %w", err)
 		}
-		if result == nil || len(result.Tasks) == 0 {
-			return nil, errNoTasks
+		if result != nil && len(result.Tasks) > 0 {
+			eligible = findEligible(result.Tasks)
 		}
 	}
 
-	task := result.Tasks[0]
-	claimed, err := client.ClaimTask(ctx, task.ID, agentID)
+	// All candidates are assigned to other agents (or both buckets are empty).
+	if eligible == nil {
+		return nil, errNoTasks
+	}
+
+	claimed, err := client.ClaimTask(ctx, eligible.ID, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("claim task %s: %w", task.ID, err)
+		return nil, fmt.Errorf("claim task %s: %w", eligible.ID, err)
 	}
 
 	fmt.Printf("[%s] Claimed: %s → %s\n",
@@ -531,6 +572,14 @@ func executeTaskClaude(ctx context.Context, client *internal.Client, task *inter
 	argv := append(append([]string{}, baseCmd...), prompt)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Env = os.Environ()
+
+	// ACK the task before executing to transition DISPATCHED → RUNNING
+	ackClient := internal.NewClient()
+	ackCtx, ackCancel := context.WithTimeout(ctx, 10*time.Second)
+	if _, ackErr := ackClient.AckTask(ackCtx, task.ID, agentID); ackErr != nil {
+		fmt.Fprintf(os.Stderr, "[%s] ACK warning: %v\n", time.Now().Format("15:04:05"), ackErr)
+	}
+	ackCancel()
 
 	fmt.Printf("[%s] Executing claude for task %s\n", time.Now().Format("15:04:05"), task.ID)
 	output, err := cmd.Output()

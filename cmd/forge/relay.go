@@ -23,7 +23,7 @@ var relayCmd = &cobra.Command{
 	Long: `Manage the dispatch relay worker that polls .forge/dispatches/ for pending .md
 files and delivers them via "forge dispatch send".
 
-Replaces the Python harness "relay.py" with a native Go implementation backed
+Native Go dispatch relay backed
 by the forged HTTP API.
 
 Commands:

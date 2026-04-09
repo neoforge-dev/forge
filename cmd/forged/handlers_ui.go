@@ -7,8 +7,11 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // uiFleetHandler serves the HTMX fleet dashboard at GET /ui
@@ -51,12 +54,15 @@ func uiFleetHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- Queue counts ---
-	var queued, running, completed, failed int
+	// --- Queue counts — canonical values via getFleetCounts ---
+	fc := getFleetCounts(r.Context(), db)
+	queued := fc.QueuedTasks
+	_ = fc.RunningTasks // available for future dashboard use
+	completed := fc.CompletedTasks24h
+
+	// Failed/abandoned in last 24 h — supplemental only, not part of canonical counts.
+	var failed int
 	if db != nil {
-		db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status='queued'`).Scan(&queued)
-		db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status IN ('assigned','executing')`).Scan(&running)
-		db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status='completed' AND updated_at > datetime('now','-24 hours')`).Scan(&completed)
 		db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status IN ('failed','abandoned') AND updated_at > datetime('now','-24 hours')`).Scan(&failed)
 	}
 
@@ -179,6 +185,7 @@ func uiFleetHandler(w http.ResponseWriter, r *http.Request) {
   <h1>FORGE Fleet</h1>
   <nav>
     <a href="/ui">Fleet</a>
+    <a href="/ui/domains">Domains</a>
     <a href="/dash">Patrols</a>
   </nav>
   <span class="ts">Updated: %s</span>
@@ -487,4 +494,253 @@ func uiPatrolDrillDownHandler(w http.ResponseWriter, r *http.Request) {
 </div>
 </body>
 </html>`)
+}
+
+// domainYAML represents the structure of config/domains.yaml
+type domainYAML struct {
+	DisplayName  string   `yaml:"display_name"`
+	Owner        string   `yaml:"owner"`
+	Active       bool     `yaml:"active"`
+	FrontendTier string   `yaml:"frontend_tier"`
+	Products     []string `yaml:"products"`
+	Business     struct {
+		DeployStatus string `yaml:"deploy_status"`
+		CurrentMRR   int    `yaml:"current_mrr"`
+		TargetMRR    int    `yaml:"target_mrr"`
+		StripeLive   bool   `yaml:"stripe_live"`
+	} `yaml:"business"`
+}
+
+// domainRegistryYAML represents the top-level domains.yaml structure
+type domainRegistryYAML struct {
+	Domains map[string]domainYAML `yaml:"domains"`
+}
+
+// uiDomainsHandler serves GET /ui/domains — portfolio domain overview.
+// Shows: domain health, products, MRR status, deployment readiness.
+func uiDomainsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	now := time.Now().UTC().Format("15:04:05 UTC")
+
+	// Load domains from config/domains.yaml
+	root := os.Getenv("FORGE_ROOT")
+	if root == "" {
+		root = "."
+	}
+	yamlPath := root + "/config/domains.yaml"
+
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		http.Error(w, "failed to load domains.yaml: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var registry domainRegistryYAML
+	if err := yaml.Unmarshal(data, &registry); err != nil {
+		http.Error(w, "failed to parse domains.yaml: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Load domain metadata from SQLite
+	db := getDBConn()
+	dbMeta := make(map[string]struct {
+		Score  int
+		Status string
+	})
+	if db != nil {
+		rows, err := db.QueryContext(r.Context(), `SELECT key, score, status FROM domains`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var key string
+				var score int
+				var status string
+				if err := rows.Scan(&key, &score, &status); err == nil {
+					dbMeta[key] = struct {
+						Score  int
+						Status string
+					}{Score: score, Status: status}
+				}
+			}
+		}
+	}
+
+	// Build domain list with merged data
+	type domainRow struct {
+		Key          string
+		DisplayName  string
+		Owner        string
+		Products     []string
+		DeployStatus string
+		CurrentMRR   int
+		TargetMRR    int
+		StripeLive   bool
+		Score        int
+		Status       string
+		Active       bool
+	}
+	var domains []domainRow
+	var totalMRR, totalTargetMRR int
+	var deployReady, stripeLive, activeCount int
+
+	for key, d := range registry.Domains {
+		score := 0
+		status := "active"
+		if meta, ok := dbMeta[key]; ok {
+			score = meta.Score
+			status = meta.Status
+		}
+
+		domains = append(domains, domainRow{
+			Key:          key,
+			DisplayName:  d.DisplayName,
+			Owner:        d.Owner,
+			Products:     d.Products,
+			DeployStatus: d.Business.DeployStatus,
+			CurrentMRR:   d.Business.CurrentMRR,
+			TargetMRR:    d.Business.TargetMRR,
+			StripeLive:   d.Business.StripeLive,
+			Score:        score,
+			Status:       status,
+			Active:       d.Active,
+		})
+
+		totalMRR += d.Business.CurrentMRR
+		totalTargetMRR += d.Business.TargetMRR
+		if d.Business.DeployStatus == "deploy-ready" {
+			deployReady++
+		}
+		if d.Business.StripeLive {
+			stripeLive++
+		}
+		if d.Active {
+			activeCount++
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FORGE Portfolio Domains</title>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9;padding:16px}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:16px}
+    h1{color:#58a6ff;font-size:18px}
+    nav a{color:#58a6ff;text-decoration:none;font-size:13px;margin-right:12px;opacity:.7}
+    nav a:hover{opacity:1}
+    .ts{font-size:11px;color:#8b949e;margin-left:auto}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:14px}
+    .card h2{font-size:11px;text-transform:uppercase;color:#8b949e;margin-bottom:8px;letter-spacing:.05em}
+    .big{font-size:28px;font-weight:700}
+    .green{color:#3fb950}.yellow{color:#d29922}.red{color:#f85149}.blue{color:#58a6ff}.grey{color:#8b949e}
+    .section{background:#161b22;border:1px solid #30363d;border-radius:6px;margin-bottom:12px;overflow:hidden}
+    .section-hdr{background:#21262d;padding:8px 12px;font-size:12px;font-weight:600;text-transform:uppercase;color:#8b949e;letter-spacing:.05em}
+    table{width:100%%;border-collapse:collapse}
+    td,th{padding:7px 12px;font-size:13px;text-align:left;border-bottom:1px solid #21262d;white-space:nowrap}
+    th{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase}
+    tr:last-child td{border-bottom:none}
+    .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+    .pill-active{background:#1a3a24;color:#3fb950}
+    .pill-inactive{background:#3a1a1a;color:#f85149}
+    .pill-deploy-ready{background:#1a3a24;color:#3fb950}
+    .pill-deploy-blocked{background:#3a2a1a;color:#d29922}
+    .pill-stripe-live{background:#1a3a24;color:#3fb950}
+    .pill-stripe-test{background:#3a2a1a;color:#d29922}
+    .score-bar{display:inline-block;height:8px;border-radius:4px;vertical-align:middle;margin-right:4px}
+    .products{font-size:11px;color:#8b949e;max-width:150px;overflow:hidden;text-overflow:ellipsis}
+  </style>
+</head>
+<body hx-get="/ui/domains" hx-trigger="every 30s" hx-swap="outerHTML">
+<header>
+  <h1>FORGE Portfolio</h1>
+  <nav>
+    <a href="/ui">Fleet</a>
+    <a href="/ui/domains">Domains</a>
+    <a href="/dash">Patrols</a>
+  </nav>
+  <span class="ts">Updated: %s</span>
+</header>
+
+<div class="grid">
+  <div class="card"><h2>Active Domains</h2><div class="big blue">%d</div></div>
+  <div class="card"><h2>Deploy Ready</h2><div class="big green">%d</div></div>
+  <div class="card"><h2>Current MRR</h2><div class="big yellow">$%d</div></div>
+  <div class="card"><h2>Target MRR</h2><div class="big grey">$%d</div></div>
+</div>
+
+<div class="section">
+  <div class="section-hdr">Domains</div>
+  <table>
+    <thead><tr><th>Domain</th><th>Owner</th><th>Products</th><th>Deploy</th><th>Stripe</th><th>Score</th><th>MRR</th></tr></thead>
+    <tbody>
+`, now, activeCount, deployReady, totalMRR, totalTargetMRR)
+
+	if len(domains) == 0 {
+		fmt.Fprint(w, `<tr><td colspan="7" class="grey" style="text-align:center;padding:20px">No domains configured</td></tr>`)
+	}
+
+	for _, d := range domains {
+		// Status pill
+		statusPill := "pill-active"
+		if !d.Active {
+			statusPill = "pill-inactive"
+		}
+
+		// Deploy status pill
+		deployPill := "pill-deploy-blocked"
+		deployText := d.DeployStatus
+		if d.DeployStatus == "deploy-ready" {
+			deployPill = "pill-deploy-ready"
+		}
+
+		// Stripe pill
+		stripePill := "pill-stripe-test"
+		stripeText := "test"
+		if d.StripeLive {
+			stripePill = "pill-stripe-live"
+			stripeText = "live"
+		}
+
+		// Score bar
+		score := d.Score
+		if score > 100 {
+			score = 100
+		}
+		scoreColor := "#3fb950"
+		if score > 75 {
+			scoreColor = "#f85149"
+		} else if score > 50 {
+			scoreColor = "#d29922"
+		}
+
+		// Products list
+		productsStr := strings.Join(d.Products, ", ")
+		if len(productsStr) > 25 {
+			productsStr = productsStr[:22] + "…"
+		}
+
+		fmt.Fprintf(w, `<tr>
+      <td><span class="pill %s">%s</span></td>
+      <td class="grey">%s</td>
+      <td class="products">%s</td>
+      <td><span class="pill %s">%s</span></td>
+      <td><span class="pill %s">%s</span></td>
+      <td><span class="score-bar" style="width:%dpx;background:%s"></span>%d</td>
+      <td class="grey">$%d</td>
+    </tr>`, statusPill, d.DisplayName, d.Owner, productsStr, deployPill, deployText, stripePill, stripeText, score/2, scoreColor, score, d.CurrentMRR)
+	}
+
+	fmt.Fprint(w, `</tbody></table></div>`)
+	fmt.Fprint(w, `</body></html>`)
 }

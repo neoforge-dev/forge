@@ -113,7 +113,7 @@ func TestWebSocketHandshakeProtocol(t *testing.T) {
 		ws.WriteJSON(invalidMsg)
 
 		// Connection should be closed by server
-		ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+		ws.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 		_, _, err = ws.ReadMessage()
 		if err == nil {
 			t.Error("Expected connection to be closed after invalid handshake")
@@ -207,7 +207,7 @@ func TestWebSocketHandshakeProtocol(t *testing.T) {
 
 		// Worker should still be created with empty agent_id
 		// Connection should remain open
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 }
 
@@ -284,7 +284,7 @@ func TestWebSocketTaskDispatchAck(t *testing.T) {
 		}
 
 		// Small delay for processing
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 
 	t.Run("TaskCompletedAck", func(t *testing.T) {
@@ -300,7 +300,7 @@ func TestWebSocketTaskDispatchAck(t *testing.T) {
 			t.Fatalf("Failed to send task completed: %v", err)
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 
 	t.Run("SendToNonExistentAgent", func(t *testing.T) {
@@ -357,7 +357,7 @@ func TestWebSocketHeartbeat(t *testing.T) {
 		}
 
 		// Worker should still be in list after pong
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		workers := hub.ListWorkers()
 		found := false
 		for _, w := range workers {
@@ -378,7 +378,7 @@ func TestWebSocketHeartbeat(t *testing.T) {
 		}
 
 		// Connection should remain open
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 }
 
@@ -518,7 +518,7 @@ func TestWebSocketConcurrentConnections(t *testing.T) {
 		wg.Wait()
 
 		// Verify all 12 agents are connected
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		workers := hub.ListWorkers()
 		if len(workers) != numAgents {
 			t.Errorf("Expected %d workers, got %d", numAgents, len(workers))
@@ -621,7 +621,7 @@ func TestWebSocketErrorHandling(t *testing.T) {
 		}
 
 		// Connection should be closed
-		ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+		ws.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 		_, _, err = ws.ReadMessage()
 		if err == nil {
 			t.Error("Expected connection close after invalid JSON")
@@ -673,7 +673,7 @@ func TestWebSocketErrorHandling(t *testing.T) {
 		}
 
 		// Connection should still be open
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 
 	t.Run("HubNotRunning", func(t *testing.T) {
@@ -702,7 +702,7 @@ func TestWebSocketErrorHandling(t *testing.T) {
 		})
 
 		// Should timeout waiting for ack
-		ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+		ws.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 		var ack WSMessage
 		err = ws.ReadJSON(&ack)
 		if err == nil {
@@ -777,7 +777,7 @@ func TestWebSocketHubOperations(t *testing.T) {
 			Time:    time.Now(),
 		}
 		hub.Broadcast(msg)
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 
 	t.Run("SendToNonExistentWorker", func(t *testing.T) {
@@ -844,7 +844,7 @@ func TestWebSocketMessageTypes(t *testing.T) {
 			t.Fatalf("Failed to send progress: %v", err)
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 
 	t.Run("TaskFailedMessage", func(t *testing.T) {
@@ -861,7 +861,7 @@ func TestWebSocketMessageTypes(t *testing.T) {
 			t.Fatalf("Failed to send failed status: %v", err)
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 
 	t.Run("UnknownMessageType", func(t *testing.T) {
@@ -877,7 +877,7 @@ func TestWebSocketMessageTypes(t *testing.T) {
 		}
 
 		// Should not crash, just log
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	})
 }
 
@@ -901,7 +901,7 @@ func TestWebSocketTimeout(t *testing.T) {
 
 		// Don't send registration - connection should not complete the handshake.
 		// Use a short deadline so this test does not dominate suite runtime.
-		ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		ws.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 		_, _, err = ws.ReadMessage()
 		if err == nil {
 			t.Error("expected read timeout waiting for handshake, got no error")
@@ -1082,7 +1082,7 @@ func TestHeartbeatPruning(t *testing.T) {
 	ws.Close()
 
 	// Wait for unregister to propagate (hub processes unregister in run loop)
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify worker is removed from hub
 	workers = hub.ListWorkers()

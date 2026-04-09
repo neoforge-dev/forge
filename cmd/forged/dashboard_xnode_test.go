@@ -49,6 +49,12 @@ func TestDash_ServeDashboard(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "FORGE Agent Health Dashboard") {
 		t.Error("Dashboard HTML missing title")
 	}
+	if !strings.Contains(rr.Body.String(), `<meta charset="UTF-8">`) {
+		t.Error("dashboard HTML missing UTF-8 meta tag")
+	}
+	if !strings.Contains(rr.Body.String(), `href="/ui"`) {
+		t.Error("dashboard HTML missing preferred /ui link")
+	}
 }
 
 // TestDash_ServeDashboardJSON verifies the dashboard data JSON API.
@@ -122,7 +128,7 @@ func TestXNode_RegisterHandler(t *testing.T) {
 	defer cleanup()
 
 	xc, _ := NewXNodeController(db, "test-node")
-	
+
 	node := Node{
 		ID:       "remote-node",
 		Hostname: "remote-host",
@@ -151,7 +157,7 @@ func TestXNode_StatusHandler(t *testing.T) {
 	defer cleanup()
 
 	xc, _ := NewXNodeController(db, "local-node")
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/api/xnode/status", nil)
 	rr := httptest.NewRecorder()
 
@@ -245,6 +251,7 @@ func TestXNode_IngestIncomingMessages(t *testing.T) {
 
 // TestXNode_RouteMessage verifies routing of different message types.
 func TestXNode_RouteMessage(t *testing.T) {
+	t.Setenv("FORGE_TAILSCALE_IP", "") // skip exec call — heartbeat_update for new node triggers detectTailscaleIP
 	db, cleanup := setupClaimTestDB(t)
 	defer cleanup()
 

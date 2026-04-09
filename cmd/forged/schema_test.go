@@ -26,11 +26,18 @@ var requiredTables = []string{"tasks", "agents", "context_envelopes"}
 
 // TestSchemaValidation validates that the schema YAML loads and defines required tables.
 func TestSchemaValidation(t *testing.T) {
-	// Locate .forge/schema/v3_schema.yaml relative to repo root
-	repoRoot := os.Getenv("FORGE_ROOT")
+	// Locate .forge/schema/v3_schema.yaml relative to repo root.
+	// Prefer FORGE_ROOT env var but only if the schema file actually exists there
+	// (the env var may point to an old/different repo location).
+	repoRoot := ""
+	if envRoot := os.Getenv("FORGE_ROOT"); envRoot != "" {
+		if _, err := os.Stat(filepath.Join(envRoot, ".forge", "schema", "v3_schema.yaml")); err == nil {
+			repoRoot = envRoot
+		}
+	}
 	if repoRoot == "" {
 		cwd, _ := os.Getwd()
-		// From cmd/forged we go up twice to repo root
+		// Walk up from cmd/forged to repo root (at most 5 levels)
 		for i := 0; i < 5; i++ {
 			p := cwd
 			for j := 0; j < i; j++ {

@@ -176,12 +176,15 @@ Example:
 		var wrapped struct {
 			Messages []leadMessage `json:"messages"`
 		}
-		if err := json.Unmarshal(raw, &wrapped); err == nil && wrapped.Messages != nil {
+		if err := json.Unmarshal(raw, &wrapped); err == nil {
 			messages = wrapped.Messages
 		} else {
 			if err := json.Unmarshal(raw, &messages); err != nil {
 				return fmt.Errorf("decode inbox messages: %w", err)
 			}
+		}
+		if messages == nil {
+			messages = []leadMessage{}
 		}
 
 		if format == "json" {
@@ -293,12 +296,15 @@ Example:
 		var wrapped struct {
 			Acks []leadAck `json:"acks"`
 		}
-		if err := json.Unmarshal(raw, &wrapped); err == nil && wrapped.Acks != nil {
+		if err := json.Unmarshal(raw, &wrapped); err == nil {
 			acks = wrapped.Acks
 		} else {
 			if err := json.Unmarshal(raw, &acks); err != nil {
 				return fmt.Errorf("decode acks list: %w", err)
 			}
+		}
+		if acks == nil {
+			acks = []leadAck{}
 		}
 
 		if format == "json" {
@@ -341,7 +347,7 @@ Example:
 			return fmt.Errorf("--to-node is required\n  Fix: forge lead preflight --to-node <node>")
 		}
 
-		nodeURL := fmt.Sprintf("http://%s:8081", toNode)
+		nodeURL := fmt.Sprintf("http://%s:%s", toNode, internal.ResolveAPIPort())
 		fmt.Printf("Preflight check for %s (%s)... ", toNode, nodeURL)
 
 		hc := &http.Client{Timeout: 5 * time.Second}
@@ -370,7 +376,6 @@ Example:
 // ── init ──────────────────────────────────────────────────────────────────────
 
 func init() {
-	leadCmd.Hidden = true
 	leadCmd.AddCommand(leadSendCmd)
 	leadCmd.AddCommand(leadInboxCmd)
 	leadCmd.AddCommand(leadAckCmd)

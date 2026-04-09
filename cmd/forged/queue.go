@@ -46,6 +46,7 @@ const (
 	StateDispatched TaskState = "DISPATCHED"
 	StateRunning    TaskState = "RUNNING"
 	StateBlocked    TaskState = "BLOCKED"
+	StateSkipped    TaskState = "SKIPPED"
 	StateCompleted  TaskState = "COMPLETED"
 	StateApproved   TaskState = "APPROVED"
 	StateFailed     TaskState = "FAILED"
@@ -66,13 +67,22 @@ type Task struct {
 	PlanVersion  int        `json:"plan_version,omitempty"`
 	PlanID       string     `json:"plan_id,omitempty"`
 	EnvelopeID   string     `json:"envelope_id,omitempty"`
-	RequiredTier string     `json:"required_tier,omitempty"`
-	Dependencies []string   `json:"dependencies,omitempty"`
-	Result       string     `json:"result,omitempty"`
-	Error        string     `json:"error,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	RequiredTier  string     `json:"required_tier,omitempty"`
+	Dependencies  []string   `json:"dependencies,omitempty"`
+	Result        string     `json:"result,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	FailureContext string    `json:"failure_context,omitempty"`
+	Origin        string     `json:"origin,omitempty"`         // "cli", "openclaw", "api", "patrol"
+	Requester     string     `json:"requester,omitempty"`      // who created it (user ID, agent name)
+	SourceChannel string     `json:"source_channel,omitempty"` // "telegram", "web", "tmux", etc.
+	// Dispatch ACK tracking (Epic 4 — dispatch reliability)
+	DispatchAttempts int        `json:"dispatch_attempts"`
+	LastDispatchAt   *time.Time `json:"last_dispatch_at,omitempty"`
+	AckedAt          *time.Time `json:"acked_at,omitempty"`
+	MaxRetries       int        `json:"max_retries"`
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // TaskEvent represents an event in the event sourcing log
@@ -171,15 +181,18 @@ func (q *sqliteTaskQueue) Enqueue(ctx context.Context, task Task) error {
 	}
 
 	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO tasks (id, domain, project, type, title, priority, status, assigned_to, plan_version, plan_id, envelope_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO tasks (id, domain, project, type, title, priority, status, assigned_to, plan_version, plan_id, envelope_id, origin, requester, source_channel, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		 domain=excluded.domain, project=excluded.project, type=excluded.type,
 		 title=excluded.title, priority=excluded.priority, status=excluded.status, updated_at=excluded.updated_at,
 		 plan_version=excluded.plan_version, plan_id=excluded.plan_id,
-		 envelope_id=excluded.envelope_id`,
+		 envelope_id=excluded.envelope_id,
+		 origin=excluded.origin, requester=excluded.requester, source_channel=excluded.source_channel`,
 		task.ID, task.Domain, task.Project, task.Type, task.Title, task.Priority,
-		status, task.AssignedTo, task.PlanVersion, task.PlanID, task.EnvelopeID, now.Format(time.RFC3339), now.Format(time.RFC3339),
+		status, task.AssignedTo, task.PlanVersion, task.PlanID, task.EnvelopeID,
+		task.Origin, task.Requester, task.SourceChannel,
+		now.Format(time.RFC3339), now.Format(time.RFC3339),
 	)
 	if err != nil {
 		return err
@@ -476,17 +489,24 @@ func (q *sqliteTaskQueue) GetStatus(ctx context.Context, taskID string) (Task, e
 func (q *sqliteTaskQueue) GetTask(ctx context.Context, taskID string) (Task, error) {
 	var task Task
 	var createdAt, updatedAt, startedAt, result, errorMsg, assignedTo, planID, lane, envelopeID sql.NullString
+	var origin, requester, sourceChannel sql.NullString
+	var failureContext sql.NullString
 	var planVersion sql.NullInt64
 
 	var titleVal sql.NullString
 	err := q.db.QueryRowContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-		                                        plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+		                                        plan_version, plan_id, result, error, envelope_id,
+		                                        origin, requester, source_channel,
+		                                        failure_context,
+		                                        created_at, started_at, updated_at,
 		                                        title
 		                                        FROM tasks WHERE id = ?`, taskID,
 	).Scan(&task.ID, &task.Domain, &task.Project, &task.Type,
 		&task.Priority, &task.Status, &lane, &assignedTo,
 		&planVersion, &planID, &result, &errorMsg, &envelopeID,
+		&origin, &requester, &sourceChannel,
+		&failureContext,
 		&createdAt, &startedAt, &updatedAt,
 		&titleVal)
 
@@ -517,6 +537,18 @@ func (q *sqliteTaskQueue) GetTask(ctx context.Context, taskID string) (Task, err
 	}
 	if envelopeID.Valid {
 		task.EnvelopeID = envelopeID.String
+	}
+	if origin.Valid {
+		task.Origin = origin.String
+	}
+	if requester.Valid {
+		task.Requester = requester.String
+	}
+	if sourceChannel.Valid {
+		task.SourceChannel = sourceChannel.String
+	}
+	if failureContext.Valid {
+		task.FailureContext = failureContext.String
 	}
 	if titleVal.Valid {
 		task.Title = titleVal.String
@@ -626,7 +658,10 @@ func (q *sqliteTaskQueue) MarkBad(taskID string) {
 func (q *sqliteTaskQueue) ListAllTasks(ctx context.Context, limit int) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+					 plan_version, plan_id, result, error, envelope_id,
+					 origin, requester, source_channel,
+					 failure_context,
+					 created_at, started_at, updated_at,
 					 title
 		 FROM tasks ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
@@ -640,7 +675,10 @@ func (q *sqliteTaskQueue) ListAllTasks(ctx context.Context, limit int) ([]Task, 
 func (q *sqliteTaskQueue) ListTasksByStatus(ctx context.Context, status TaskStatus, limit int) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+					 plan_version, plan_id, result, error, envelope_id,
+					 origin, requester, source_channel,
+					 failure_context,
+					 created_at, started_at, updated_at,
 					 title
 		 FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC LIMIT ?`,
 		status, limit)
@@ -655,11 +693,19 @@ func (q *sqliteTaskQueue) ListTasksByStatus(ctx context.Context, status TaskStat
 func (q *sqliteTaskQueue) GetClaimableTasks(ctx context.Context, limit int) ([]Task, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, domain, project, type, priority, status, lane, assigned_to,
-					 plan_version, plan_id, result, error, envelope_id, created_at, started_at, updated_at,
+					 plan_version, plan_id, result, error, envelope_id,
+					 origin, requester, source_channel,
+					 failure_context,
+					 created_at, started_at, updated_at,
 					 title
 		 FROM tasks
 		 WHERE (status = ? OR status = ?)
 		 AND (assigned_to IS NULL OR assigned_to = '')
+		 AND NOT EXISTS (
+		     SELECT 1 FROM task_dependencies td
+		     JOIN tasks dep ON td.depends_on = dep.id
+		     WHERE td.task_id = tasks.id AND dep.status != 'completed'
+		 )
 		 ORDER BY priority DESC, created_at ASC
 		 LIMIT ?`,
 		TaskStatusQueued, TaskStatusRequested, limit)
@@ -676,11 +722,15 @@ func (q *sqliteTaskQueue) scanTasks(rows *sql.Rows) ([]Task, error) {
 	for rows.Next() {
 		var task Task
 		var createdAt, updatedAt, startedAt, result, errorMsg, assignedTo, planID, lane, envelopeID, titleVal sql.NullString
+		var origin, requester, sourceChannel sql.NullString
+		var failureContext sql.NullString
 		var planVersion sql.NullInt64
 
 		err := rows.Scan(&task.ID, &task.Domain, &task.Project, &task.Type,
 			&task.Priority, &task.Status, &lane, &assignedTo,
 			&planVersion, &planID, &result, &errorMsg, &envelopeID,
+			&origin, &requester, &sourceChannel,
+			&failureContext,
 			&createdAt, &startedAt, &updatedAt,
 			&titleVal)
 		if err != nil {
@@ -707,6 +757,18 @@ func (q *sqliteTaskQueue) scanTasks(rows *sql.Rows) ([]Task, error) {
 		}
 		if envelopeID.Valid {
 			task.EnvelopeID = envelopeID.String
+		}
+		if origin.Valid {
+			task.Origin = origin.String
+		}
+		if requester.Valid {
+			task.Requester = requester.String
+		}
+		if sourceChannel.Valid {
+			task.SourceChannel = sourceChannel.String
+		}
+		if failureContext.Valid {
+			task.FailureContext = failureContext.String
 		}
 		if titleVal.Valid {
 			task.Title = titleVal.String

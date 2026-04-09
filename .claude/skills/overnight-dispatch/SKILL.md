@@ -41,7 +41,7 @@ Plan and dispatch a wave of tasks to fleet agents.
 
 ```bash
 # List pending tasks from the task queue
-cd ./harness && uv run forge tasks list --status pending
+cd /home/openclaw/work/FORGE/harness && uv run forge tasks list --status pending
 
 # Or read specific task IDs passed as args
 # /overnight-dispatch --task-ids T-001,T-002,T-003
@@ -72,7 +72,7 @@ Use this capability matrix to assign each task:
 - If task is a single-file config/fix: use glm
 - If task requires reading many files to analyze/report: use kimi
 - Never assign the same agent more than 2 tasks per wave (context limits)
-- Never spawn OpenCode or Kilo on node-1 (OOM risk — 93% RAM)
+- Never spawn OpenCode or Kilo on prya (OOM risk — 93% RAM)
 
 ### Step 3: Generate Dispatch Files
 
@@ -235,7 +235,7 @@ Parse result files from the last wave and triage DONE vs BLOCKED.
 
 ```bash
 # Find the most recent wave manifest
-ls -t ./.forge/dispatches/wave-manifest-*.json | head -1
+ls -t /home/openclaw/work/FORGE/.forge/dispatches/wave-manifest-*.json | head -1
 ```
 
 ### Step 2: Check Result Files
@@ -244,7 +244,7 @@ For each task in the manifest, check whether the results file exists:
 
 ```bash
 # Results land in .forge/heartbeat/results/
-ls ./.forge/heartbeat/results/ | grep "wave{N}"
+ls /home/openclaw/work/FORGE/.forge/heartbeat/results/ | grep "wave{N}"
 ```
 
 ### Step 3: Parse Status
@@ -305,7 +305,7 @@ From the DONE results, collect:
 ### Step 2: Stage
 
 ```bash
-cd .
+cd /home/openclaw/work/FORGE
 
 # Stage source files modified by fleet agents
 git add {each modified file from results}
@@ -320,7 +320,7 @@ git add .forge/heartbeat/results/
 Use the `commit-with-retry.sh` script to avoid git lock conflicts:
 
 ```bash
-./.forge/scripts/commit-with-retry.sh \
+/home/openclaw/work/FORGE/.forge/scripts/commit-with-retry.sh \
   "chore(fleet): overnight wave01 — 4 tasks complete, 1 blocked
 
 Tasks completed:
@@ -454,7 +454,7 @@ Task     →  ALL source code changes (Python, TS, etc) (use worktree isolation)
 | Agent shows no results after 8 hours | Check `tmux capture-pane -t forge:{agent} -p` — may be stuck; re-send dispatch |
 | Results file missing but agent claims done | Check git status for untracked files; agent may have saved elsewhere |
 | BLOCKED with "context limit" | Break task into smaller sub-tasks; re-dispatch to fresh agent |
-| Git index lock on commit | `rm -f ./.git/index.lock` then retry |
+| Git index lock on commit | `rm -f /home/openclaw/work/FORGE/.git/index.lock` then retry |
 | glm context depleted mid-task | Send `/clear` to forge:glm, re-read dispatch file from scratch |
 | kimi stuck thinking | Wait 5 min; if no output, send `Ctrl-C` and re-dispatch |
 | Task tool worktree conflict | Worktree agents write to main tree for `harness/` files — normal behavior |

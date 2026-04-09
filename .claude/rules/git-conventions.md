@@ -6,6 +6,8 @@ globs:
 
 # Git Conventions
 
+_Quick reference for agents. Full workflows (conflict resolution, submodule handling, multi-node push): `forge-shared/modules/git-workflow.md`_
+
 ## Commit Rules by Agent Type
 
 | Agent type | Commit? | Where? | Push? |
@@ -63,16 +65,59 @@ test: add 37 coverage tests for completion, openclaw, fleet scaler
 refactor(forged): consolidate handler method validation wave tests
 ```
 
-## Push After Every Commit
+## Commit-Pull-Push Sequence (Council TC-S158)
 
-**Always push immediately after committing:**
+**Always follow this exact sequence:**
 
 ```bash
 git commit -m "feat: add new feature"
+git pull --rebase origin main   # sync with remote AFTER commit
 git push origin main
 ```
 
-**Why:** Avoids divergence, ensures backup, enables collaboration.
+**Why:** Committing first saves your work safely. Pulling after commit means any rebase conflicts happen with a clean commit to fall back to. Never `pull --rebase` before commit — it introduces upstream changes into uncommitted work.
+
+**If push is rejected:** `git pull --rebase origin main` then retry push. Resolve conflicts against your committed work, not uncommitted changes.
+
+## Commit Cadence (Council TC-S159, 3-0)
+
+**Rule: Commit-pull-push after every logical unit.** Never accumulate >5 uncommitted files.
+
+A "logical unit" = one feature, one fix, one doc update, or one batch of related changes. When in doubt, commit more often.
+
+**No Dirty Handoff:** Before running `/handoff`, verify `git status` shows 0 uncommitted changes. If changes exist, commit them first or explicitly document why they're uncommitted.
+
+## gitsafe.sh (Council S175, P1 — Mandatory on Multi-Agent Nodes)
+
+On multi-agent nodes (gaea, nova, sati, prya), concurrent git operations race on `.git/index.lock`. **Use `bin/gitsafe.sh`** instead of raw `git` for all write operations:
+
+```bash
+# Instead of:
+git add file.py && git commit -m "feat: add feature"
+
+# Use:
+bash bin/gitsafe.sh add file.py && bash bin/gitsafe.sh commit -m "feat: add feature"
+```
+
+**Read-only commands (status, diff, log)** can use regular `git`.
+
+### Nodes that need gitsafe.sh
+| Node | RAM | Multi-agent? | Use gitsafe? |
+|------|-----|--------------|-------------|
+| gaea | 16GB | YES | ✅ Yes |
+| nova | 48GB | YES | ✅ Yes |
+| sati | 64GB | YES | ✅ Yes |
+| prya | 16GB | YES (8+ agents in tmux) | ✅ Yes |
+| vega | 16GB | NO | ❌ No (auxiliary only) |
+
+### Single-agent fallback (TC-S159, deprecated)
+On nodes where `git add`/`commit` fails with `fatal: unable to write new index file`, use the tmp index pattern manually:
+```bash
+cp .git/index /tmp/forge-git-index-N && \
+GIT_INDEX_FILE=/tmp/forge-git-index-N git add <files> && \
+cp /tmp/forge-git-index-N .git/index
+```
+**gitsafe.sh is preferred** — it handles this automatically.
 
 ## Branch Strategy
 

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -132,9 +133,14 @@ func TestStartStateSyncJob_RunsWithoutPanic(t *testing.T) {
 	defer cleanup()
 
 	db := getDBConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Use a very long interval so it runs once immediately, then test exits
-	startStateSyncJob(db, 24*time.Hour)
+	startStateSyncJob(ctx, db, 24*time.Hour)
 	// Give goroutine time to run the first sync
 	time.Sleep(50 * time.Millisecond)
+	// Cancel context to stop the goroutine before the test exits
+	cancel()
 	// No panic = pass
 }

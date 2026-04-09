@@ -1,6 +1,6 @@
 // state.go — forge state: Lead orchestrator FSM state management.
 //
-// Ports harness/forge_harness/cli_v2/state_manager.py to Go.
+// Lead orchestrator FSM state persistence and transitions.
 // All operations are pure local file I/O — no daemon calls.
 //
 // File paths (relative to FORGE root):

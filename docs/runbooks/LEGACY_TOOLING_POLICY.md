@@ -32,7 +32,7 @@ These may still exist during transition, but they are not onboarding tools:
 
 If a legacy wrapper remains in `bin/`, it should either:
 
-1. be updated and listed in [ACTIVE_SURFACES.md](/Users/bogdan/work/FORGE/docs/ACTIVE_SURFACES.md), or
+1. be updated and listed in [ACTIVE_SURFACES.md](./docs/ACTIVE_SURFACES.md), or
 2. fail fast with a message pointing to the canonical `forge` command.
 
 ## Removal Criteria
@@ -45,6 +45,6 @@ A legacy doc or script should be deleted when:
 
 ## Canonical References
 
-- [ACTIVE_SURFACES.md](/Users/bogdan/work/FORGE/docs/ACTIVE_SURFACES.md)
-- [CANONICAL_WORKFLOW.md](/Users/bogdan/work/FORGE/docs/runbooks/CANONICAL_WORKFLOW.md)
-- [OPERATING_LOOP_V1.md](/Users/bogdan/work/FORGE/docs/portfolio/OPERATING_LOOP_V1.md)
+- [ACTIVE_SURFACES.md](./docs/ACTIVE_SURFACES.md)
+- [CANONICAL_WORKFLOW.md](./docs/runbooks/CANONICAL_WORKFLOW.md)
+- [OPERATING_LOOP_V1.md](./docs/portfolio/OPERATING_LOOP_V1.md)

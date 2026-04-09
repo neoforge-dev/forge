@@ -368,6 +368,13 @@ func TestTUI_Handler_Success(t *testing.T) {
 	if !strings.Contains(ct, "text/html") {
 		t.Errorf("expected text/html content-type, got %q", ct)
 	}
+	body := w.Body.String()
+	if !strings.Contains(body, `<meta charset="UTF-8">`) {
+		t.Error("TUI HTML missing UTF-8 meta tag")
+	}
+	if !strings.Contains(body, `href="/ui"`) {
+		t.Error("TUI HTML missing preferred /ui link")
+	}
 }
 
 // TestTUI_JSONHandler_Success verifies that TUI.JSONHandler() returns 200 with JSON.

@@ -43,9 +43,14 @@ Each domain directory contains:
 
 ## Current State
 - Architecture: {one-line summary}
-- Tests: {count} passing, {coverage}% coverage
+- Tests: {count} passing, {coverage}% coverage ← **MUST be verified by running tests, not copied**
 - Active blockers: {list or "none"}
 - Recent changes: {last 2-3 commits}
+
+## Data Accuracy (Council TC-S159)
+- Last test run: {date} — command: `pytest -q` / `go test ./...`
+- Metrics source: {actual test run / copied from prior session}
+- **Rule: Never update test counts or coverage without running tests first.**
 
 ## Next 3 Priorities
 1. {priority}
@@ -119,10 +124,55 @@ The `heartbeat_eval_compact.sh` hook saves emergency state. Royal Jelly files su
 | `pk` | brandfocus-ai | pkm-ai |
 | `oc` | openclaw | openclaw |
 
+## Canonical Terminology Hierarchy
+
+TC-TAXONOMY-S150 (council ratified 4-0, 2026-03-22) established the canonical domain hierarchy:
+
+```
+Portfolio > Domain > Product > Task > Plan
+```
+
+| Term | Definition |
+|------|-----------|
+| **Portfolio** | The full collection of 95 products across 11 domains |
+| **Domain** | A business vertical (e.g., codeswiftr-com, brandfocus-ai) |
+| **Product** | A repository or deployable unit within a domain (canonical term) |
+| **Task** | A unit of work assigned to an agent |
+| **Plan** | A multi-task execution plan for a product |
+
+**"product" is the canonical term.** "project" is deprecated — use "product" in all new code and docs.
+
+Backward-compat surfaces (do NOT break without a migration):
+- `/projects` HTTP routes remain (backward-compat view in DB)
+- `type Project = Product` alias in `cmd/forge/internal/types.go`
+- `--project` CLI flag (hidden, deprecated alias for `--product`)
+- `ProjectListResponse` struct (deprecated; use `ProductListResponse`)
+
+---
+
+## Research Integration (S161)
+
+Heartbeat research results MUST flow into decisions.md. See `forge-shared/modules/knowledge-flow.md` for the full protocol.
+
+**Summary:** After any research task completes:
+1. Orchestrator reads `.forge/heartbeat/results/{agent}-{task}.md` within 48h
+2. Extracts 1-3 decisions
+3. Appends to `.forge/context/{domain}/decisions.md` using template:
+   ```
+   ## {date}: {Decision Title}
+   **Decision:** {what was decided}
+   **Source:** .forge/heartbeat/results/{agent}-{task}-{date}.md
+   **Why:** {rationale}
+   ```
+4. Updates `lead-context.md` if domain state changed
+5. Creates follow-up task if action needed
+
 ## Rules
 
 1. **lead-context.md is mandatory** — update it on every handoff, no exceptions
-2. **Append-only for decisions.md and failures.md** — never delete entries
-3. **Keep it concise** — lead-context.md should be < 50 lines, decisions/failures < 5 lines per entry
-4. **Short codes are canonical** — use 2-letter codes for directory names, not full domain names
-5. **All nodes share the same repo** — Royal Jelly propagates on `git pull`
+2. **decisions.md is mandatory** — every domain must have meaningful entries. Process heartbeat results within 48h.
+3. **Append-only for decisions.md and failures.md** — never delete entries
+4. **Keep it concise** — lead-context.md should be < 50 lines, decisions/failures < 5 lines per entry
+5. **Short codes are canonical** — use 2-letter codes for directory names, not full domain names
+6. **All nodes share the same repo** — Royal Jelly propagates on `git pull`
+7. **Check before building** — consult `docs/PATTERNS.md` and `docs/COMMON_MISTAKES.md` before starting work

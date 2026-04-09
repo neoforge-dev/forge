@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -158,6 +159,20 @@ func orchestratorDispatchQueued(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("iterate idle agents: %w", err)
 	}
 
+	// Filter out orchestrator/control-plane nodes.
+	excluded := NoAutoAssignAgents()
+	if len(excluded) > 0 {
+		excludedSet := make(map[string]bool, len(excluded))
+		for _, e := range excluded {
+			excludedSet[strings.ToLower(e)] = true
+		}
+		for agentID := range onlineIdle {
+			if excludedSet[strings.ToLower(agentID)] {
+				delete(onlineIdle, agentID)
+			}
+		}
+	}
+
 	if len(onlineIdle) == 0 {
 		// No idle agents available — nothing to dispatch.
 		return nil
@@ -167,6 +182,12 @@ func orchestratorDispatchQueued(ctx context.Context, db *sql.DB) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	for _, t := range tasks {
+		// Skip tasks for inactive/paused domains.
+		if !IsDomainActive(t.domain) {
+			log.Printf("[Patrol:orchestrator-auto] skipped task %s — domain '%s' is inactive", t.id, t.domain)
+			continue
+		}
+
 		// Determine the gate result for stage/lane.
 		gateResult := EnforceStageGate(t.domain, t.taskType)
 		if !gateResult.Allowed {

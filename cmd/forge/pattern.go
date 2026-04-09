@@ -256,6 +256,47 @@ func findPattern(id string) (*Pattern, error) {
 func getBuiltInPatterns() []Pattern {
 	return []Pattern{
 		{
+			ID:          "api_endpoint:simple",
+			Name:        "Simple API Endpoint",
+			Description: "Minimal REST API endpoint pattern",
+			Category:    "code",
+			Tags:        []string{"api", "rest", "endpoint"},
+			Variables:   []string{"resource_name"},
+			CreatedAt:   time.Now().Format("2006-01-02"),
+			UsageCount:  0,
+			Template: `# Simple API Endpoint (api_endpoint:simple)
+GET /{{resource_name}}
+POST /{{resource_name}}
+PUT /{{resource_name}}/:id
+DELETE /{{resource_name}}/:id`,
+		},
+		{
+			ID:          "documentation:standard",
+			Name:        "Standard Documentation",
+			Description: "Standard documentation template for modules and APIs",
+			Category:    "doc",
+			Tags:        []string{"documentation", "readme", "standard"},
+			Variables:   []string{"module_name"},
+			CreatedAt:   time.Now().Format("2006-01-02"),
+			UsageCount:  0,
+			Template: `# {{module_name}} - documentation:standard
+
+## Overview
+
+Brief description of {{module_name}}.
+
+## Usage
+
+    # Example usage
+
+## Configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| | | |
+`,
+		},
+		{
 			ID:          "fastapi-endpoint",
 			Name:        "FastAPI Endpoint",
 			Description: "Standard FastAPI endpoint with CRUD operations",

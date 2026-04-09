@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -2397,5 +2398,938 @@ func TestCreateTaskHandler_EnqueueError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 for enqueue error, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- PatchDomainHandler ---
+
+func TestPatchDomainHandler_HappyPath_Score(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	score := 85
+	body, _ := json.Marshal(map[string]interface{}{"score": score})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/codeswiftr-com", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DomainMeta
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Key != "codeswiftr-com" {
+		t.Errorf("expected key codeswiftr-com, got %s", resp.Key)
+	}
+	if resp.Score != score {
+		t.Errorf("expected score %d, got %d", score, resp.Score)
+	}
+}
+
+func TestPatchDomainHandler_HappyPath_Status(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{"status": "inactive"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/leanvibe-ai", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DomainMeta
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Status != "inactive" {
+		t.Errorf("expected status inactive, got %s", resp.Status)
+	}
+}
+
+func TestPatchDomainHandler_HappyPath_ScoreAndStatus(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{"score": 75, "status": "archived"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/brandfocus-ai", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp DomainMeta
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Score != 75 {
+		t.Errorf("expected score 75, got %d", resp.Score)
+	}
+	if resp.Status != "archived" {
+		t.Errorf("expected status archived, got %s", resp.Status)
+	}
+}
+
+func TestPatchDomainHandler_InvalidScore_TooHigh(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{"score": 150})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/codeswiftr-com", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for score>100, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPatchDomainHandler_InvalidScore_Negative(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{"score": -1})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/codeswiftr-com", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for negative score, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPatchDomainHandler_InvalidStatus(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{"status": "bogus"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/codeswiftr-com", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid status, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPatchDomainHandler_NoFields(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/codeswiftr-com", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 when no fields provided, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPatchDomainHandler_InvalidMethod(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/domains/codeswiftr-com", nil)
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestPatchDomainHandler_MissingKey(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]interface{}{"score": 50})
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing key, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPatchDomainHandler_InvalidJSON(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/domains/codeswiftr-com", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	PatchDomainHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid JSON, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- getFleetCounts consistency tests ---
+
+// TestGetFleetCounts_EmptyDB verifies that getFleetCounts returns zero values
+// on an empty database and does not panic.
+func TestGetFleetCounts_EmptyDB(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+	fc := getFleetCounts(context.Background(), db)
+
+	if fc.TotalAgents != 0 {
+		t.Errorf("expected TotalAgents=0, got %d", fc.TotalAgents)
+	}
+	if fc.OnlineAgents != 0 {
+		t.Errorf("expected OnlineAgents=0, got %d", fc.OnlineAgents)
+	}
+	if fc.QueuedTasks != 0 {
+		t.Errorf("expected QueuedTasks=0, got %d", fc.QueuedTasks)
+	}
+	if fc.RunningTasks != 0 {
+		t.Errorf("expected RunningTasks=0, got %d", fc.RunningTasks)
+	}
+	if fc.CompletedTasks24h != 0 {
+		t.Errorf("expected CompletedTasks24h=0, got %d", fc.CompletedTasks24h)
+	}
+}
+
+// TestGetFleetCounts_NilDB verifies that getFleetCounts returns zero values
+// when passed a nil database (e.g., daemon not yet started).
+func TestGetFleetCounts_NilDB(t *testing.T) {
+	fc := getFleetCounts(context.Background(), nil)
+	if fc.TotalAgents != 0 || fc.QueuedTasks != 0 {
+		t.Errorf("expected all-zero FleetCounts for nil db, got %+v", fc)
+	}
+}
+
+// TestGetFleetCounts_WithData verifies canonical counts with seeded data.
+// It inserts agents and tasks then confirms getFleetCounts reports the
+// same numbers that all status endpoints will use.
+func TestGetFleetCounts_WithData(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+
+	// Seed two agents: one recently seen (online), one stale (offline).
+	recentTS := time.Now().UTC().Add(-1 * time.Minute).Format("2006-01-02 15:04:05")
+	staleTS := time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02 15:04:05")
+	_, err := db.Exec(`
+		INSERT INTO agent_heartbeats (agent_id, node, status, last_seen, connected_at, context_pct)
+		VALUES
+			('agent-online', 'node1', 'online', ?, ?, 0),
+			('agent-stale',  'node1', 'offline', ?, ?, 0)
+	`, recentTS, recentTS, staleTS, staleTS)
+	if err != nil {
+		t.Fatalf("seed agent_heartbeats: %v", err)
+	}
+
+	// Seed tasks: 1 queued, 1 running (assigned), 1 completed recently, 1 completed long ago.
+	recentUpdated := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")
+	oldUpdated := time.Now().UTC().Add(-48 * time.Hour).Format("2006-01-02 15:04:05")
+	_, err = db.Exec(`
+		INSERT INTO tasks (id, title, domain, project, type, status, state, priority, created_at, updated_at)
+		VALUES
+			('t-queued',    'q', 'test', 'test', 'feature', 'queued',    'QUEUED',    5, ?, ?),
+			('t-assigned',  'r', 'test', 'test', 'feature', 'assigned',  'RUNNING',   5, ?, ?),
+			('t-comp-new',  'c', 'test', 'test', 'feature', 'completed', 'COMPLETED', 5, ?, ?),
+			('t-comp-old',  'o', 'test', 'test', 'feature', 'completed', 'COMPLETED', 5, ?, ?)
+	`,
+		recentUpdated, recentUpdated,
+		recentUpdated, recentUpdated,
+		recentUpdated, recentUpdated,
+		oldUpdated, oldUpdated,
+	)
+	if err != nil {
+		t.Fatalf("seed tasks: %v", err)
+	}
+
+	fc := getFleetCounts(context.Background(), db)
+
+	if fc.TotalAgents != 2 {
+		t.Errorf("TotalAgents: want 2, got %d", fc.TotalAgents)
+	}
+	if fc.OnlineAgents != 1 {
+		t.Errorf("OnlineAgents: want 1, got %d", fc.OnlineAgents)
+	}
+	if fc.QueuedTasks != 1 {
+		t.Errorf("QueuedTasks: want 1, got %d", fc.QueuedTasks)
+	}
+	if fc.RunningTasks != 1 {
+		t.Errorf("RunningTasks: want 1, got %d", fc.RunningTasks)
+	}
+	if fc.CompletedTasks24h != 1 {
+		t.Errorf("CompletedTasks24h: want 1 (only recently completed), got %d", fc.CompletedTasks24h)
+	}
+}
+
+// TestFleetCountsConsistency_StatusEndpoints verifies that openclawStatusHandler
+// and fleetSnapshotHandler both call getFleetCounts and produce consistent
+// agent/task numbers from the same underlying DB state.
+func TestFleetCountsConsistency_StatusEndpoints(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	db := getDBConn()
+
+	recentTS := time.Now().UTC().Add(-2 * time.Minute).Format("2006-01-02 15:04:05")
+	_, err := db.Exec(`
+		INSERT INTO agent_heartbeats (agent_id, node, status, last_seen, connected_at, context_pct)
+		VALUES ('agt-1', 'n1', 'online', ?, ?, 0)
+	`, recentTS, recentTS)
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	ts := time.Now().UTC().Add(-30 * time.Minute).Format("2006-01-02 15:04:05")
+	_, err = db.Exec(`
+		INSERT INTO tasks (id, title, domain, project, type, status, state, priority, created_at, updated_at)
+		VALUES ('t-q1', 'queued task', 'test', 'test', 'feature', 'queued', 'QUEUED', 5, ?, ?)
+	`, ts, ts)
+	if err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	// Call openclawStatusHandler
+	req1 := httptest.NewRequest(http.MethodGet, "/api/openclaw/status", nil)
+	w1 := httptest.NewRecorder()
+	openclawStatusHandler(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("openclawStatusHandler: want 200, got %d: %s", w1.Code, w1.Body.String())
+	}
+	var ocStatus struct {
+		Agents      int `json:"agents"`
+		TasksQueued int `json:"tasks_queued"`
+	}
+	if err := json.NewDecoder(w1.Body).Decode(&ocStatus); err != nil {
+		t.Fatalf("decode openclaw status: %v", err)
+	}
+
+	// Call fleetSnapshotHandler
+	req2 := httptest.NewRequest(http.MethodGet, "/api/fleet/snapshot", nil)
+	w2 := httptest.NewRecorder()
+	fleetSnapshotHandler(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("fleetSnapshotHandler: want 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	var snap struct {
+		TotalAgents int `json:"total_agents"`
+		TotalQueued int `json:"total_queued"`
+	}
+	if err := json.NewDecoder(w2.Body).Decode(&snap); err != nil {
+		t.Fatalf("decode fleet snapshot: %v", err)
+	}
+
+	if ocStatus.Agents != snap.TotalAgents {
+		t.Errorf("agent count mismatch: openclaw=%d, snapshot=%d", ocStatus.Agents, snap.TotalAgents)
+	}
+	if ocStatus.TasksQueued != snap.TotalQueued {
+		t.Errorf("queued task count mismatch: openclaw=%d, snapshot=%d", ocStatus.TasksQueued, snap.TotalQueued)
+	}
+}
+
+// --- ackTaskHandler (Epic 4 dispatch reliability) ---
+
+func TestAckTaskHandler_Success(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	// Ensure stateMachine is nil so the standalone SQL path is used.
+	// Without this, a stale stateMachine from another test may point at
+	// a different DB and cause the FSM transition to fail.
+	oldSM := stateMachine
+	stateMachine = nil
+	defer func() { stateMachine = oldSM }()
+
+	taskID := "ack-task-001"
+	agentID := "agent-ack-1"
+
+	conn := getDBConn()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := conn.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state,
+		                   assigned_to, dispatch_attempts, max_retries, created_at, updated_at)
+		VALUES (?, 'test-domain', 'test-project', 'feature', 5, 'assigned', 'DISPATCHED',
+		        ?, 1, 3, ?, ?)
+	`, taskID, agentID, now, now)
+	if err != nil {
+		t.Fatalf("seed dispatched task: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+taskID+"/ack", body)
+	w := httptest.NewRecorder()
+	ackTaskHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "acked" {
+		t.Errorf("expected status=acked, got %v", resp["status"])
+	}
+
+	// Verify task is now RUNNING in the DB.
+	var state string
+	if err := conn.QueryRow("SELECT state FROM tasks WHERE id = ?", taskID).Scan(&state); err != nil {
+		t.Fatalf("query state: %v", err)
+	}
+	if state != string(StateRunning) {
+		t.Errorf("expected state=RUNNING after ACK, got %q", state)
+	}
+
+	// Verify acked_at was stamped.
+	var ackedAt sql.NullString
+	if err := conn.QueryRow("SELECT acked_at FROM tasks WHERE id = ?", taskID).Scan(&ackedAt); err != nil {
+		t.Fatalf("query acked_at: %v", err)
+	}
+	if !ackedAt.Valid || ackedAt.String == "" {
+		t.Error("expected acked_at to be set after ACK")
+	}
+}
+
+func TestAckTaskHandler_WrongMethod(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/any-id/ack", nil)
+	w := httptest.NewRecorder()
+	ackTaskHandler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestAckTaskHandler_MissingAgentID(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body := bytes.NewBufferString(`{"agent_id":""}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/any-id/ack", body)
+	w := httptest.NewRecorder()
+	ackTaskHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestAckTaskHandler_TaskNotFound(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	body := bytes.NewBufferString(`{"agent_id":"agent-x"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/nonexistent-id/ack", body)
+	w := httptest.NewRecorder()
+	ackTaskHandler(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAckTaskHandler_WrongAgent(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	taskID := "ack-task-wrongagent"
+	conn := getDBConn()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := conn.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state,
+		                   assigned_to, dispatch_attempts, max_retries, created_at, updated_at)
+		VALUES (?, 'test-domain', 'test-project', 'feature', 5, 'assigned', 'DISPATCHED',
+		        'agent-correct', 1, 3, ?, ?)
+	`, taskID, now, now)
+	if err != nil {
+		t.Fatalf("seed dispatched task: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"agent_id":"agent-wrong"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+taskID+"/ack", body)
+	w := httptest.NewRecorder()
+	ackTaskHandler(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- Bug A1: context_pct preservation tests ---
+
+// TestHeartbeat_ContextPctPreservedWhenAbsent verifies that a cron-style heartbeat
+// that omits context_pct does not overwrite an existing non-zero value in the DB.
+func TestHeartbeat_ContextPctPreservedWhenAbsent(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-agent-ctx-preserve"
+
+	// Seed an existing heartbeat row with a known context_pct value.
+	if err := UpdateAgentHeartbeat(agentID, "node-x", "idle", "", 42.5); err != nil {
+		t.Fatalf("seed heartbeat: %v", err)
+	}
+
+	// Send a cron-style heartbeat that omits context_pct entirely.
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"idle","node":"node-x"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// The context_pct in the DB should still be 42.5, not 0.
+	var ctxPct float64
+	err := getDBConn().QueryRow(
+		`SELECT context_pct FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&ctxPct)
+	if err != nil {
+		t.Fatalf("query context_pct: %v", err)
+	}
+	if ctxPct != 42.5 {
+		t.Errorf("context_pct should be preserved as 42.5, got %.1f", ctxPct)
+	}
+}
+
+// TestHeartbeat_ContextPctUpdatedWhenProvided verifies that when context_pct is
+// explicitly provided in the heartbeat payload the DB value is updated.
+func TestHeartbeat_ContextPctUpdatedWhenProvided(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-agent-ctx-update"
+
+	// Seed with initial value.
+	if err := UpdateAgentHeartbeat(agentID, "node-x", "idle", "", 10.0); err != nil {
+		t.Fatalf("seed heartbeat: %v", err)
+	}
+
+	// Send a heartbeat with an explicit context_pct value.
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"busy","node":"node-x","context_pct":65.0}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var ctxPct float64
+	err := getDBConn().QueryRow(
+		`SELECT context_pct FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&ctxPct)
+	if err != nil {
+		t.Fatalf("query context_pct: %v", err)
+	}
+	if ctxPct != 65.0 {
+		t.Errorf("context_pct should be updated to 65.0, got %.1f", ctxPct)
+	}
+}
+
+// TestHeartbeat_ContextAliasField verifies that the legacy "context" field
+// (alias for context_pct) also works correctly and updates the DB value.
+func TestHeartbeat_ContextAliasField(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-agent-ctx-alias"
+
+	// Send heartbeat using "context" alias field.
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"busy","node":"node-x","context":55.5}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var ctxPct float64
+	err := getDBConn().QueryRow(
+		`SELECT context_pct FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&ctxPct)
+	if err != nil {
+		t.Fatalf("query context_pct: %v", err)
+	}
+	if ctxPct != 55.5 {
+		t.Errorf("context_pct should be 55.5 from 'context' alias, got %.1f", ctxPct)
+	}
+}
+
+// --- work_state tracking tests ---
+
+// TestWorkState_DefaultsToIdle verifies that a new agent heartbeat gets work_state='idle'
+// when no work_state is included in the payload.
+func TestWorkState_DefaultsToIdle(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-default"
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"online","node":"node-a"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var workState string
+	err := getDBConn().QueryRow(
+		`SELECT COALESCE(work_state, 'idle') FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&workState)
+	if err != nil {
+		t.Fatalf("query work_state: %v", err)
+	}
+	if workState != "idle" {
+		t.Errorf("expected work_state='idle', got %q", workState)
+	}
+}
+
+// TestWorkState_AcceptsWorking verifies that work_state='working' is stored correctly.
+func TestAgentWorkState_AcceptsWorking(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-working"
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"online","node":"node-a","work_state":"working"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var workState string
+	err := getDBConn().QueryRow(
+		`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&workState)
+	if err != nil {
+		t.Fatalf("query work_state: %v", err)
+	}
+	if workState != "working" {
+		t.Errorf("expected work_state='working', got %q", workState)
+	}
+}
+
+// TestAgentWorkState_AcceptsBlocked verifies that work_state='blocked' is stored correctly.
+func TestAgentWorkState_AcceptsBlocked(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-blocked"
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"online","node":"node-a","work_state":"blocked"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var workState string
+	err := getDBConn().QueryRow(
+		`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&workState)
+	if err != nil {
+		t.Fatalf("query work_state: %v", err)
+	}
+	if workState != "blocked" {
+		t.Errorf("expected work_state='blocked', got %q", workState)
+	}
+}
+
+// TestAgentWorkState_InvalidValueDefaultsToIdle verifies that an unrecognised work_state
+// is coerced to "idle" rather than stored verbatim.
+func TestAgentWorkState_InvalidValueDefaultsToIdle(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-invalid"
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"online","node":"node-a","work_state":"on_fire"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var workState string
+	err := getDBConn().QueryRow(
+		`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID,
+	).Scan(&workState)
+	if err != nil {
+		t.Fatalf("query work_state: %v", err)
+	}
+	if workState != "idle" {
+		t.Errorf("invalid work_state should be coerced to 'idle', got %q", workState)
+	}
+}
+
+// TestAgentWorkState_UpdateAgentWorkState verifies the UpdateAgentWorkState helper.
+func TestAgentWorkState_UpdateAgentWorkState(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-update"
+
+	// Seed an agent row.
+	if err := UpdateAgentHeartbeat(agentID, "node-a", "online", "", 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Set to "working".
+	if err := UpdateAgentWorkState(agentID, "working"); err != nil {
+		t.Fatalf("UpdateAgentWorkState working: %v", err)
+	}
+	var ws string
+	if err := getDBConn().QueryRow(`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID).Scan(&ws); err != nil {
+		t.Fatalf("query after working: %v", err)
+	}
+	if ws != "working" {
+		t.Errorf("expected 'working', got %q", ws)
+	}
+
+	// Reset to "idle".
+	if err := UpdateAgentWorkState(agentID, "idle"); err != nil {
+		t.Fatalf("UpdateAgentWorkState idle: %v", err)
+	}
+	if err := getDBConn().QueryRow(`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID).Scan(&ws); err != nil {
+		t.Fatalf("query after idle: %v", err)
+	}
+	if ws != "idle" {
+		t.Errorf("expected 'idle', got %q", ws)
+	}
+}
+
+// TestAgentWorkState_GetAllAgentsHealthIncludesWorkState verifies that getAllAgentsHealth
+// returns the work_state field in each AgentHeartbeat.
+func TestAgentWorkState_GetAllAgentsHealthIncludesWorkState(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-list-agent"
+
+	// Seed agent with work_state='working'.
+	if err := UpdateAgentHeartbeat(agentID, "node-a", "online", "", 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := UpdateAgentWorkState(agentID, "working"); err != nil {
+		t.Fatalf("set work_state: %v", err)
+	}
+
+	agents, err := getAllAgentsHealth()
+	if err != nil {
+		t.Fatalf("getAllAgentsHealth: %v", err)
+	}
+
+	var found *AgentHeartbeat
+	for i := range agents {
+		if agents[i].AgentID == agentID {
+			found = &agents[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("agent %s not found in getAllAgentsHealth response", agentID)
+	}
+	if found.WorkState != "working" {
+		t.Errorf("expected WorkState='working', got %q", found.WorkState)
+	}
+}
+
+// TestAgentWorkState_HeartbeatResponseIncludesWorkState verifies that the heartbeat
+// endpoint response does NOT expose work_state (it's stored, not echoed back).
+// The real assertion is that the DB value is correct after posting.
+func TestAgentWorkState_HeartbeatResponseStoresWorkState(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-response"
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agentID + `","status":"online","node":"node-a","work_state":"blocked"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/heartbeat", body)
+	w := httptest.NewRecorder()
+	agentHeartbeatReceive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Confirm DB stores the value.
+	var ws string
+	if err := getDBConn().QueryRow(`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID).Scan(&ws); err != nil {
+		t.Fatalf("query work_state: %v", err)
+	}
+	if ws != "blocked" {
+		t.Errorf("expected 'blocked' in DB, got %q", ws)
+	}
+
+	// Confirm response is 200 JSON with standard fields.
+	var resp map[string]string
+	if err := json.NewDecoder(bytes.NewReader(w.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "received" {
+		t.Errorf("expected status='received' in response, got %q", resp["status"])
+	}
+}
+
+// TestAgentWorkState_ValidWorkStatesMap verifies the ValidWorkStates sentinel covers
+// the three expected values and rejects others.
+func TestAgentWorkState_ValidWorkStatesMap(t *testing.T) {
+	valid := []string{"idle", "working", "blocked"}
+	for _, v := range valid {
+		if !ValidWorkStates[v] {
+			t.Errorf("expected %q to be in ValidWorkStates", v)
+		}
+	}
+	invalid := []string{"", "busy", "pending", "on_fire"}
+	for _, v := range invalid {
+		if ValidWorkStates[v] {
+			t.Errorf("expected %q NOT to be in ValidWorkStates", v)
+		}
+	}
+}
+
+// TestAgentWorkState_UpdateAgentWorkState_InvalidCoercedToIdle verifies that passing
+// an invalid value to UpdateAgentWorkState coerces it to "idle" without returning an error.
+func TestAgentWorkState_UpdateAgentWorkState_InvalidCoercedToIdle(t *testing.T) {
+	cleanup := setupHandlerTest(t)
+	defer cleanup()
+
+	agentID := "test-ws-coerce"
+
+	// Seed with "working" first.
+	if err := UpdateAgentHeartbeat(agentID, "node-a", "online", "", 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := UpdateAgentWorkState(agentID, "working"); err != nil {
+		t.Fatalf("set working: %v", err)
+	}
+
+	// Now pass invalid value — should coerce to "idle".
+	if err := UpdateAgentWorkState(agentID, "invalid_value"); err != nil {
+		t.Fatalf("UpdateAgentWorkState invalid: %v", err)
+	}
+
+	var ws string
+	if err := getDBConn().QueryRow(`SELECT work_state FROM agent_heartbeats WHERE agent_id = ?`, agentID).Scan(&ws); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if ws != "idle" {
+		t.Errorf("expected invalid value coerced to 'idle', got %q", ws)
+	}
+}
+
+// --- Bug fix tests ---
+
+// TestCompleteTaskHandler_RoutesViaApproval_WhenServiceAvailable verifies that
+// completeTaskHandler routes through the approval integration when
+// globalApprovalService is set (Bug 1 fix).
+// A task assigned to an agent with low-confidence factors (default confCtx used
+// by the handler) may either complete immediately or return 202 — both are
+// acceptable outcomes.  The key assertion is that the handler does NOT return
+// a 5xx error when globalApprovalService is non-nil.
+func TestCompleteTaskHandler_RoutesViaApproval_WhenServiceAvailable(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Wire up globalApprovalService so the approval path is taken.
+	store := NewApprovalStore(db)
+	svc := NewApprovalService(store)
+	oldSvc := globalApprovalService
+	globalApprovalService = svc
+	defer func() { globalApprovalService = oldSvc }()
+
+	task := Task{
+		ID:      "approval-route-001",
+		Domain:  "test",
+		Project: "proj",
+		Type:    TaskTypeFeature,
+		Priority: 5,
+		Status:  TaskStatusExecuting,
+		State:   StateRunning,
+		Title:   "approval route test",
+	}
+	if err := taskQueue.Enqueue(context.Background(), task); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	// Assign the task so AssignedTo is set (needed by ProcessApproved path).
+	if err := taskQueue.AssignTask(context.Background(), task.ID, "agent-route-001"); err != nil {
+		t.Logf("AssignTask non-fatal: %v", err)
+	}
+
+	body := `{"result":"done","status":"completed"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/approval-route-001/complete",
+		bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	completeTaskHandler(w, req)
+
+	// The handler must not return a server error.  It should return 200 (high
+	// confidence direct complete) or 202 (pending approval).
+	if w.Code >= 500 {
+		t.Errorf("expected 2xx from approval-routed complete, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCompleteTaskHandler_NilApprovalService_FallsThrough verifies that
+// completeTaskHandler still works when globalApprovalService is nil (backward
+// compatibility / standalone mode — Bug 1 fix).
+func TestCompleteTaskHandler_NilApprovalService_FallsThrough(t *testing.T) {
+	_, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Ensure approval service is nil.
+	oldSvc := globalApprovalService
+	globalApprovalService = nil
+	defer func() { globalApprovalService = oldSvc }()
+
+	task := Task{
+		ID:      "no-approval-svc-001",
+		Domain:  "test",
+		Project: "proj",
+		Type:    TaskTypeFeature,
+		Priority: 5,
+		Status:  TaskStatusExecuting,
+		State:   StateRunning,
+		Title:   "no approval svc test",
+	}
+	taskQueue.Enqueue(context.Background(), task)
+
+	body := `{"result":"done","status":"completed"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/no-approval-svc-001/complete",
+		bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	completeTaskHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("nil-approval-svc: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }

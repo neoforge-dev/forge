@@ -83,8 +83,8 @@ Everything else is either deleted or iOS/portfolio-specific Python harness.
 ## Key Commands
 
 ```bash
-forge up              # Start services
-forge down            # Stop services
+forge daemon start    # Start services
+forge daemon stop     # Stop services
 forge monitor         # Open monitor session
 forge daemon restart  # Restart daemon after code changes
 ```

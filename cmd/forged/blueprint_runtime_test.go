@@ -278,3 +278,231 @@ steps:
 		t.Errorf("expected 1 blueprint, got %d", len(blueprints))
 	}
 }
+
+// TestProductAliasFromKey verifies the alias derivation logic for various product keys.
+func TestProductAliasFromKey(t *testing.T) {
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"interview-simulator", "is"},
+		{"voice-coach", "vc"},
+		{"study-flow", "sf"},
+		{"single", "s"},
+		{"", ""},
+		{"a-b-c-d", "abcd"},
+	}
+	for _, tc := range cases {
+		got := productAliasFromKey(tc.key)
+		if got != tc.want {
+			t.Errorf("productAliasFromKey(%q) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
+// TestProductContextFromTask_NilDB verifies that productContextFromTask returns
+// empty-string values when called with a nil database pointer.
+func TestProductContextFromTask_NilDB(t *testing.T) {
+	ctx := productContextFromTask(nil, "task-123")
+	for _, key := range []string{"DOMAIN", "PRODUCT_KEY", "PRODUCT_ALIAS"} {
+		if ctx[key] != "" {
+			t.Errorf("expected empty string for %s with nil DB, got %q", key, ctx[key])
+		}
+	}
+}
+
+// TestProductContextFromTask_EmptyTaskID verifies that productContextFromTask returns
+// empty-string values when called with an empty task ID.
+func TestProductContextFromTask_EmptyTaskID(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	ctx := productContextFromTask(db, "")
+	for _, key := range []string{"DOMAIN", "PRODUCT_KEY", "PRODUCT_ALIAS"} {
+		if ctx[key] != "" {
+			t.Errorf("expected empty string for %s with empty taskID, got %q", key, ctx[key])
+		}
+	}
+}
+
+// TestProductContextFromTask_WithTask verifies that domain and product key (project)
+// are correctly extracted from the tasks table.
+func TestProductContextFromTask_WithTask(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+
+	// Insert a task with a known domain and project.
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state, created_at, updated_at)
+		VALUES ('ctx-task-001', 'edtech', 'voice-coach', 'feature', 5, 'queued', 'QUEUED', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	ctx := productContextFromTask(db, "ctx-task-001")
+	if ctx["DOMAIN"] != "edtech" {
+		t.Errorf("DOMAIN = %q, want %q", ctx["DOMAIN"], "edtech")
+	}
+	if ctx["PRODUCT_KEY"] != "voice-coach" {
+		t.Errorf("PRODUCT_KEY = %q, want %q", ctx["PRODUCT_KEY"], "voice-coach")
+	}
+	if ctx["PRODUCT_ALIAS"] != "vc" {
+		t.Errorf("PRODUCT_ALIAS = %q, want %q", ctx["PRODUCT_ALIAS"], "vc")
+	}
+}
+
+// TestBlueprintVariableSubstitution_DomainAndProductKey verifies that ${DOMAIN},
+// ${PRODUCT_KEY}, and ${PRODUCT_ALIAS} are replaced in shell command strings
+// when a matching task exists in the database.
+func TestBlueprintVariableSubstitution_DomainAndProductKey(t *testing.T) {
+	db, cleanup := setupClaimTestDB(t)
+	defer cleanup()
+	setDBConn(db)
+	defer setDBConn(nil)
+
+	root := t.TempDir()
+	t.Setenv("FORGE_ROOT", root)
+
+	// Insert the task that the blueprint run references.
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state, created_at, updated_at)
+		VALUES ('subst-task-001', 'fintech', 'study-flow', 'feature', 3, 'queued', 'QUEUED', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	blueprintDir := filepath.Join(root, "config", "blueprints")
+	if err := os.MkdirAll(blueprintDir, 0o755); err != nil {
+		t.Fatalf("mkdir blueprint dir: %v", err)
+	}
+	// The command writes the substituted values into a temp file so we can
+	// assert they were replaced without relying on env-var leakage.
+	outFile := filepath.Join(root, "subst-output.txt")
+	blueprintYAML := `id: subst-test
+name: Substitution Test
+description: validates new variable substitution
+steps:
+  - type: shell
+    name: write-vars
+    command: "printf '%s %s %s' '${DOMAIN}' '${PRODUCT_KEY}' '${PRODUCT_ALIAS}' > ` + outFile + `"
+`
+	if err := os.WriteFile(filepath.Join(blueprintDir, "subst-test.yaml"), []byte(blueprintYAML), 0o644); err != nil {
+		t.Fatalf("write blueprint: %v", err)
+	}
+
+	rt := NewBlueprintRuntime(db, root)
+	run, err := rt.StartBlueprintRun(context.Background(), "subst-task-001", "subst-test")
+	if err != nil {
+		t.Fatalf("StartBlueprintRun: %v", err)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("expected completed run, got %s (error=%s)", run.Status, run.Error)
+	}
+
+	output, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	got := strings.TrimSpace(string(output))
+	want := "fintech study-flow sf"
+	if got != want {
+		t.Errorf("substituted output = %q, want %q", got, want)
+	}
+}
+
+// ─── Real config/blueprints validation ───────────────────────────────────────
+
+// TestRealBlueprintYAMLs_AllParseWithoutError loads every YAML file under the
+// real config/blueprints/ directory and verifies each one passes validateBlueprint.
+// This catches schema regressions in the committed blueprint files.
+func TestRealBlueprintYAMLs_AllParseWithoutError(t *testing.T) {
+	repoRoot := "../../"
+	blueprints, err := loadBlueprintsFromConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("loadBlueprintsFromConfig returned error: %v", err)
+	}
+	if len(blueprints) == 0 {
+		t.Skip("no blueprint YAML files found under config/blueprints/ — skipping")
+	}
+	for _, bp := range blueprints {
+		bp := bp // capture loop var
+		t.Run(bp.ID, func(t *testing.T) {
+			if err := validateBlueprint(&bp); err != nil {
+				t.Errorf("blueprint %q failed validation: %v", bp.ID, err)
+			}
+		})
+	}
+}
+
+// TestRealBlueprintYAMLs_AllHaveNonEmptyID verifies that every blueprint loaded
+// from the real config directory has a non-empty ID after parsing (either from
+// the YAML id field or derived from the file path).
+func TestRealBlueprintYAMLs_AllHaveNonEmptyID(t *testing.T) {
+	repoRoot := "../../"
+	blueprints, err := loadBlueprintsFromConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("loadBlueprintsFromConfig returned error: %v", err)
+	}
+	for _, bp := range blueprints {
+		if strings.TrimSpace(bp.ID) == "" {
+			t.Errorf("blueprint loaded from config has empty ID (name=%q)", bp.Name)
+		}
+	}
+}
+
+// TestRealBlueprintYAMLs_AllHaveAtLeastOneStep verifies that every real blueprint
+// has at least one step defined.
+func TestRealBlueprintYAMLs_AllHaveAtLeastOneStep(t *testing.T) {
+	repoRoot := "../../"
+	blueprints, err := loadBlueprintsFromConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("loadBlueprintsFromConfig returned error: %v", err)
+	}
+	for _, bp := range blueprints {
+		if len(bp.Steps) == 0 {
+			t.Errorf("blueprint %q has no steps", bp.ID)
+		}
+	}
+}
+
+// TestRealBlueprintYAMLs_AllStepsHaveSupportedTypes verifies that every step in
+// every real blueprint uses one of the supported step types:
+// check, shell, dispatch, review, complete.
+func TestRealBlueprintYAMLs_AllStepsHaveSupportedTypes(t *testing.T) {
+	repoRoot := "../../"
+	blueprints, err := loadBlueprintsFromConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("loadBlueprintsFromConfig returned error: %v", err)
+	}
+	supported := map[string]bool{
+		"check": true, "shell": true, "dispatch": true, "review": true, "complete": true,
+	}
+	for _, bp := range blueprints {
+		for _, step := range bp.Steps {
+			if !supported[step.Type] {
+				t.Errorf("blueprint %q step %q has unsupported type %q", bp.ID, step.Name, step.Type)
+			}
+		}
+	}
+}
+
+// TestRealBlueprintYAMLs_CommandStepsHaveCommands verifies that every check/shell
+// step in every real blueprint has a non-empty command field.
+func TestRealBlueprintYAMLs_CommandStepsHaveCommands(t *testing.T) {
+	repoRoot := "../../"
+	blueprints, err := loadBlueprintsFromConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("loadBlueprintsFromConfig returned error: %v", err)
+	}
+	for _, bp := range blueprints {
+		for _, step := range bp.Steps {
+			if step.Type == "check" || step.Type == "shell" {
+				if strings.TrimSpace(step.Command) == "" {
+					t.Errorf("blueprint %q step %q (type=%s) has empty command", bp.ID, step.Name, step.Type)
+				}
+			}
+		}
+	}
+}

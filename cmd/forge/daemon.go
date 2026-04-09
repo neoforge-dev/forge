@@ -213,6 +213,19 @@ func findDaemonBinary() string {
 		}
 	}
 
+	// Try relative to current working directory
+	if cwd, err := os.Getwd(); err == nil {
+		for _, rel := range []string{
+			filepath.Join("cmd", "forged", "forged"),
+			filepath.Join("cmd", "forge-v3", "forge-v3"),
+		} {
+			candidate := filepath.Join(cwd, rel)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+
 	return ""
 }
 
@@ -248,17 +261,20 @@ func getPIDFromPort(port string) (int, error) {
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the FORGE daemon",
-	Long:  "Start the FORGE daemon in the background on port 8081 with WebSocket on 8082.",
+	Long:  fmt.Sprintf("Start the FORGE daemon in the background on port %s with WebSocket on %s.", internal.ResolveAPIPort(), internal.ResolveWSPort()),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		format, _ := cmd.Flags().GetString("format")
 		foreground, _ := cmd.Flags().GetBool("foreground")
 
-		// Check if already running on :8081
-		if isPortListening("8081") {
+		apiPort := internal.ResolveAPIPort()
+		wsPort := internal.ResolveWSPort()
+
+		// Check if already running on the API port
+		if isPortListening(apiPort) {
 			// Try to get PID from file or port
 			pid, _ := readPIDFile()
 			if pid == 0 {
-				pid, _ = getPIDFromPort("8081")
+				pid, _ = getPIDFromPort(apiPort)
 			}
 			formatter := internal.NewFormatter(format, nil)
 			if pid > 0 {
@@ -281,7 +297,7 @@ var daemonStartCmd = &cobra.Command{
 			formatter.Println("Starting forged in foreground...")
 			formatter.Println("Press Ctrl+C to stop")
 
-			execCmd := exec.Command(binaryPath, "--port", "8081", "--ws-port", "8082", "--db", forgeDBPath())
+			execCmd := exec.Command(binaryPath, "--port", apiPort, "--ws-port", wsPort, "--db", forgeDBPath())
 			execCmd.Stdout = os.Stdout
 			execCmd.Stderr = os.Stderr
 			return execCmd.Run()
@@ -301,7 +317,7 @@ var daemonStartCmd = &cobra.Command{
 		}
 		defer f.Close()
 
-		execCmd := exec.Command(binaryPath, "--port", "8081", "--ws-port", "8082", "--db", forgeDBPath())
+		execCmd := exec.Command(binaryPath, "--port", apiPort, "--ws-port", wsPort, "--db", forgeDBPath())
 		execCmd.Stdout = f
 		execCmd.Stderr = f
 		execCmd.SysProcAttr = &syscall.SysProcAttr{
@@ -318,11 +334,11 @@ var daemonStartCmd = &cobra.Command{
 
 		pid := execCmd.Process.Pid
 
-		// Poll until :8081 responds (max 5s)
+		// Poll until API port responds (max 5s)
 		started := false
 		for i := 0; i < 50; i++ {
 			time.Sleep(100 * time.Millisecond)
-			if isPortListening("8081") {
+			if isPortListening(apiPort) {
 				started = true
 				break
 			}
@@ -355,8 +371,10 @@ var daemonStopCmd = &cobra.Command{
 		format, _ := cmd.Flags().GetString("format")
 		force, _ := cmd.Flags().GetBool("force")
 
+		apiPort := internal.ResolveAPIPort()
+
 		// Check if running
-		if !isPortListening("8081") {
+		if !isPortListening(apiPort) {
 			formatter := internal.NewFormatter(format, nil)
 			formatter.Println("forged is not running")
 			removePIDFile() // Clean up stale PID file
@@ -366,7 +384,7 @@ var daemonStopCmd = &cobra.Command{
 		// Get PID from file or port
 		pid, err := readPIDFile()
 		if err != nil {
-			pid, err = getPIDFromPort("8081")
+			pid, err = getPIDFromPort(apiPort)
 			if err != nil {
 				return fmt.Errorf("could not find forged process: %w", err)
 			}
@@ -380,7 +398,7 @@ var daemonStopCmd = &cobra.Command{
 
 		if err := syscall.Kill(pid, sig); err != nil {
 			// Try to find process again (PID might have changed)
-			pid, err = getPIDFromPort("8081")
+			pid, err = getPIDFromPort(apiPort)
 			if err != nil {
 				return fmt.Errorf("could not find forged process: %w", err)
 			}
@@ -393,7 +411,7 @@ var daemonStopCmd = &cobra.Command{
 		stopped := false
 		for i := 0; i < 50; i++ {
 			time.Sleep(100 * time.Millisecond)
-			if !isPortListening("8081") {
+			if !isPortListening(apiPort) {
 				stopped = true
 				break
 			}
@@ -407,7 +425,7 @@ var daemonStopCmd = &cobra.Command{
 			// Try force kill
 			syscall.Kill(pid, syscall.SIGKILL)
 			time.Sleep(500 * time.Millisecond)
-			if !isPortListening("8081") {
+			if !isPortListening(apiPort) {
 				removePIDFile()
 				formatter.Println("forged stopped (forced)")
 			} else {
@@ -431,21 +449,27 @@ var daemonStatusCmd = &cobra.Command{
 
 		formatter := internal.NewFormatter(format, nil)
 
+		apiPort := internal.ResolveAPIPort()
+		wsPort := internal.ResolveWSPort()
+
 		// Check if API port is listening
-		apiRunning := isPortListening("8081")
-		wsRunning := isPortListening("8082")
+		apiRunning := isPortListening(apiPort)
+		wsRunning := isPortListening(wsPort)
 
 		if !apiRunning {
 			if format == "json" {
-				return formatter.WriteJSON(map[string]string{
+				// JSON output: write status and return error so exit code is 1.
+				_ = formatter.WriteJSON(map[string]string{
 					"status": "not_running",
 				})
+				return fmt.Errorf("forged not running")
 			}
 			if format == "quiet" {
 				os.Exit(3)
 			}
 			formatter.Println("forged DOWN")
-			return nil
+			fmt.Fprintf(os.Stderr, "\n  Recovery: forge daemon start\n           OR check: forge daemon logs\n")
+			return fmt.Errorf("forged not running on port %s", apiPort)
 		}
 
 		// Get PID — verify file PID is live, fall back to port scan
@@ -457,7 +481,7 @@ var daemonStatusCmd = &cobra.Command{
 			}
 		}
 		if pid == 0 {
-			pid, _ = getPIDFromPort("8081")
+			pid, _ = getPIDFromPort(apiPort)
 			if pid > 0 {
 				// Update stale PID file
 				_ = writePIDFile(pid)
@@ -502,9 +526,9 @@ var daemonStatusCmd = &cobra.Command{
 		if pid > 0 {
 			formatter.Printf("  PID: %d\n", pid)
 		}
-		formatter.Printf("  API: localhost:8081\n")
+		formatter.Printf("  API: localhost:%s\n", apiPort)
 		if wsRunning {
-			formatter.Printf("  WebSocket: localhost:8082\n")
+			formatter.Printf("  WebSocket: localhost:%s\n", wsPort)
 		} else {
 			formatter.Printf("  WebSocket: not running\n")
 		}
@@ -547,10 +571,28 @@ daemon is never replaced with a stale or broken binary.`,
 			}
 
 			srcDir := filepath.Join(forgeRoot, "cmd", "forged")
+			if _, err := os.Stat(srcDir); os.IsNotExist(err) {
+				return fmt.Errorf("[restart] Source directory %s does not exist — check FORGE_ROOT (currently %q)", srcDir, forgeRoot)
+			}
 			outBin := filepath.Join(srcDir, "forged")
 			formatter.Printf("[restart] Building %s...\n", srcDir)
 
-			buildCmd := exec.Command("go", "build", "-o", outBin, ".")
+			// Capture version metadata to embed via ldflags.
+			version := captureGitMetadata("describe", "--tags", "--always", "--dirty")
+			if version == "" {
+				version = "dev"
+			}
+			commit := captureGitMetadata("rev-parse", "--short", "HEAD")
+			if commit == "" {
+				commit = "unknown"
+			}
+			buildTime := time.Now().UTC().Format(time.RFC3339)
+			ldflags := fmt.Sprintf(
+				"-X main.Version=%s -X main.GitCommit=%s -X main.BuildTime=%s",
+				version, commit, buildTime,
+			)
+
+			buildCmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", outBin, ".")
 			buildCmd.Dir = srcDir
 			buildCmd.Stdout = os.Stdout
 			buildCmd.Stderr = os.Stderr
@@ -562,7 +604,7 @@ daemon is never replaced with a stale or broken binary.`,
 
 		// Step 2: Stop if running
 		formatter.Println("[restart] Stopping...")
-		if isPortListening("8081") {
+		if isPortListening(internal.ResolveAPIPort()) {
 			if err := daemonStopCmd.RunE(cmd, args); err != nil {
 				return fmt.Errorf("[restart] Stop failed: %w", err)
 			}
@@ -689,6 +731,9 @@ var daemonInstallCmd = &cobra.Command{
 		var serviceName string
 		var serviceFilePath string
 
+		apiPort := internal.ResolveAPIPort()
+		wsPort := internal.ResolveWSPort()
+
 		if user {
 			serviceName = "forged.service"
 			unitContent = fmt.Sprintf(`[Unit]
@@ -700,7 +745,7 @@ Wants=network-online.target
 Type=simple
 User=%s
 WorkingDirectory=%s
-ExecStart=%s --port 8081 --ws-port 8082
+ExecStart=%s --port %s --ws-port %s
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -708,7 +753,7 @@ StandardError=journal
 
 [Install]
 WantedBy=default.target
-`, os.Getenv("USER"), filepath.Dir(absBinary), absBinary)
+`, os.Getenv("USER"), filepath.Dir(absBinary), absBinary, apiPort, wsPort)
 			homeDir, _ := os.UserHomeDir()
 			serviceFilePath = filepath.Join(homeDir, ".config", "systemd", "user", serviceName)
 		} else {
@@ -722,7 +767,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=%s
-ExecStart=%s --port 8081 --ws-port 8082
+ExecStart=%s --port %s --ws-port %s
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -730,7 +775,7 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-`, filepath.Dir(absBinary), absBinary)
+`, filepath.Dir(absBinary), absBinary, apiPort, wsPort)
 			serviceFilePath = "/etc/systemd/system/" + serviceName
 		}
 
@@ -775,4 +820,14 @@ WantedBy=multi-user.target
 
 		return nil
 	},
+}
+
+// captureGitMetadata runs a git command and returns trimmed stdout.
+// Returns "" on any error so callers can substitute a default.
+func captureGitMetadata(args ...string) string {
+	out, err := exec.Command("git", args...).Output()
+	if err != nil || len(out) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

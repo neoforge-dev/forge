@@ -1,0 +1,48 @@
+id: ios-deploy
+name: iOS App Deployment
+description: Pattern for deploying iOS applications to Test flight simulator and App Store
+automation:
+tags:
+  - ios
+  - mobile
+  - deployment
+  - swift
+  - xcodebuild
+    - cocoapods
+    - fastlane
+steps:
+  - step: 1
+    type: shell
+    name: pre-flight-checks
+    command: "forge check --task ${Task.id}"
+  - step: 2
+    type: shell
+    name: build-simulator
+    command: "xcrun simctl boot 'iPhone 17 Pro' || xcrun simctl shutdown all"
+    - step: 3
+    type: shell
+    name: run-tests
+    command: "xcodebuild test -scheme '${scheme}' -destination 'platform=iOS Simulator,name=iPhone 17 Pro'"
+    - step: 4
+    type: shell
+    name: archive-logs
+    command: "tar -czf logs"
+    - step: 5
+    type: complete
+    name: deploy-to-testflight
+    command: |
+      export SCHEME=${scheme}
+      &&
+      fastlane build -scheme ${scheme} --configuration Debug
+    - step: 6
+    type: dispatch
+    name: push-to-testflight
+    command: |
+      # For Testflight, see docs/pipeline/docs/ios-deploy-pipeline.md
+  - step: 7
+    type: complete
+    name: notify-team
+    command: |
+      # Notification script location
+      curl -X POST "https://hooks.slack.com/services/Tgk..." \n        -H "Authorization: Bearer $SL_token_here" \n        -H "Content-type: application/json" \n        -d "deployment complete for ${scheme}"
+      EOF

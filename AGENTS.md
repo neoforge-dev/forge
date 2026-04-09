@@ -9,17 +9,17 @@ If a command or workflow is not referenced here, in [README.md](README.md), or i
 Read these in order:
 
 1. [README.md](README.md)
-2. [CANONICAL_WORKFLOW.md](docs/runbooks/CANONICAL_WORKFLOW.md)
-3. [ACTIVE_SURFACES.md](docs/ACTIVE_SURFACES.md)
-4. [FORGE_BIG_PICTURE.md](docs/FORGE_BIG_PICTURE.md)
-5. [FORGE_SIMPLIFICATION_PLAN.md](docs/FORGE_SIMPLIFICATION_PLAN.md)
-6. [OPERATING_LOOP_V1.md](docs/portfolio/OPERATING_LOOP_V1.md)
+2. [AGENT_QUICK_START.md](docs/AGENT_QUICK_START.md) — 5 min onboarding
+3. [INFRASTRUCTURE_MAP.md](docs/INFRASTRUCTURE_MAP.md) — progressive disclosure (Tier 1-3)
+4. [STRATEGY.md](docs/STRATEGY.md) — strategy index and gradual disclosure entrypoint
+5. [STRATEGY_REVENUE_SPRINT.md](docs/STRATEGY_REVENUE_SPRINT.md) — current business goals
+6. [CANONICAL_WORKFLOW.md](docs/runbooks/CANONICAL_WORKFLOW.md)
 7. [portfolio-state.yaml](config/portfolio/portfolio-state.yaml) (copy from `examples/portfolio/sample-portfolio-state.yaml` if missing)
 
 ## 2. Core Rules
 
 1. Use the `forge` CLI first.
-2. Use `forge dispatch send`, not raw `tmux send-keys`, for task delivery.
+2. **Dispatch hierarchy:** (a) `forge task create` for queue-based work (PRIMARY), (b) Task tool for code changes, (c) `forge dispatch send` for named agent override (SECONDARY). Never raw `tmux send-keys`.
 3. Use the portfolio operating loop before creating new MVP scope.
 4. If a doc references `forge-harness`, `CLI v2`, or wrapper-first workflows, treat it as legacy.
 5. Do not broaden scope when an existing product is blocked at `validate`, `deploy`, or `measure`.
@@ -47,11 +47,13 @@ These are the commands every onboarded agent should know:
 
 ```bash
 forge status
-forge fleet status
+forge agent list
 forge portfolio status
 forge task list
-forge dispatch send forge:kimi "Read .forge/dispatches/task.md — EXECUTE now"
+forge dispatch send kimi --file .forge/dispatches/task.md
 ```
+
+Several low-frequency nouns (`fleet`, `lead`, `message`, …) are hidden from default `forge --help`. Run `forge advanced` to print their names, then `forge <noun> --help` for details.
 
 Useful follow-ups:
 
@@ -68,7 +70,7 @@ forge daemon status
 Write detailed briefs to `.forge/dispatches/` and send a short reference:
 
 ```bash
-forge dispatch send forge:gemini "Read .forge/dispatches/my-task.md — EXECUTE now"
+forge dispatch send gemini --file .forge/dispatches/my-task.md
 ```
 
 Do not use:
@@ -78,6 +80,8 @@ tmux send-keys -t forge:agent "message" Enter
 ```
 
 Interactive `tmux send-keys` is acceptable only for approvals or restarts when an agent is already waiting at its own prompt.
+
+**Note:** §10’s bootstrap wake line is **bootstrap only** (wake an agent window). It is not a substitute for `forge task create` / `forge dispatch send` / the task queue (§2).
 
 ## 6. Portfolio Guardrail
 
@@ -129,7 +133,30 @@ Use this decision order:
 
 If the command or workflow is not verifiable there, do not assume it is current.
 
-## 10. Skill Compatibility Matrix
+## 10. Agent Start Commands
+
+When starting fleet agents in tmux windows, use these exact commands:
+
+| Agent | Start Command | Notes |
+|-------|--------------|-------|
+| `claude` | `claude --dangerously-skip-permissions` | Primary implementation agent |
+| `kimi` | `kimi -y` | Auto-accept prompts |
+| `gemini` | `gemini -y` | Auto-accept prompts |
+| `pi` | `pi` | No flags needed |
+| `minimax` | `minimax` | No flags needed |
+| `opencode` | `opencode` | Heavy — sati/nova only |
+| `kilo` | `kilo` | Heavy — sati/nova only |
+| `cursor` | `cursor-agent -f` | Human-steered interactive |
+| `amp` | `amp --dangerously-allow-all` | Autonomous mode |
+| `codex` | `codex --dangerously-bypass-approvals-and-sandbox` | Research + strategy |
+
+**Dispatch after start (bootstrap only — §2 still governs real task delivery):** Wait 5 seconds for agent initialization, then send a short wake line via:
+
+```bash
+tmux send-keys -t forge:AGENT -l "message" && sleep 0.1 && tmux send-keys -t forge:AGENT Enter
+```
+
+## 11. Skill Compatibility Matrix
 
 `.claude/skills/` skills are Claude Code features. Non-Claude agents receive **natural language prompts** and don't invoke skills directly. The table below maps each skill to its compatibility and the equivalent approach for non-Claude agents.
 
@@ -153,13 +180,9 @@ For non-Claude agents, phrase the request as a natural language task — no slas
 |-------|-------------|--------------------------|--------|-------|
 | `content-library-producer` | `/content-library-producer` | "Write 5 blog post outlines for..." | ✅ | Any capable writer |
 | `content-publisher` | `/content-publisher` | "Format this outline for WordPress..." | ✅ | Any capable writer |
-| `compliance-playbook-writer` | `/compliance-playbook-writer` | "Write COPPA compliance SOP for..." | ✅ | |
-| `update-broadcaster` | `/update-broadcaster` | "Summarize these changes for stakeholders" | ✅ | |
 | `niche-explorer` | `/niche-explorer` | "Research the [market] opportunity..." | ✅ best | gemini excels at research |
 | `mvp-spec-writer` | `/mvp-spec-writer` | "Create feature backlog for [product]..." | ✅ best | gemini excels at planning |
-| `mvp-bootstrap-orchestrator` | `/mvp-bootstrap-orchestrator` | "Plan MVP kickoff for [domain]..." | ✅ | Complex; gemini preferred |
 | `human-review-gate` | `/human-review-gate` | "Score risk and recommend escalation..." | ✅ | |
-| `llm-prompt-guardrails` | `/llm-prompt-guardrails` | "Design safe prompt for [use case]..." | ✅ | |
 
 ### Code Generation Skills (Claude Code or capable code agents)
 
@@ -169,14 +192,15 @@ For non-Claude agents, phrase the request as a natural language task — no slas
 | `pwa-frontend-lite` | ✅ | ✅ | ❌ avoid | Needs React/Vite knowledge |
 | `fastapi-service-template` | ✅ | ✅ | ❌ avoid | Needs boilerplate generation |
 | `ios-agent` | ✅ | ❌ | ❌ | iOS harness integration only |
+| `ios-design` | ✅ | ❌ | ❌ | HIG-compliant SwiftUI patterns |
+| `stripe-best-practices` | ✅ | ✅ | ✅ | Stripe integration guidance |
+| `upgrade-stripe` | ✅ | ✅ | ❌ | Stripe API version upgrades |
 
 ### Quality / Testing Skills (require code execution context)
 
 | Skill | Claude Code | kimi | pi | Notes |
 |-------|-------------|------|-----|-------|
 | `integration-tester` | ✅ | ✅ | ✅ | kimi: best for coverage loops |
-| `migration-assistant` | ✅ | ✅ | ❌ | Needs DB + code context |
-| `performance-profiler` | ✅ | ❌ | ✅ | Analysis + profiling output |
 
 ### Quick Rule
 

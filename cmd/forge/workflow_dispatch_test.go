@@ -304,3 +304,135 @@ func TestLookupPortfolioStage_MissingFile(t *testing.T) {
 		t.Errorf("expected empty when file missing, got %q", got)
 	}
 }
+
+// ─── taskTypeToAgentPrefix ───────────────────────────────────────────────────
+
+func TestTaskTypeToAgentPrefix(t *testing.T) {
+	cases := []struct {
+		taskType string
+		want     string
+	}{
+		{"coverage", "kimi"},
+		{"test", "kimi"},
+		{"research", "gemini"},
+		{"audit", "gemini"},
+		{"analysis", "gemini"},
+		{"plan", "gemini"},
+		{"refactor", "claude"},
+		{"multi-file", "claude"},
+		{"feature", "claude"},
+		{"docs", "minimax"},
+		{"content", "minimax"},
+		{"runbook", "minimax"},
+		{"edit", "pi"},
+		{"format", "pi"},
+		{"quick", "pi"},
+		{"triage", "pi"},
+		{"recommend", "pi"},
+		{"implementation", "glm"},
+		{"scaffold", "glm"},
+		{"unknown-type", ""},
+		{"", ""},
+		{"COVERAGE", "kimi"}, // case-insensitive
+		{"  test  ", "kimi"}, // whitespace trimmed
+	}
+	for _, c := range cases {
+		got := taskTypeToAgentPrefix(c.taskType)
+		if got != c.want {
+			t.Errorf("taskTypeToAgentPrefix(%q): want %q, got %q", c.taskType, c.want, got)
+		}
+	}
+}
+
+// ─── dispatch auto ───────────────────────────────────────────────────────────
+
+// TestDispatchAutoNoMessage verifies error when message is missing.
+func TestDispatchAutoNoMessage(t *testing.T) {
+	runner := NewTestRunner(t)
+	_, err := runner.Execute("dispatch", "auto")
+	if err == nil {
+		t.Fatal("expected error for missing message")
+	}
+	if !strings.Contains(err.Error(), "message") {
+		t.Errorf("error should mention message, got: %v", err)
+	}
+}
+
+// TestDispatchAutoWithMockServer verifies end-to-end agent selection and dispatch.
+func TestDispatchAutoWithMockServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/agents" && r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"agents": []map[string]string{
+					{"agent_id": "kimi", "status": "online"},
+					{"agent_id": "gemini", "status": "online"},
+				},
+			})
+		case r.URL.Path == "/api/tasks" && r.Method == http.MethodPost:
+			var req internal.CreateTaskRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(internal.Task{
+				ID: "auto-task-001", Title: req.Subject, Status: "queued",
+			})
+		case strings.HasPrefix(r.URL.Path, "/api/tasks/") && strings.HasSuffix(r.URL.Path, "/claim"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{"task": map[string]string{"id": "auto-task-001", "status": "claimed"}})
+		case r.URL.Path == "/api/routing/resolve":
+			// Routing endpoint not available — fallback to legacy prefix matching.
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	restore := setenv("FORGE_API_URL", server.URL)
+	defer restore()
+
+	runner := NewTestRunner(t)
+
+	t.Run("coverage task goes to kimi", func(t *testing.T) {
+		out, err := runner.Execute("dispatch", "auto", "run coverage wave", "--task-type", "coverage")
+		if err != nil {
+			t.Fatalf("dispatch auto failed: %v", err)
+		}
+		if !strings.Contains(out, "auto-task-001") {
+			t.Errorf("expected task ID in output, got: %s", out)
+		}
+		if !strings.Contains(out, "kimi") {
+			t.Errorf("expected kimi in output, got: %s", out)
+		}
+	})
+
+	t.Run("json format", func(t *testing.T) {
+		out, err := runner.Execute("dispatch", "auto", "research auth patterns", "--task-type", "research", "--format", "json")
+		if err != nil {
+			t.Fatalf("dispatch auto json failed: %v", err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err != nil {
+			t.Errorf("expected JSON output, got: %s (err: %v)", out, err)
+		}
+		if m["dispatched"] == "" {
+			t.Errorf("JSON missing 'dispatched' field: %v", m)
+		}
+	})
+}
+
+// TestDispatchAutoNoDaemon verifies error when daemon is unreachable.
+func TestDispatchAutoNoDaemon(t *testing.T) {
+	restore := setenv("FORGE_API_URL", "http://127.0.0.1:19991")
+	defer restore()
+
+	runner := NewTestRunner(t)
+	_, err := runner.Execute("dispatch", "auto", "test message")
+	if err == nil {
+		t.Fatal("expected error when daemon unreachable")
+	}
+	if !strings.Contains(err.Error(), "daemon") && !strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("error should mention daemon/unreachable: %v", err)
+	}
+}

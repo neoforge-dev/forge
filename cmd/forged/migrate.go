@@ -279,6 +279,24 @@ func MigrateUp(db *sql.DB) error {
 
 		if strings.TrimSpace(m.UpSQL) != "" {
 			if _, err := tx.Exec(m.UpSQL); err != nil {
+				errMsg := strings.ToLower(err.Error())
+				// Non-fatal: schema already matches (idempotent migrations).
+				// Common after manual DB fixes or migration version collisions.
+				if strings.Contains(errMsg, "duplicate column") ||
+					strings.Contains(errMsg, "already exists") ||
+					strings.Contains(errMsg, "table") && strings.Contains(errMsg, "already exists") {
+					tx.Rollback()
+					log.Printf("migration %d: schema already applied (non-fatal: %v) — marking as applied", m.Version, err)
+					// Record it as applied outside the failed tx.
+					if dbType == PostgreSQL {
+						db.Exec(`INSERT INTO applied_migrations (version, name, applied_at) VALUES ($1, $2, $3)`,
+							m.Version, m.Name, time.Now().UTC().Format(time.RFC3339))
+					} else {
+						db.Exec(`INSERT INTO applied_migrations (version, name, applied_at) VALUES (?, ?, ?)`,
+							m.Version, m.Name, time.Now().UTC().Format(time.RFC3339))
+					}
+					continue
+				}
 				tx.Rollback()
 				return fmt.Errorf("apply migration %d: %w", m.Version, err)
 			}

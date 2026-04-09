@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -273,5 +274,44 @@ func TestContextManager_SyncDomainToFilesystem_NilSync(t *testing.T) {
 	err := cm.SyncDomainToFilesystem("forge")
 	if err == nil {
 		t.Error("expected error when sync is nil")
+	}
+}
+
+// TestGenerateTaskID_NoSpaces verifies that generateTaskID never produces an
+// ID containing spaces, even when the noun/adjective word lists contain words
+// with leading or trailing whitespace.
+func TestGenerateTaskID_NoSpaces(t *testing.T) {
+	// Run many iterations to exercise different seed values and word selections.
+	for i := 0; i < 1000; i++ {
+		id := generateTaskID()
+		if strings.Contains(id, " ") {
+			t.Errorf("generateTaskID returned ID with space: %q", id)
+		}
+	}
+}
+
+// TestGenerateTaskID_Format verifies the ID matches the expected TASK-WORD-WORD-NNN pattern.
+func TestGenerateTaskID_Format(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		id := generateTaskID()
+		if !strings.HasPrefix(id, "TASK-") {
+			t.Errorf("expected ID to start with 'TASK-', got %q", id)
+		}
+		parts := strings.Split(id, "-")
+		// TASK-ADJ-NOUN-NNN → 4 parts
+		if len(parts) != 4 {
+			t.Errorf("expected 4 dash-separated parts, got %d in %q", len(parts), id)
+		}
+	}
+}
+
+// TestGenerateTaskID_ValidForAPI verifies that every generated ID passes the
+// isValidID check used by the task creation handler.
+func TestGenerateTaskID_ValidForAPI(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		id := generateTaskID()
+		if !isValidID(id) {
+			t.Errorf("generateTaskID produced ID that fails isValidID: %q", id)
+		}
 	}
 }

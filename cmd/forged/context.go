@@ -103,7 +103,7 @@ func generateTaskID() string {
 	adjectives := []string{"fast", "smart", "bold", "cool", "bright", "swift", "sharp", "keen", "brave", "wise",
 		"quick", "calm", "safe", "sure", "true", "grand", "prime", "mega", "ultra", "super"}
 	nouns := []string{"wave", "node", "flux", "core", "sync", "link", "beam", "flow", "pulse", "spark",
-		"nova", "star", "bolt", "dash", "zoom", " surge", "glow", "flash", "blaze", "storm"}
+		"nova", "star", "bolt", "dash", "zoom", "surge", "glow", "flash", "blaze", "storm"}
 
 	// Use current time to seed selection
 	now := time.Now()
@@ -113,10 +113,13 @@ func generateTaskID() string {
 	nounIndex := int((seed / 100) % int64(len(nouns)))
 	number := int((seed / 10000) % 1000) // 0-999
 
-	return fmt.Sprintf("TASK-%s-%s-%03d",
+	id := fmt.Sprintf("TASK-%s-%s-%03d",
 		strings.ToUpper(adjectives[adjIndex]),
 		strings.ToUpper(nouns[nounIndex]),
 		number)
+	// Sanitize: replace any accidental spaces with hyphens so IDs are always
+	// safe for use in CLI arguments and API paths.
+	return strings.ReplaceAll(id, " ", "-")
 }
 
 // GenerateEnvelope creates a context envelope from current state

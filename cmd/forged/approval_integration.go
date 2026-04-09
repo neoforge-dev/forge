@@ -66,7 +66,12 @@ func (tai *TaskApprovalIntegration) CompleteTaskWithApproval(
 		return fmt.Errorf("failed to update task status: %w", err)
 	}
 
-	return fmt.Errorf("task %s requires approval %s (confidence: %.0f%%)", taskID, approval.ID, confidence.Score*100)
+	return &ApprovalRequiredError{
+		TaskID:     taskID,
+		ApprovalID: approval.ID,
+		Confidence: confidence.Score,
+		Reason:     confidence.Reasoning,
+	}
 }
 
 // ProcessApprovedTask checks if a task has been approved and completes it

@@ -31,10 +31,19 @@ type Client struct {
 	subscriptions []string
 }
 
+// defaultWSURL returns the default WebSocket URL, respecting FORGE_WS_PORT env var.
+func defaultWSURL() string {
+	port := os.Getenv("FORGE_WS_PORT")
+	if port == "" {
+		port = "8082"
+	}
+	return "ws://localhost:" + port
+}
+
 // NewClient creates a new WebSocket client.
 func NewClient(config *Config) *Client {
 	if config == nil {
-		config = DefaultConfig("ws://localhost:8082", "unknown")
+		config = DefaultConfig(defaultWSURL(), "unknown")
 	}
 	return &Client{
 		config:       config,

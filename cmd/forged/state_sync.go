@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"time"
@@ -49,14 +50,21 @@ func syncStatusState(db *sql.DB) {
 }
 
 // startStateSyncJob starts a background goroutine that syncs status->state every interval.
-func startStateSyncJob(db *sql.DB, interval time.Duration) {
+// The goroutine exits when ctx is cancelled.
+func startStateSyncJob(ctx context.Context, db *sql.DB, interval time.Duration) {
 	go func() {
 		// Run once immediately on startup to fix existing desync
 		syncStatusState(db)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			syncStatusState(db)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("[sync] state sync job stopped")
+				return
+			case <-ticker.C:
+				syncStatusState(db)
+			}
 		}
 	}()
 }

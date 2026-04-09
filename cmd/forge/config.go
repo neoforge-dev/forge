@@ -21,7 +21,14 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage configuration",
-	Long:  "Get, set, and manage FORGE configuration settings.",
+	Long: `Get, set, and manage FORGE configuration settings.
+
+Config Precedence (highest to lowest):
+  1. Environment variables (FORGE_API_URL, FORGE_WEBHOOK_TOKEN, FORGE_ROOT)
+  2. Project-level .forge/config.toml (in the current repo)
+  3. User-level ~/.forge/config.toml (CLI settings)
+  4. User-level ~/.forge/forge.toml (daemon settings)
+  5. Defaults (localhost:8081)`,
 }
 
 // configGetCmd: forge config get [key]
@@ -157,7 +164,7 @@ var configListCmd = &cobra.Command{
 }
 
 func init() {
-	// initCmd and envCmd visible — setup and configuration are user-facing
+	envCmd.Hidden = true
 	// Add commands to config noun
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)
@@ -170,21 +177,24 @@ func init() {
 	initCmd.Flags().Bool("agent", false, "Agent setup mode: print agent-specific quick start")
 }
 
-// initCmd represents the forge init command (ADR-030: writes ~/.forge/forge.toml for v3 daemon).
+// initCmd represents the forge init command.
+// It writes daemon settings to ~/.forge/forge.toml and CLI control-plane
+// settings to ~/.forge/config.toml so the current CLI/runtime sees the same hub.
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize FORGE configuration",
-	Long:  "Setup wizard: creates ~/.forge/forge.toml for the v3 daemon (ADR-030).",
+	Long:  "Setup wizard: creates ~/.forge/forge.toml for daemon settings and ~/.forge/config.toml for current CLI control-plane settings.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("failed to get home dir: %w", err)
 		}
-		configPath := filepath.Join(home, ".forge", "forge.toml")
-		configDir := filepath.Dir(configPath)
+		daemonConfigPath := filepath.Join(home, ".forge", "forge.toml")
+		cliConfigPath := filepath.Join(home, ".forge", "config.toml")
+		configDir := filepath.Dir(daemonConfigPath)
 
-		if _, err := os.Stat(configPath); err == nil {
-			fmt.Printf("Config already exists at %s\n", configPath)
+		if _, err := os.Stat(daemonConfigPath); err == nil {
+			fmt.Printf("Config already exists at %s\n", daemonConfigPath)
 			fmt.Print("Overwrite? [y/N]: ")
 			scanner := bufio.NewScanner(os.Stdin)
 			if !scanner.Scan() {
@@ -249,6 +259,26 @@ var initCmd = &cobra.Command{
 			}
 		}
 
+		// Validate connection to the daemon URL.
+		isLocal := strings.HasPrefix(daemonURL, "http://localhost") || strings.HasPrefix(daemonURL, "http://127.")
+		modeLabel := "HUB MODE"
+		if isLocal {
+			modeLabel = "LOCAL MODE"
+		}
+		fmt.Printf("\nValidating connection to %s...\n", daemonURL)
+		if testControlPlaneConnection(daemonURL) {
+			fmt.Printf("  ✓ Connected — %s (%s)\n", daemonURL, modeLabel)
+		} else {
+			fmt.Printf("  ✗ Not reachable — %s (%s)\n", daemonURL, modeLabel)
+			if isLocal {
+				fmt.Printf("  → Start the daemon first: forge daemon start\n")
+			} else {
+				fmt.Printf("  → Check that the hub is running: forge daemon status\n")
+				fmt.Printf("  → Or use local mode: %s\n", internal.ResolveDefaultControlPlaneURL())
+			}
+			fmt.Printf("  Config will be written anyway — you can retry after starting the daemon.\n\n")
+		}
+
 		nodeID, _ := cmd.Flags().GetString("node-id")
 		if nodeID == "" {
 			nodeID = defaultNodeID
@@ -308,17 +338,10 @@ mode = %q
 api_token = %q
 `, profile, port, wsPort, dbPath, nodeID, forgeRoot, authMode, apiToken)
 
-		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(daemonConfigPath, []byte(configContent), 0644); err != nil {
 			return fmt.Errorf("failed to write config file: %w", err)
 		}
-
-		fmt.Printf("Writing %s... done.\n", configPath)
-		fmt.Printf("\n✓ Config written to %s\n", configPath)
-		fmt.Printf("✓ Profile: %s\n", profile)
-
-		// Optional: also write legacy config.toml for viper/CLI
-		legacyPath := filepath.Join(home, ".forge", "config.toml")
-		legacyContent := fmt.Sprintf(`[node]
+		cliConfigContent := fmt.Sprintf(`[node]
 id = "%s"
 
 [control_plane]
@@ -327,7 +350,16 @@ url = "%s"
 [paths]
 forge_root = "%s"
 `, nodeID, daemonURL, forgeRoot)
-		_ = os.WriteFile(legacyPath, []byte(legacyContent), 0644)
+		if err := os.WriteFile(cliConfigPath, []byte(cliConfigContent), 0644); err != nil {
+			return fmt.Errorf("failed to write CLI config file: %w", err)
+		}
+
+		fmt.Printf("Writing %s... done.\n", daemonConfigPath)
+		fmt.Printf("Writing %s... done.\n", cliConfigPath)
+		fmt.Printf("\n✓ Daemon config: %s\n", daemonConfigPath)
+		fmt.Printf("✓ CLI config: %s\n", cliConfigPath)
+		fmt.Printf("✓ Profile: %s\n", profile)
+		fmt.Printf("✓ Mode: %s (%s)\n", modeLabel, daemonURL)
 
 		fmt.Printf("\nNext steps:\n")
 		switch profile {
@@ -346,7 +378,7 @@ forge_root = "%s"
 			fmt.Printf("  forge status          # fleet health snapshot\n")
 			fmt.Printf("  forge approval list   # review pending approvals\n")
 		default:
-			fmt.Printf("  forge daemon start    # start the local daemon (uses %s)\n", configPath)
+			fmt.Printf("  forge daemon start    # start the local daemon (uses %s)\n", daemonConfigPath)
 			fmt.Printf("  forge status          # verify fleet connectivity\n")
 		}
 		return nil

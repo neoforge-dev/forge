@@ -147,6 +147,8 @@ func (d *Dashboard) loadTemplates() {
 <!DOCTYPE html>
 <html>
 <head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>FORGE Agent Health Dashboard</title>
 	<meta http-equiv="refresh" content="5">
 	<style>
@@ -182,6 +184,18 @@ func (d *Dashboard) loadTemplates() {
 			padding: 2rem;
 			max-width: 1400px;
 			margin: 0 auto;
+		}
+		.notice {
+			margin-bottom: 1rem;
+			padding: 0.875rem 1rem;
+			background: #111827;
+			border: 1px solid #30363d;
+			border-radius: 8px;
+			color: #9ca3af;
+		}
+		.notice a {
+			color: #58a6ff;
+			text-decoration: none;
 		}
 		.metrics-grid {
 			display: grid;
@@ -335,6 +349,7 @@ func (d *Dashboard) loadTemplates() {
 	</div>
 
 	<div class="container">
+		<div class="notice">Preferred browser UI: <a href="/ui">/ui</a>. This page is a compatibility and debugging view.</div>
 		<!-- Summary Metrics -->
 		<div class="metrics-grid">
 			<div class="metric-card">

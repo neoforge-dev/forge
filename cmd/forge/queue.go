@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,484 +12,92 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// queueCmd represents the queue noun
+// queueCmd represents the queue noun.
+// Default run (no subcommand): show a summary table of task counts by state.
 var queueCmd = &cobra.Command{
-	Use:   "queue",
-	Short: "Task queue management",
-	Long: `Manage the FORGE task queue for dispatch and scheduling.
+	Use:     "queue",
+	Aliases: []string{"q"},
+	Short:   "Inspect the task queue",
+	Long: `Inspect the FORGE task queue.
 
-The queue tracks tasks across all states:
-  - QUEUED: Waiting to be dispatched
-  - DISPATCHED: Sent to an agent
-  - RUNNING: Agent is working on it
-  - COMPLETED: Task finished successfully
-: Task failed
-
-  - FAILEDUniversal verbs:
-  list, depth, show, populate, import-dispatches
+Subcommands give fleet agents visibility into queue depth and task distribution.
 
 Examples:
-  # List all queue items
+  # Queue summary: counts by state
+  forge queue
+
+  # List queued tasks, priority-ordered
   forge queue list
 
-  # Show queue statistics
+  # Just the count (for scripting)
   forge queue depth
 
-  # Show specific item
-  forge queue show V4-001
+  # Change priority of a queued task
+  forge queue priority TASK-ID --priority 10
 
-  # Import from features.json
-  forge queue populate --from .forge/v4/features-v4-cli.json
+  # Cancel a queued task
+  forge queue cancel TASK-ID`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: 'forge queue' is an alias for 'forge task list'")
+		format, _ := cmd.Flags().GetString("format")
 
-  # Import dispatch files
-  forge queue import-dispatches --dir .forge/dispatches`,
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		result, err := client.ListTasks(ctx, "", 100, "")
+		if err != nil {
+			return fmt.Errorf("failed to list tasks: %w\n  Run 'forge daemon status' to check if the daemon is running", err)
+		}
+
+		// Count tasks by state (use Status field; fall back to State for v3 daemons).
+		counts := map[string]int{
+			"queued":    0,
+			"running":   0,
+			"failed":    0,
+			"completed": 0,
+		}
+		for _, t := range result.Tasks {
+			st := t.Status
+			if st == "" {
+				st = t.State
+			}
+			st = strings.ToLower(st)
+			switch st {
+			case "queued", "pending":
+				counts["queued"]++
+			case "running", "dispatched", "assigned":
+				counts["running"]++
+			case "failed":
+				counts["failed"]++
+			case "completed", "done", "approved":
+				counts["completed"]++
+			}
+		}
+
+		formatter := internal.NewFormatter(format, nil)
+		if format == "json" {
+			return formatter.WriteJSON(counts)
+		}
+
+		formatter.Printf("QUEUE SUMMARY\n")
+		formatter.Printf("%-14s %s\n", "STATE", "COUNT")
+		formatter.Printf("%-14s %s\n", strings.Repeat("-", 14), strings.Repeat("-", 5))
+		formatter.Printf("%-14s %d\n", "queued", counts["queued"])
+		formatter.Printf("%-14s %d\n", "running", counts["running"])
+		formatter.Printf("%-14s %d\n", "failed", counts["failed"])
+		formatter.Printf("%-14s %d\n", "completed (24h)", counts["completed"])
+		formatter.Printf("\nTotal fetched: %d\n", len(result.Tasks))
+		return nil
+	},
 }
 
 // queueListCmd: forge queue list
+// Lists queued tasks sorted by priority (descending), showing key columns.
 var queueListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all queue items",
-	Long:  "List all items in the task queue with optional filters.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		format, _ := cmd.Flags().GetString("format")
-		status, _ := cmd.Flags().GetString("status")
-		assignee, _ := cmd.Flags().GetString("assignee")
-		lane, _ := cmd.Flags().GetString("lane")
-
-		items := getQueueItems()
-
-		// Apply filters
-		if status != "" {
-			items = filterByStatus(items, status)
-		}
-		if assignee != "" {
-			items = filterByAssignee(items, assignee)
-		}
-		if lane != "" {
-			items = filterByLane(items, lane)
-		}
-
-		formatter := internal.NewFormatter(format, nil)
-		if err := formatter.FormatQueueItems(items); err != nil {
-			return err
-		}
-
-		if format == "table" {
-			formatter.Printf("\nTotal: %d items\n", len(items))
-		}
-		return nil
-	},
-}
-
-// queueDepthCmd: forge queue depth
-var queueDepthCmd = &cobra.Command{
-	Use:   "depth",
-	Short: "Show queue statistics",
-	Long:  "Display queue depth by state.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		format, _ := cmd.Flags().GetString("format")
-
-		items := getQueueItems()
-		depth := calculateDepth(items)
-
-		formatter := internal.NewFormatter(format, nil)
-		return formatter.FormatQueueDepth(depth)
-	},
-}
-
-// queueShowCmd: forge queue show <id>
-var queueShowCmd = &cobra.Command{
-	Use:   "show [id]",
-	Short: "Show queue item details",
-	Long:  "Display detailed information about a specific queue item.",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		itemID := args[0]
-		format, _ := cmd.Flags().GetString("format")
-
-		items := getQueueItems()
-		var item *internal.QueueItem
-		for i := range items {
-			if items[i].ID == itemID {
-				item = &items[i]
-				break
-			}
-		}
-
-		if item == nil {
-			// Fallback to local sources when the daemon is unavailable (common in tests/offline mode).
-			if features, err := loadFeatures(".forge/v4/features-v4-cli.json"); err == nil {
-				localItems := convertFeaturesToQueueItems(features)
-				for i := range localItems {
-					if localItems[i].ID == itemID {
-						item = &localItems[i]
-						break
-					}
-				}
-			}
-		}
-
-		if item == nil {
-			if dispatchItems, err := loadDispatchFiles(".forge/dispatches"); err == nil {
-				for i := range dispatchItems {
-					if dispatchItems[i].ID == itemID {
-						item = &dispatchItems[i]
-						break
-					}
-				}
-			}
-		}
-
-		if item == nil && strings.HasPrefix(strings.ToUpper(itemID), "DF-") {
-			item = &internal.QueueItem{
-				ID:       itemID,
-				Title:    "Dark Factory task",
-				Status:   "QUEUED",
-				Lane:     "dev",
-				Priority: "P1",
-			}
-		}
-
-		if item == nil {
-			return fmt.Errorf("queue item not found: %s", itemID)
-		}
-
-		formatter := internal.NewFormatter(format, nil)
-		return formatter.FormatQueueItemDetail(item)
-	},
-}
-
-// queuePopulateCmd: forge queue populate --from <file>
-var queuePopulateCmd = &cobra.Command{
-	Use:   "populate",
-	Short: "Import tasks from features.json",
-	Long:  "Import tasks from a features JSON file into the queue.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fromFile, _ := cmd.Flags().GetString("from")
-		format, _ := cmd.Flags().GetString("format")
-
-		if fromFile == "" {
-			return fmt.Errorf("--from is required")
-		}
-
-		features, err := loadFeatures(fromFile)
-		if err != nil {
-			return fmt.Errorf("failed to load features: %w", err)
-		}
-
-		// Convert features to queue items
-		items := convertFeaturesToQueueItems(features)
-
-		formatter := internal.NewFormatter(format, nil)
-		if format == "json" {
-			return formatter.WriteJSON(items)
-		}
-		formatter.Printf("Imported %d features to queue\n", len(items))
-		formatter.Printf("Total queue items: %d\n", len(getQueueItems())+len(items))
-		return nil
-	},
-}
-
-// queueImportDispatchesCmd: forge queue import-dispatches --dir <dir>
-var queueImportDispatchesCmd = &cobra.Command{
-	Use:   "import-dispatches",
-	Short: "Import dispatch files as queue items",
-	Long:  "Import .md dispatch files from a directory as queue items.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
-		format, _ := cmd.Flags().GetString("format")
-
-		if dir == "" {
-			return fmt.Errorf("--dir is required")
-		}
-
-		items, err := loadDispatchFiles(dir)
-		if err != nil {
-			return fmt.Errorf("failed to load dispatch files: %w", err)
-		}
-
-		formatter := internal.NewFormatter(format, nil)
-		if format == "json" {
-			return formatter.WriteJSON(items)
-		}
-		formatter.Printf("Imported %d dispatch files to queue\n", len(items))
-		return nil
-	},
-}
-// queuePruneCmd: forge queue prune
-var queuePruneCmd = &cobra.Command{
-	Use:   "prune",
-	Short: "Remove deleted and cancelled tasks from queue",
-	Long:  "Permanently remove tasks with status DELETED or CANCELLED from the database.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		format, _ := cmd.Flags().GetString("format")
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-
-		client := internal.NewClient()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		formatter := internal.NewFormatter(format, nil)
-
-		// Step 1: abandon stale assigned tasks (>2h, no heartbeat) via v3 API.
-		if !dryRun {
-			resp, err := client.Post(ctx, "/api/tasks/prune", nil)
-			if err == nil && resp != nil {
-				resp.Body.Close()
-				formatter.Printf("Stale assigned tasks abandoned via /api/tasks/prune\n")
-			}
-		}
-
-		// Step 2: delete tasks with DELETED or CANCELLED status.
-		result, err := client.ListTasks(ctx, "", 500, "")
-		if err != nil {
-			return fmt.Errorf("failed to list tasks: %w", err)
-		}
-
-		var toPrune []string
-		for _, t := range result.Tasks {
-			status := strings.ToUpper(t.Status)
-			if status == "DELETED" || status == "CANCELLED" {
-				toPrune = append(toPrune, t.ID)
-			}
-		}
-
-		if len(toPrune) == 0 {
-			formatter.Printf("No DELETED/CANCELLED tasks to remove\n")
-			return nil
-		}
-
-		if dryRun {
-			formatter.Printf("Dry run: would remove %d DELETED/CANCELLED tasks\n", len(toPrune))
-			if format == "table" || format == "" {
-				for _, id := range toPrune {
-					formatter.Printf("  - %s\n", id)
-				}
-			}
-			return nil
-		}
-
-		deleted := 0
-		for _, id := range toPrune {
-			if err := client.DeleteTask(ctx, id); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to delete %s: %v\n", id, err)
-				continue
-			}
-			deleted++
-		}
-
-		formatter.Printf("Pruned %d DELETED/CANCELLED tasks\n", deleted)
-		return nil
-	},
-}
-
-// QueueItem represents a task in the queue
-type QueueItem struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	Assignee    string `json:"assignee,omitempty"`
-	Lane        string `json:"lane"`
-	Priority    string `json:"priority"`
-	CreatedAt   string `json:"created_at"`
-	CompletedAt string `json:"completed_at,omitempty"`
-}
-
-// getQueueItems fetches live tasks from the v3 daemon and converts them to QueueItems.
-func getQueueItems() []internal.QueueItem {
-	client := internal.NewClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	result, err := client.ListTasks(ctx, "", 200, "")
-	if err != nil {
-		// Daemon unreachable — return empty slice so callers still work.
-		return []internal.QueueItem{}
-	}
-
-	items := make([]internal.QueueItem, 0, len(result.Tasks))
-	for _, t := range result.Tasks {
-		assignee := ""
-		if t.AssignedAgent != nil {
-			assignee = *t.AssignedAgent
-		} else if t.AssignedTo != "" {
-			assignee = t.AssignedTo
-		}
-		lane := t.Lane
-		if lane == "" {
-			lane = "dev"
-		}
-		items = append(items, internal.QueueItem{
-			ID:        t.ID,
-			Title:     t.DisplayTitle(),
-			Status:    strings.ToUpper(t.Status),
-			Assignee:  assignee,
-			Lane:      lane,
-			Priority:  fmt.Sprintf("%d", t.Priority),
-			CreatedAt: t.CreatedAt,
-		})
-	}
-	return items
-}
-
-// calculateDepth calculates queue depth by status
-func calculateDepth(items []internal.QueueItem) *internal.QueueDepth {
-	depth := &internal.QueueDepth{}
-	for _, item := range items {
-		switch item.Status {
-		case "QUEUED":
-			depth.Queued++
-		case "DISPATCHED":
-			depth.Dispatched++
-		case "RUNNING":
-			depth.Running++
-		case "BLOCKED":
-			depth.Blocked++
-		case "COMPLETED":
-			depth.Completed++
-		case "FAILED":
-			depth.Failed++
-		case "APPROVED":
-			depth.Approved++
-		}
-	}
-	return depth
-}
-
-// filterByStatus filters items by status
-func filterByStatus(items []internal.QueueItem, status string) []internal.QueueItem {
-	var filtered []internal.QueueItem
-	for _, item := range items {
-		if strings.EqualFold(item.Status, status) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-// filterByAssignee filters items by assignee
-func filterByAssignee(items []internal.QueueItem, assignee string) []internal.QueueItem {
-	var filtered []internal.QueueItem
-	for _, item := range items {
-		if strings.EqualFold(item.Assignee, assignee) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-// filterByLane filters items by lane
-func filterByLane(items []internal.QueueItem, lane string) []internal.QueueItem {
-	var filtered []internal.QueueItem
-	for _, item := range items {
-		if strings.EqualFold(item.Lane, lane) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-// FeaturesJSON represents the features.json structure
-type FeaturesJSON struct {
-	Features []Feature `json:"features"`
-}
-
-// Feature represents a single feature
-type Feature struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	Priority    string `json:"priority"`
-	Lane        string `json:"lane"`
-	AssignedTo  string `json:"assigned_to"`
-}
-
-// loadFeatures loads features from a JSON file
-func loadFeatures(path string) ([]Feature, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	var featuresJSON FeaturesJSON
-	if err := json.Unmarshal(data, &featuresJSON); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
-	}
-
-	return featuresJSON.Features, nil
-}
-
-// convertFeaturesToQueueItems converts features to queue items
-func convertFeaturesToQueueItems(features []Feature) []internal.QueueItem {
-	items := make([]internal.QueueItem, len(features))
-	for i, f := range features {
-		items[i] = internal.QueueItem{
-			ID:        f.ID,
-			Title:     f.Name,
-			Status:    strings.ToUpper(f.Status),
-			Assignee:  f.AssignedTo,
-			Lane:      f.Lane,
-			Priority:  f.Priority,
-			CreatedAt: "",
-		}
-	}
-	return items
-}
-
-// loadDispatchFiles loads .md dispatch files from a directory
-func loadDispatchFiles(dir string) ([]internal.QueueItem, error) {
-	var items []internal.QueueItem
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-
-		path := filepath.Join(dir, entry.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-
-		// Extract title from first heading
-		lines := strings.Split(string(data), "\n")
-		title := entry.Name()
-		for _, line := range lines {
-			if strings.HasPrefix(line, "# ") {
-				title = strings.TrimPrefix(line, "# ")
-				break
-			}
-		}
-
-		// Generate ID from filename
-		id := strings.TrimSuffix(entry.Name(), ".md")
-		if len(id) > 20 {
-			id = id[:20]
-		}
-
-		items = append(items, internal.QueueItem{
-			ID:       id,
-			Title:    title,
-			Status:   "QUEUED",
-			Lane:     "dev",
-			Priority: "P2",
-		})
-	}
-
-	return items, nil
-}
-
-// queueStatsCmd: forge queue stats
-var queueStatsCmd = &cobra.Command{
-	Use:   "stats",
-	Short: "Show per-lane and per-domain task counts with aging",
-	Long:  "Display task counts grouped by lane and domain, including oldest task age.",
+	Short: "List queued tasks, priority-ordered",
+	Long:  "List tasks in queued/pending state, sorted by priority descending. Shows ID, TITLE, PRIORITY, DOMAIN, CREATED_AT.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		format, _ := cmd.Flags().GetString("format")
 
@@ -498,141 +105,294 @@ var queueStatsCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		result, err := client.ListTasks(ctx, "", 500, "")
+		result, err := client.ListTasks(ctx, "queued", 50, "")
 		if err != nil {
-			return fmt.Errorf("failed to fetch tasks (is daemon running?): %w", err)
+			return fmt.Errorf("failed to list queued tasks: %w\n  Run 'forge daemon status' to check if the daemon is running", err)
 		}
 
 		tasks := result.Tasks
-		now := time.Now()
 
-		type groupStats struct {
-			count  int
-			oldest time.Time
-		}
-		byLane := map[string]*groupStats{}
-		byDomain := map[string]*groupStats{}
-
-		for _, t := range tasks {
-			lane := t.Lane
-			if lane == "" {
-				lane = "unassigned"
-			}
-			domain := t.Domain
-			if domain == "" {
-				domain = "unknown"
-			}
-
-			age, _ := time.Parse(time.RFC3339, t.CreatedAt)
-			if age.IsZero() {
-				age = now
-			}
-
-			if byLane[lane] == nil {
-				byLane[lane] = &groupStats{oldest: age}
-			}
-			ls := byLane[lane]
-			ls.count++
-			if age.Before(ls.oldest) {
-				ls.oldest = age
-			}
-
-			if byDomain[domain] == nil {
-				byDomain[domain] = &groupStats{oldest: age}
-			}
-			ds := byDomain[domain]
-			ds.count++
-			if age.Before(ds.oldest) {
-				ds.oldest = age
-			}
-		}
-
-		formatter := internal.NewFormatter(format, nil)
+		// Sort by priority descending (higher value = dispatched sooner).
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].Priority > tasks[j].Priority
+		})
 
 		if format == "json" {
-			type stat struct {
-				Name      string `json:"name"`
-				Count     int    `json:"count"`
-				OldestAge string `json:"oldest_age"`
-			}
-			laneSlice := make([]stat, 0, len(byLane))
-			for name, s := range byLane {
-				laneSlice = append(laneSlice, stat{name, s.count, queueFormatAge(now.Sub(s.oldest))})
-			}
-			domainSlice := make([]stat, 0, len(byDomain))
-			for name, s := range byDomain {
-				domainSlice = append(domainSlice, stat{name, s.count, queueFormatAge(now.Sub(s.oldest))})
-			}
-			return formatter.WriteJSON(map[string]interface{}{
-				"total":     len(tasks),
-				"by_lane":   laneSlice,
-				"by_domain": domainSlice,
-			})
+			formatter := internal.NewFormatter(format, nil)
+			return formatter.WriteJSON(tasks)
 		}
 
-		formatter.Printf("Queue Stats  (total: %d tasks)\n\n", len(tasks))
-
-		formatter.Printf("By Lane:\n")
-		tw := formatter.NewTableWriter()
-		tw.WriteHeader("LANE", "COUNT", "OLDEST TASK")
-		for lane, s := range byLane {
-			tw.WriteRow(lane, fmt.Sprintf("%d", s.count), queueFormatAge(now.Sub(s.oldest)))
+		if len(tasks) == 0 {
+			fmt.Println("Queue is empty")
+			return nil
 		}
-		tw.Flush()
 
-		formatter.Printf("\nBy Domain:\n")
-		tw2 := formatter.NewTableWriter()
-		tw2.WriteHeader("DOMAIN", "COUNT", "OLDEST TASK")
-		for domain, s := range byDomain {
-			tw2.WriteRow(domain, fmt.Sprintf("%d", s.count), queueFormatAge(now.Sub(s.oldest)))
+		// Table header
+		fmt.Printf("%-26s %-42s %-10s %-20s %s\n",
+			"ID", "TITLE", "PRIORITY", "DOMAIN", "CREATED_AT")
+		fmt.Printf("%-26s %-42s %-10s %-20s %s\n",
+			strings.Repeat("-", 26),
+			strings.Repeat("-", 42),
+			strings.Repeat("-", 10),
+			strings.Repeat("-", 20),
+			strings.Repeat("-", 20),
+		)
+
+		for _, t := range tasks {
+			title := t.DisplayTitle()
+			if len(title) > 40 {
+				title = title[:37] + "..."
+			}
+			priority := internal.PriorityToLabel(t.Priority)
+			domain := t.Domain
+			if len(domain) > 20 {
+				domain = domain[:17] + "..."
+			}
+			createdAt := t.CreatedAt
+			if len(createdAt) > 20 {
+				createdAt = createdAt[:20]
+			}
+			fmt.Printf("%-26s %-42s %-10s %-20s %s\n",
+				t.ID, title, priority, domain, createdAt)
 		}
-		tw2.Flush()
-
+		fmt.Printf("\nTotal: %d queued task(s)\n", len(tasks))
 		return nil
 	},
 }
 
-// queueFormatAge returns a human-readable duration string: "< 1h", "3h", "2d", "1w".
-func queueFormatAge(d time.Duration) string {
-	if d < 0 {
-		return "just now"
-	}
-	hours := int(d.Hours())
-	if hours < 1 {
-		return "< 1h"
-	}
-	if hours < 24 {
-		return fmt.Sprintf("%dh", hours)
-	}
-	days := hours / 24
-	if days < 7 {
-		return fmt.Sprintf("%dd", days)
-	}
-	return fmt.Sprintf("%dw", days/7)
+// queueDepthCmd: forge queue depth
+// Outputs only the count of queued tasks — designed for scripting (no headers).
+var queueDepthCmd = &cobra.Command{
+	Use:   "depth",
+	Short: "Print the number of queued tasks (for scripting)",
+	Long: `Print just the count of tasks in queued/pending state.
+
+Outputs a bare integer with no headers, suitable for use in scripts:
+  COUNT=$(forge queue depth)
+  echo "Tasks waiting: $COUNT"`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		format, _ := cmd.Flags().GetString("format")
+
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		result, err := client.ListTasks(ctx, "queued", 1000, "")
+		if err != nil {
+			return fmt.Errorf("failed to get queue depth: %w\n  Run 'forge daemon status' to check if the daemon is running", err)
+		}
+
+		depth := len(result.Tasks)
+
+		if format == "json" {
+			formatter := internal.NewFormatter(format, nil)
+			return formatter.WriteJSON(map[string]int{"depth": depth})
+		}
+
+		// Bare integer output — no newline decoration beyond \n — for scripting.
+		fmt.Println(depth)
+		return nil
+	},
+}
+
+// queueStatusCmd: forge queue status
+// Kept for backward compatibility with existing scripts and tests.
+var queueStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show queue status summary (alias for 'forge queue')",
+	Long:  "Display a summary of the current queue state including counts by status. This is an alias for 'forge queue' with no subcommand.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		format, _ := cmd.Flags().GetString("format")
+
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		result, err := client.ListTasks(ctx, "", 100, "")
+		if err != nil {
+			return fmt.Errorf("failed to get queue status: %w\n  Run 'forge daemon status' to check if the daemon is running", err)
+		}
+
+		counts := map[string]int{
+			"queued":    0,
+			"running":   0,
+			"failed":    0,
+			"completed": 0,
+		}
+		for _, t := range result.Tasks {
+			st := t.Status
+			if st == "" {
+				st = t.State
+			}
+			st = strings.ToLower(st)
+			switch st {
+			case "queued", "pending":
+				counts["queued"]++
+			case "running", "dispatched", "assigned":
+				counts["running"]++
+			case "failed":
+				counts["failed"]++
+			case "completed", "done", "approved":
+				counts["completed"]++
+			}
+		}
+
+		formatter := internal.NewFormatter(format, nil)
+		if format == "json" {
+			return formatter.WriteJSON(counts)
+		}
+
+		formatter.Printf("QUEUE SUMMARY\n")
+		formatter.Printf("%-14s %s\n", "STATE", "COUNT")
+		formatter.Printf("%-14s %s\n", strings.Repeat("-", 14), strings.Repeat("-", 5))
+		formatter.Printf("%-14s %d\n", "queued", counts["queued"])
+		formatter.Printf("%-14s %d\n", "running", counts["running"])
+		formatter.Printf("%-14s %d\n", "failed", counts["failed"])
+		formatter.Printf("%-14s %d\n", "completed (24h)", counts["completed"])
+		formatter.Printf("\nTotal fetched: %d\n", len(result.Tasks))
+		return nil
+	},
+}
+
+// queuePriorityCmd: forge queue priority TASK_ID --priority N
+var queuePriorityCmd = &cobra.Command{
+	Use:   "priority TASK_ID",
+	Short: "Change the priority of a queued task",
+	Long: `Update the priority of a task in the queue.
+
+Higher priority values cause a task to be dispatched sooner.
+Use this to bump urgent work to the front of the queue.
+
+Examples:
+  forge queue priority 01JQM123ABC --priority 10
+  forge queue priority 01JQM123ABC --priority 1`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		taskID := args[0]
+		priority, _ := cmd.Flags().GetInt("priority")
+		format, _ := cmd.Flags().GetString("format")
+
+		if !cmd.Flags().Changed("priority") {
+			return fmt.Errorf("--priority is required\n  Example: forge queue priority %s --priority 5", taskID)
+		}
+
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		body := map[string]interface{}{
+			"task_id":  taskID,
+			"priority": priority,
+		}
+
+		resp, err := client.Post(ctx, "/cli/queue/priority", body)
+		if err != nil {
+			return fmt.Errorf("failed to update queue priority: %w\n  Run 'forge daemon status' to check if the daemon is running", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == 404 {
+			return fmt.Errorf("task %s not found in queue\n  Use 'forge queue list' to see queued tasks", taskID)
+		}
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("priority update failed (HTTP %d): %s\n  Run 'forge daemon status' to check if the daemon is running",
+				resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var result map[string]interface{}
+		if err := internal.DecodeJSON(resp, &result); err != nil {
+			return fmt.Errorf("failed to decode priority response: %w", err)
+		}
+
+		formatter := internal.NewFormatter(format, nil)
+		if format == "json" {
+			return formatter.WriteJSON(result)
+		}
+		formatter.Printf("Priority updated: %s → %d\n", taskID, priority)
+		return nil
+	},
+}
+
+// queueCancelCmd: forge queue cancel TASK_ID
+var queueCancelCmd = &cobra.Command{
+	Use:   "cancel TASK_ID",
+	Short: "Cancel a queued task",
+	Long: `Remove a task from the queue and mark it as cancelled.
+
+Only tasks currently in queued/pending state can be cancelled this way.
+Use 'forge task abandon' for tasks that are already assigned.
+
+Examples:
+  forge queue cancel 01JQM123ABC`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		taskID := args[0]
+		format, _ := cmd.Flags().GetString("format")
+
+		client := internal.NewClient()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		body := map[string]interface{}{
+			"task_id": taskID,
+		}
+
+		resp, err := client.Post(ctx, "/cli/queue/cancel", body)
+		if err != nil {
+			return fmt.Errorf("failed to cancel queued task: %w\n  Run 'forge daemon status' to check if the daemon is running", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == 404 {
+			return fmt.Errorf("task %s not found in queue\n  Use 'forge queue list' to see queued tasks, or 'forge task abandon' for assigned tasks", taskID)
+		}
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("queue cancel failed (HTTP %d): %s\n  Run 'forge daemon status' to check if the daemon is running",
+				resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var result map[string]interface{}
+		if err := internal.DecodeJSON(resp, &result); err != nil {
+			return fmt.Errorf("failed to decode cancel response: %w", err)
+		}
+
+		formatter := internal.NewFormatter(format, nil)
+		if format == "json" {
+			return formatter.WriteJSON(result)
+		}
+		formatter.Printf("Cancelled: %s\n", taskID)
+		return nil
+	},
 }
 
 func init() {
-	// queueCmd visible — queue management is user-facing
+	queueCmd.Hidden = true
+	// queue (default run) flags
+	queueCmd.Flags().String("format", "", "Output format (table, json)")
+
+	// queue status flags
+	queueStatusCmd.Flags().String("format", "", "Output format (table, json)")
+
+	// queue depth flags
+	queueDepthCmd.Flags().String("format", "", "Output format (table, json)")
+
 	// queue list flags
-	queueListCmd.Flags().String("status", "", "Filter by status (queued, dispatched, running, completed, failed)")
-	queueListCmd.Flags().String("assignee", "", "Filter by assignee")
-	queueListCmd.Flags().String("lane", "", "Filter by lane (dev, test, prod)")
+	queueListCmd.Flags().String("format", "", "Output format (table, json)")
+	queueListCmd.Flags().Int("limit", 50, "Maximum number of tasks to show")
 
-	// queue populate flags
-	queuePopulateCmd.Flags().String("from", "", "Path to features.json file")
+	// queue priority flags
+	queuePriorityCmd.Flags().Int("priority", 0, "New priority value (higher = dispatched sooner)")
+	queuePriorityCmd.Flags().String("format", "", "Output format (table, json)")
 
-	// queue prune flags
-	queuePruneCmd.Flags().Bool("dry-run", false, "Show what would be deleted without actually deleting")
+	// queue cancel flags
+	queueCancelCmd.Flags().String("format", "", "Output format (table, json)")
 
-	// queue import-dispatches flags
-	queueImportDispatchesCmd.Flags().String("dir", "", "Path to dispatches directory")
-
-	// Add commands to queue noun
-	queueCmd.AddCommand(queueListCmd)
+	// Add subcommands to queue noun
+	queueCmd.AddCommand(queueStatusCmd)
 	queueCmd.AddCommand(queueDepthCmd)
-	queueCmd.AddCommand(queueShowCmd)
-	queueCmd.AddCommand(queuePopulateCmd)
-	queueCmd.AddCommand(queueImportDispatchesCmd)
-	queueCmd.AddCommand(queuePruneCmd)
-	queueCmd.AddCommand(queueStatsCmd)
+	queueCmd.AddCommand(queueListCmd)
+	queueCmd.AddCommand(queuePriorityCmd)
+	queueCmd.AddCommand(queueCancelCmd)
 }

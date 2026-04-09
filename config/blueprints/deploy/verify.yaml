@@ -1,0 +1,21 @@
+id: deploy/verify
+name: Deploy Verification
+description: Blueprint to verify a deployment is ready with build and test checks.
+steps:
+  - type: shell
+    name: build-cli
+    command: "cd cmd/forge && go build ./..."
+  - type: shell
+    name: build-daemon
+    command: "cd cmd/forged && go build ./..."
+  - type: check
+    name: run-tests
+    command: "cd cmd/forged && go test . -timeout 300s -count=1"
+  - type: review
+    name: deploy-approval
+  - type: complete
+    name: finalize
+    evidence:
+      - build
+      - tests
+      - approval

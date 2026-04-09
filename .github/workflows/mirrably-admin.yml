@@ -1,0 +1,33 @@
+name: Mirrably Admin
+
+on:
+  push:
+    paths:
+      - 'apps/mirrably-admin/**'
+      - '.github/workflows/mirrably-admin.yml'
+  pull_request:
+    paths:
+      - 'apps/mirrably-admin/**'
+      - '.github/workflows/mirrably-admin.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mirrably-admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/mirrably-admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test

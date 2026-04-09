@@ -1,0 +1,18 @@
+id: measure/review
+name: Weekly Metrics Review
+description: Pull metrics, check kill criteria, generate next action. Run weekly for products in measure stage.
+steps:
+  - type: dispatch
+    name: pull-metrics
+    agent: auto
+  - type: check
+    name: verify-metrics-collected
+    command: "test -f .forge/results/${TASK_ID}.json"
+  - type: review
+    name: metrics-kill-criteria-review
+  - type: complete
+    name: finalize
+    evidence:
+      - metrics_snapshot
+      - kill_criteria_check
+      - next_action

@@ -129,3 +129,25 @@ func TestContextShowArgs(t *testing.T) {
 		t.Error("expected error for missing context key")
 	}
 }
+
+// --- buildBar tests ----------------------------------------------------------
+
+func TestBuildBar(t *testing.T) {
+	cases := []struct {
+		pct  float64
+		n    int
+		want string
+	}{
+		{0, 10, "░░░░░░░░░░"},
+		{100, 10, "██████████"},
+		{50, 10, "█████░░░░░"},
+		{30, 10, "███░░░░░░░"},
+		{0, 0, ""},
+	}
+	for _, tc := range cases {
+		got := buildBar(tc.pct, tc.n)
+		if got != tc.want {
+			t.Errorf("buildBar(%v, %d) = %q, want %q", tc.pct, tc.n, got, tc.want)
+		}
+	}
+}

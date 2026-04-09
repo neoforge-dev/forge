@@ -130,16 +130,24 @@ optionally commits a git checkpoint — all in one step.`,
 			}
 		}
 
+		// Clear fleet agent contexts
+		skipFleetClear, _ := cmd.Flags().GetBool("skip-fleet-clear")
+		var clearedAgents []string
+		if !skipFleetClear {
+			clearedAgents = clearFleetAgents()
+		}
+
 		// Output
 		if outputJSON {
 			result := map[string]interface{}{
-				"handoff_id":    handoffID,
-				"agent":         agentName,
-				"reason":        reason,
-				"branch":        branch,
-				"handoff_path":  handoffPath,
-				"memories_path": memoriesPath,
-				"commit_sha":    commitSHA,
+				"handoff_id":     handoffID,
+				"agent":          agentName,
+				"reason":         reason,
+				"branch":         branch,
+				"handoff_path":   handoffPath,
+				"memories_path":  memoriesPath,
+				"commit_sha":     commitSHA,
+				"cleared_agents": clearedAgents,
 			}
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
@@ -169,6 +177,15 @@ optionally commits a git checkpoint — all in one step.`,
 			fmt.Printf("Git checkpoint: %s checkpoint: handoff %s\n", commitSHA, handoffID)
 		} else if skipCommit {
 			fmt.Println("Git checkpoint: skipped (--skip-commit)")
+		}
+		fmt.Println()
+
+		if len(clearedAgents) > 0 {
+			fmt.Printf("Fleet cleared:  %s\n", strings.Join(clearedAgents, ", "))
+		} else if skipFleetClear {
+			fmt.Println("Fleet cleared:  skipped (--skip-fleet-clear)")
+		} else {
+			fmt.Println("Fleet cleared:  no agents found")
 		}
 		fmt.Println()
 
@@ -225,6 +242,7 @@ func init() {
 	handoffCleanCmd.Flags().StringP("agent", "a", "", "Agent name (default: $FORGE_AGENT)")
 	handoffCleanCmd.Flags().StringP("reason", "r", "context", "Handoff reason (context|complete|blocked|switch)")
 	handoffCleanCmd.Flags().Bool("skip-commit", false, "Skip git checkpoint commit")
+	handoffCleanCmd.Flags().Bool("skip-fleet-clear", false, "Skip sending /clear to fleet agents")
 	handoffCleanCmd.Flags().Bool("json", false, "Output as JSON")
 
 	// handoff read flags
@@ -354,6 +372,66 @@ func saveSessionSummary(forgeRoot string, handoff *HandoffDoc, gitLog, modifiedF
 
 	path := filepath.Join(memoriesDir, "session-live.md")
 	return path, os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
+// agentClearCommand returns the command to clear/reset context for a given agent.
+// Most agents use /clear, but some have different conventions.
+func agentClearCommand(agentName string) string {
+	// pi uses /new to start a fresh conversation
+	if strings.HasPrefix(agentName, "pi") {
+		return "/new"
+	}
+	return "/clear"
+}
+
+// clearFleetAgents sends the appropriate clear command to all fleet agent tmux windows
+// in the forge session. It detects the orchestrator window (hostname match) and skips it.
+// Returns the list of agent names that were cleared.
+func clearFleetAgents() []string {
+	hostname, _ := os.Hostname()
+
+	// List tmux windows in forge session: "window_name"
+	out, err := exec.Command("tmux", "list-windows", "-t", "forge", "-F", "#{window_name}").Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list tmux windows: %v\n", err)
+		return nil
+	}
+
+	var cleared []string
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		// Skip orchestrator window (matches hostname) and forge-monitor
+		if name == hostname || name == "forge-monitor" || name == "monitor" {
+			continue
+		}
+
+		clearCmd := agentClearCommand(name)
+
+		// Send clear command to the agent via tmux
+		// Use -l flag to send literal text, then Enter separately (per CLAUDE.md tmux pattern)
+		sendCmd := exec.Command("tmux", "send-keys", "-t", "forge:"+name, "-l", clearCmd)
+		if err := sendCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not clear agent %s: %v\n", name, err)
+			continue
+		}
+		// Small delay then send Enter
+		time.Sleep(100 * time.Millisecond)
+		enterCmd := exec.Command("tmux", "send-keys", "-t", "forge:"+name, "Enter")
+		if err := enterCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not send Enter to agent %s: %v\n", name, err)
+			continue
+		}
+		cleared = append(cleared, fmt.Sprintf("%s(%s)", name, clearCmd))
+	}
+
+	if len(cleared) > 0 {
+		fmt.Printf("[handoff] Cleared %d fleet agent(s): %s\n", len(cleared), strings.Join(cleared, ", "))
+	}
+
+	return cleared
 }
 
 func gitCheckpoint(forgeRoot, handoffID string) (string, error) {

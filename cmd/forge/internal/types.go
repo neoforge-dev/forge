@@ -57,6 +57,7 @@ type Agent struct {
 	ID           string    `json:"id"`
 	Node         string    `json:"node"`
 	Status       string    `json:"status"`
+	WorkState    string    `json:"work_state,omitempty"` // "idle" | "working" | "blocked"
 	Role         string    `json:"role"`
 	Tier         string    `json:"tier"`
 	ContextPct   float64   `json:"context_pct"`
@@ -77,6 +78,7 @@ type AgentHealth struct {
 	AgentID      string    `json:"agent_id"`
 	Node         string    `json:"node"`
 	Status       string    `json:"status"`
+	WorkState    string    `json:"work_state,omitempty"` // "idle" | "working" | "blocked"
 	ContextPct   float64   `json:"context_pct"`
 	LastSeen     time.Time `json:"last_seen"`
 	ConnectedAt  time.Time `json:"connected_at"`
@@ -136,6 +138,11 @@ type ClaimTaskResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
+// AckTaskRequest represents a request to ACK a dispatched task.
+type AckTaskRequest struct {
+	AgentID string `json:"agent_id"`
+}
+
 // CompleteTaskRequest represents a request to complete a task (V3 format).
 type CompleteTaskRequest struct {
 	Agent         string `json:"agent"` // v3 may accept agent or agent_id
@@ -156,6 +163,7 @@ type ErrorResponse struct {
 type Domain struct {
 	Key          string   `yaml:"-" json:"key"`
 	DisplayName  string   `yaml:"display_name" json:"display_name"`
+	Owner        string   `yaml:"owner" json:"owner"`
 	Compliance   []string `yaml:"compliance" json:"compliance"`
 	FrontendTier string   `yaml:"frontend_tier" json:"frontend_tier"`
 	Products     []string `yaml:"products" json:"products"`
@@ -185,10 +193,10 @@ type CreateDomainRequest struct {
 	Compliance  string `json:"compliance,omitempty"`
 }
 
-// ==================== Project Types ====================
+// ==================== Product Types ====================
 
-// Project represents a repository/project within a domain.
-type Project struct {
+// Product represents a repository/product within a domain (formerly Project).
+type Product struct {
 	ID          string    `json:"id"`
 	Key         string    `json:"key"`
 	Name        string    `json:"name"`
@@ -201,14 +209,25 @@ type Project struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// ProjectListResponse represents the response from listing projects.
+// Project is a backward-compatible alias for Product.
+// New code should use Product; this alias exists for callers that predate the rename.
+type Project = Product
+
+// ProductListResponse represents the response from listing products.
+type ProductListResponse struct {
+	Products []Product `json:"products"`
+	Count    int       `json:"count"`
+}
+
+// ProjectListResponse is kept for backward compatibility with existing client callers.
+// New code should use ProductListResponse. The Projects field mirrors the Products field.
 type ProjectListResponse struct {
 	Projects []Project `json:"projects"`
 	Count    int       `json:"count"`
 }
 
-// CreateProjectRequest represents a request to create a project.
-type CreateProjectRequest struct {
+// CreateProductRequest represents a request to create a product.
+type CreateProductRequest struct {
 	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Domain      string `json:"domain"`
@@ -216,6 +235,9 @@ type CreateProjectRequest struct {
 	Path        string `json:"path,omitempty"`
 	Type        string `json:"type,omitempty"`
 }
+
+// CreateProjectRequest is a backward-compatible alias for CreateProductRequest.
+type CreateProjectRequest = CreateProductRequest
 
 // ==================== Portfolio Types ====================
 
@@ -246,7 +268,12 @@ type PortfolioProduct struct {
 	NextGate       string `yaml:"next_gate" json:"next_gate"`
 	NextAction     string `yaml:"next_action" json:"next_action"`
 	PrimaryMetric  string `yaml:"primary_metric,omitempty" json:"primary_metric,omitempty"`
-	PrimaryRisk    string `yaml:"primary_risk,omitempty" json:"primary_risk,omitempty"`
+	PrimaryRisk          string `yaml:"primary_risk,omitempty" json:"primary_risk,omitempty"`
+	KillCriteria         string `yaml:"kill_criteria,omitempty" json:"kill_criteria,omitempty"`
+	ValidationHypothesis string `yaml:"validation_hypothesis,omitempty" json:"validation_hypothesis,omitempty"`
+	DistributionChannel  string `yaml:"distribution_channel,omitempty" json:"distribution_channel,omitempty"`
+	CouncilDecision      string `yaml:"council_decision,omitempty" json:"council_decision,omitempty"`
+	Notes                string `yaml:"notes,omitempty" json:"notes,omitempty"`
 }
 
 // PortfolioSummary represents a portfolio-wide operating snapshot.

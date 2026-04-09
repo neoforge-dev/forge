@@ -1,0 +1,41 @@
+# DESIGN TEMPLATE — not yet wired to daemon code (S120 Phase 2.3)
+# Agent role routing is handled by CLAUDE.md agent table + dispatch-decision.md.
+# Agent Role Profiles — maps agents to MVP factory roles
+# Last updated: 2026-03-16 S114
+
+roles:
+  intake:
+    description: "Turns chat/ideas into structured briefs and tasks"
+    best_for_stages: ["idea"]
+    task_types: ["research", "brief", "triage"]
+    preferred_agents: ["pi", "gemini"]
+
+  validation:
+    description: "Researches pain, ICP, alternatives, distribution"
+    best_for_stages: ["validate"]
+    task_types: ["research", "validation", "analysis"]
+    preferred_agents: ["gemini", "pi"]
+
+  builder:
+    description: "Creates MVPs in isolated repos/worktrees"
+    best_for_stages: ["build", "scale"]
+    task_types: ["feature", "bug", "refactor", "prototype"]
+    preferred_agents: ["claude", "opencode", "kilo", "minimax", "glm"]
+
+  qa:
+    description: "Tests critical flows, blocks bad promotions"
+    best_for_stages: ["build", "deploy"]
+    task_types: ["test", "coverage", "review", "audit"]
+    preferred_agents: ["kimi", "kimi-2", "pi", "cursor"]
+
+  deploy:
+    description: "Handles release tasks behind approvals"
+    best_for_stages: ["deploy"]
+    task_types: ["deploy", "config", "monitoring", "docs"]
+    preferred_agents: ["claude", "cursor"]
+
+  metrics:
+    description: "Adds analytics, checks measure stage is real"
+    best_for_stages: ["measure", "monetize"]
+    task_types: ["analytics", "experiment", "optimization"]
+    preferred_agents: ["gemini", "pi"]

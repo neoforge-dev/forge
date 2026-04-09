@@ -93,6 +93,8 @@ func (t *TUI) loadTemplate() {
 <!DOCTYPE html>
 <html>
 <head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>FORGE v3 TUI</title>
 	<style>
 		* { margin: 0; padding: 0; box-sizing: border-box; }
@@ -195,6 +197,18 @@ func (t *TUI) loadTemplate() {
 			font-family: monospace;
 		}
 		.refresh button:hover { background: #2ea043; }
+		.notice {
+			margin-bottom: 16px;
+			padding: 12px 14px;
+			border: 1px solid #30363d;
+			border-radius: 6px;
+			background: #111827;
+			color: #8b949e;
+		}
+		.notice a {
+			color: #58a6ff;
+			text-decoration: none;
+		}
 	</style>
 </head>
 <body>
@@ -202,6 +216,7 @@ func (t *TUI) loadTemplate() {
 		<h1>▌ FORGE v3 TUI</h1>
 		<span class="timestamp">{{ .Timestamp.Format "2006-01-02 15:04:05" }}</span>
 	</div>
+	<div class="notice">Preferred browser UI: <a href="/ui">/ui</a>. This page is a compatibility and debugging view.</div>
 
 	<div class="metrics">
 		<div class="metric total">

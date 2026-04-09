@@ -55,6 +55,8 @@ Examples:
 	sendCmd.Flags().String("tmux-session", "forge", "tmux session name for agent notification (set empty to skip)")
 	sendCmd.Flags().Bool("no-tmux", false, "Skip tmux notification (useful in CI or when agents poll via forge work --daemon)")
 	sendCmd.Flags().Bool("wait-ack", false, "Poll relay deliveries for ACK confirmation (30s timeout)")
+	sendCmd.Flags().Bool("require-live", false, "Refuse dispatch if agent has no recent heartbeat or tmux window")
+	sendCmd.Flags().Bool("check-tmux", false, "Verify tmux window exists before dispatching")
 
 	autoCmd := &cobra.Command{
 		Use:   "auto [message]",
@@ -231,13 +233,23 @@ func parseAgentID(s string) string {
 // Best-effort: failures are logged as warnings, not fatal errors.
 func notifyAgentViaTmux(session, agentID, prompt string) error {
 	target := session + ":" + agentID
+
+	// Pre-dispatch liveness check: verify an agent process is running (not bare shell).
+	paneCmdOut, err := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_current_command}").Output()
+	if err == nil {
+		paneCmd := strings.TrimSpace(string(paneCmdOut))
+		if paneCmd == "zsh" || paneCmd == "bash" || paneCmd == "fish" || paneCmd == "sh" {
+			return fmt.Errorf("agent %s is not running (pane shows '%s') — restart it first", agentID, paneCmd)
+		}
+	}
+
 	// Step 1: send the prompt text (literal, prevents escape sequence misinterpretation)
 	if err := exec.Command("tmux", "send-keys", "-t", target, "-l", prompt).Run(); err != nil {
 		return fmt.Errorf("tmux send-keys (text) to %s: %w", target, err)
 	}
 	// Step 2: send Enter as a separate call (required — appending Enter races with buffer)
 	time.Sleep(100 * time.Millisecond)
-	if err := exec.Command("tmux", "send-keys", "-t", target, "", "Enter").Run(); err != nil {
+	if err := exec.Command("tmux", "send-keys", "-t", target, "Enter").Run(); err != nil {
 		return fmt.Errorf("tmux send-keys (Enter) to %s: %w", target, err)
 	}
 	return nil
@@ -307,6 +319,53 @@ func runDispatchSend(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	requireLive, _ := cmd.Flags().GetBool("require-live")
+	if requireLive {
+		liveCtx, liveCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer liveCancel()
+		liveClient := internal.NewClient()
+		liveness, livenessErr := checkAgentLiveness(liveCtx, liveClient, agentID)
+		if livenessErr != nil {
+			// Daemon unreachable — fall back to tmux window check
+			tmuxCheck := exec.Command("tmux", "has-session", "-t", tmuxSession+":"+agentID)
+			if tmuxCheck.Run() != nil {
+				return fmt.Errorf("daemon unreachable and agent %s not found in tmux session '%s'\n  Run 'forge daemon status' to check daemon health", agentID, tmuxSession)
+			}
+			fmt.Fprintf(os.Stderr, "[info] daemon unreachable, but agent %s found in tmux — proceeding\n", agentID)
+		} else {
+			switch liveness.Status {
+			case "ALIVE":
+				// good — proceed
+			case "STALE":
+				return fmt.Errorf("agent %s is offline (last seen: %s)\n  Use 'forge fleet spawn %s' to start it",
+					agentID, liveness.LastSeen.Format(time.RFC3339), agentID)
+			case "OFFLINE":
+				return fmt.Errorf("agent %s is offline (last seen: %s)\n  Use 'forge fleet spawn %s' to start it",
+					agentID, liveness.LastSeen.Format(time.RFC3339), agentID)
+			case "UNKNOWN":
+				// Agent not in daemon — fall back to tmux check
+				tmuxCheck := exec.Command("tmux", "has-session", "-t", tmuxSession+":"+agentID)
+				if tmuxCheck.Run() != nil {
+					return fmt.Errorf("agent %s is not registered and has no tmux window in session '%s'\n  Use 'forge agent list' to see registered agents", agentID, tmuxSession)
+				}
+				fmt.Fprintf(os.Stderr, "[info] agent %s not in daemon DB but found in tmux — proceeding\n", agentID)
+			}
+		}
+	}
+
+	checkTmux, _ := cmd.Flags().GetBool("check-tmux")
+	if checkTmux && !noTmux && tmuxSession != "" {
+		target := tmuxSession + ":" + agentID
+		if exec.Command("tmux", "has-session", "-t", target).Run() != nil {
+			return fmt.Errorf("tmux window %s not found — agent may not be running\n  Use 'tmux list-windows -t %s' to check, or remove --check-tmux to dispatch anyway", target, tmuxSession)
+		}
+	}
+
+	// Pre-dispatch blocker check (benefits all agents, not just Claude)
+	if blocker := checkGitBlockers(); blocker != "" {
+		fmt.Fprintf(os.Stderr, "[warn] git blocker detected: %s\n", blocker)
+	}
+
 	client := internal.NewClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -329,10 +388,25 @@ func runDispatchSend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create task: %w", err)
 	}
 
-	// Claim task for agent
-	_, err = client.ClaimTask(ctx, task.ID, agentID)
-	if err != nil {
-		return fmt.Errorf("dispatch to %s: %w", agentID, err)
+	// Claim task for agent with exponential backoff retry (2s, 4s, 8s).
+	claimBackoffs := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+	var claimErr error
+	for attempt := 0; attempt <= len(claimBackoffs); attempt++ {
+		claimCtx, claimCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, claimErr = client.ClaimTask(claimCtx, task.ID, agentID)
+		claimCancel()
+		if claimErr == nil {
+			break
+		}
+		if attempt < len(claimBackoffs) {
+			fmt.Fprintf(os.Stderr, "[warn] claim attempt %d/%d failed: %v — retrying in %s\n",
+				attempt+1, len(claimBackoffs)+1, claimErr, claimBackoffs[attempt])
+			time.Sleep(claimBackoffs[attempt])
+		}
+	}
+	if claimErr != nil {
+		return fmt.Errorf("dispatch to %s failed after %d attempts: %w\n  Check daemon health: forge daemon status",
+			agentID, len(claimBackoffs)+1, claimErr)
 	}
 
 	// Notify agent via tmux (Claude Code agents don't poll SQLite — they need a push).
@@ -1220,5 +1294,26 @@ func extractFirstLine(text string) string {
 			return line
 		}
 	}
+	return ""
+}
+
+// checkGitBlockers returns a description of any git blocker, or empty string if clean.
+// Used by dispatch send as a pre-flight check so all agents benefit (not just Claude hooks).
+func checkGitBlockers() string {
+	// Check index.lock
+	if info, err := os.Stat(".git/index.lock"); err == nil {
+		if info.Size() == 0 || time.Since(info.ModTime()) > 60*time.Second {
+			return fmt.Sprintf("stale .git/index.lock (size=%d, age=%v) — run: forge recover", info.Size(), time.Since(info.ModTime()).Round(time.Second))
+		}
+		return ".git/index.lock exists (git operation in progress)"
+	}
+
+	// Check rebase/merge states
+	for _, path := range []string{".git/rebase-merge", ".git/rebase-apply", ".git/MERGE_HEAD", ".git/BISECT_START"} {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Sprintf("%s exists — resolve before dispatching", path)
+		}
+	}
+
 	return ""
 }

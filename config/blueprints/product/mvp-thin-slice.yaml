@@ -1,0 +1,20 @@
+id: product/mvp-thin-slice
+name: MVP Thin-Slice Build
+description: Task-driven MVP build with quality gates. Use after GO decision from validation.
+steps:
+  - type: check
+    name: verify-build-stage
+    command: "forge portfolio show ${PRODUCT_KEY} --format json | grep -q '\"stage\":\"build\"'"
+  - type: dispatch
+    name: implement-thin-slice
+    agent: auto
+  - type: check
+    name: post-build-checks
+    command: "forge check --domain ${DOMAIN} --post"
+  - type: review
+    name: build-quality-review
+  - type: complete
+    name: finalize
+    evidence:
+      - test_results
+      - build_output

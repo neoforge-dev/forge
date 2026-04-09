@@ -156,9 +156,19 @@ func createTaskHandler(w http.ResponseWriter, r *http.Request) {
 		task.ID = generateTaskID()
 	}
 
-	// Set default values - start at requested for agentic lifecycle
+	// Reject task IDs that contain spaces — they break CLI commands and URL
+	// path segments.  A caller that provides an ID with spaces gets a clear
+	// error so they can fix their payload; the generated path above never
+	// produces spaces after the sanitization in generateTaskID, but we defend
+	// in depth here as well.
+	if strings.Contains(task.ID, " ") {
+		writeJSONError(w, http.StatusBadRequest, "task ID must not contain spaces")
+		return
+	}
+
+	// Set default values - start at queued so dark factory and patrols can dispatch
 	if task.Status == "" {
-		task.Status = TaskStatusRequested
+		task.Status = "queued"
 	}
 	if task.State == "" {
 		task.State = StateQueued
@@ -277,6 +287,41 @@ func completeTaskHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route through approval gate when the service is available and the request
+	// is for a completion (not a failure).  Failures bypass approval intentionally.
+	if globalApprovalService != nil && status == string(TaskStatusCompleted) {
+		integration := NewTaskApprovalIntegration(tq, globalApprovalService)
+		// Build a minimal confidence context from the request.  Callers that want
+		// richer confidence scoring should use /complete-with-approval instead.
+		confCtx := ConfidenceContext{
+			Reversible:  true,
+			BlastRadius: 1,
+		}
+		completionErr := integration.CompleteTaskWithApproval(ctx, taskID, task.AssignedTo, req.Result, confCtx)
+		if completionErr == nil {
+			// Task completed directly — high confidence path.
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "task_id": taskID})
+			return
+		}
+		if approvalErr, ok := completionErr.(*ApprovalRequiredError); ok {
+			// Low confidence — task is now pending_approval.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":      "pending_approval",
+				"task_id":     taskID,
+				"approval_id": approvalErr.ApprovalID,
+				"confidence":  approvalErr.Confidence,
+				"message":     approvalErr.Reason,
+			})
+			return
+		}
+		// Any other error from the approval integration falls through to the
+		// legacy direct-completion path below so existing behaviour is preserved.
+		log.Printf("[completeTaskHandler] approval integration error (falling through): %v", completionErr)
+	}
+
 	// Use state machine for transition if possible
 	err = fmt.Errorf("db not initialized")
 	// Prefer the global stateMachine (initialized at startup); fall back to a
@@ -322,9 +367,22 @@ func completeTaskHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Best-effort quality gate results insertion — never blocks completion.
+	if status == string(TaskStatusCompleted) {
+		go insertQualityGateResults(r.Context(), db, taskID, req.Result)
+	}
+
 	// Release any lease on this task
 	if db != nil {
 		_, _ = db.Exec(`DELETE FROM leases WHERE task_id = ?`, taskID)
+
+		// Reset work_state to "idle" for the agent that was working on this task.
+		// Best-effort: do not fail the completion if this update errors.
+		if task.AssignedTo != "" {
+			_, _ = db.ExecContext(r.Context(), `
+				UPDATE agent_heartbeats SET work_state = 'idle' WHERE agent_id = ?
+			`, task.AssignedTo)
+		}
 
 		// ADR-024: cleanup worktree on completion
 		forgeRoot := os.Getenv("FORGE_ROOT")
@@ -419,8 +477,13 @@ func taskHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// pruneTasksHandler abandons all assigned tasks with no heartbeat update in the last 2 hours.
+// pruneTasksHandler abandons stale assigned tasks and optionally deletes old completed/failed tasks.
 // POST /api/tasks/prune
+//
+// Query parameters:
+//   - older_than: duration string (e.g. "24h", "7d") — prune completed/failed tasks older than this.
+//     Default: "48h". Supports hours (h) and days (d) suffixes.
+//   - dry_run: "true" — count what would be pruned without making changes.
 func pruneTasksHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -431,17 +494,75 @@ func pruneTasksHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db not initialized", http.StatusServiceUnavailable)
 		return
 	}
+
+	// Parse dry_run query param
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	// Parse older_than query param — default 48h
+	retention := 48 * time.Hour
+	if olderThan := r.URL.Query().Get("older_than"); olderThan != "" {
+		// Support "d" suffix (days) in addition to standard Go durations
+		if strings.HasSuffix(olderThan, "d") {
+			days := strings.TrimSuffix(olderThan, "d")
+			if d, err := time.ParseDuration(days + "h"); err == nil {
+				retention = d * 24
+			}
+		} else if d, err := time.ParseDuration(olderThan); err == nil {
+			retention = d
+		}
+	}
+
 	now := time.Now()
-	threshold := now.Add(-2 * time.Hour).Format(time.RFC3339)
+	// Threshold for zombie assigned tasks (no heartbeat for 2h)
+	assignedThreshold := now.Add(-2 * time.Hour).Format(time.RFC3339)
+	// Threshold for old completed/failed tasks
+	retentionThreshold := now.Add(-retention).Format(time.RFC3339)
+
+	var totalPruned int64
+
+	if dryRun {
+		// Count only — no mutations
+		var abandonCount, deleteCount int64
+		db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status='assigned' AND updated_at < ?`, assignedThreshold).Scan(&abandonCount) //nolint:errcheck
+		db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status IN ('completed','failed') AND updated_at < ?`, retentionThreshold).Scan(&deleteCount) //nolint:errcheck
+		totalPruned = abandonCount + deleteCount
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"status":              "ok",
+			"pruned":              totalPruned,
+			"dry_run":             true,
+			"threshold":           assignedThreshold,
+			"retention_threshold": retentionThreshold,
+		})
+		return
+	}
+
+	// 1. Abandon stale assigned tasks (no heartbeat for 2h)
 	res, err := db.Exec(`UPDATE tasks SET status='abandoned', state='ABANDONED', updated_at=? WHERE status='assigned' AND updated_at < ?`,
-		now.Format(time.RFC3339), threshold)
+		now.Format(time.RFC3339), assignedThreshold)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to prune tasks: %v", err), http.StatusInternalServerError)
 		return
 	}
 	n, _ := res.RowsAffected()
+	totalPruned += n
+
+	// 2. Delete old completed/failed tasks beyond retention window
+	res2, err := db.Exec(`DELETE FROM tasks WHERE status IN ('completed','failed') AND updated_at < ?`, retentionThreshold)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to delete old tasks: %v", err), http.StatusInternalServerError)
+		return
+	}
+	n2, _ := res2.RowsAffected()
+	totalPruned += n2
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "pruned": n, "threshold": threshold})
+	json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+		"status":              "ok",
+		"pruned":              totalPruned,
+		"threshold":           assignedThreshold,
+		"retention_threshold": retentionThreshold,
+	})
 }
 
 func getTaskHandler(w http.ResponseWriter, r *http.Request) {
@@ -836,6 +957,101 @@ func approveTaskHandler(w http.ResponseWriter, r *http.Request) {
 		"task_id":     taskID,
 		"state":       string(StateApproved),
 		"approved_by": req.ApprovedBy,
+	})
+}
+
+// ackTaskHandler handles POST /api/tasks/{id}/ack
+// Transitions a task from DISPATCHED to RUNNING, confirming the agent started work.
+// This is the Epic 4 dispatch reliability ACK: without it, tasks can get stuck in
+// DISPATCHED if an agent claims but crashes before producing output.
+func ackTaskHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed — use POST /api/tasks/{id}/ack", http.StatusMethodNotAllowed)
+		return
+	}
+
+	taskID := strings.TrimPrefix(r.URL.Path, "/api/tasks/")
+	taskID = strings.TrimSuffix(taskID, "/ack")
+
+	if strings.TrimSpace(taskID) == "" {
+		http.Error(w, "task ID required — URL must be /api/tasks/{id}/ack", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body — provide {\"agent_id\": \"...\"}", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(req.AgentID) == "" {
+		http.Error(w, "agent_id required — provide {\"agent_id\": \"...\"}", http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+
+	task, err := taskQueue.GetTask(ctx, taskID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("task not found: %s — verify task ID is correct", taskID), http.StatusNotFound)
+		return
+	}
+
+	// Verify the agent ACKing matches the assigned agent.
+	if task.AssignedTo != req.AgentID {
+		http.Error(w, fmt.Sprintf("agent mismatch: task assigned to %q not %q — only the assigned agent can ACK", task.AssignedTo, req.AgentID), http.StatusForbidden)
+		return
+	}
+
+	// Transition DISPATCHED → RUNNING via the FSM.
+	if stateMachine != nil {
+		if err := stateMachine.Transition(taskID, StateDispatched, StateRunning, fmt.Sprintf("acked by agent %s", req.AgentID)); err != nil {
+			http.Error(w, fmt.Sprintf("ACK transition failed: %v — task may already be RUNNING or not in DISPATCHED state", err), http.StatusConflict)
+			return
+		}
+	} else {
+		// Standalone path: direct SQL update.
+		db := getDBConn()
+		if db == nil {
+			http.Error(w, "database not initialized — restart the daemon: forge daemon restart", http.StatusServiceUnavailable)
+			return
+		}
+		now := time.Now().Format(time.RFC3339)
+		res, execErr := db.ExecContext(ctx,
+			`UPDATE tasks SET state = ?, status = 'executing', updated_at = ? WHERE id = ? AND state = ?`,
+			StateRunning, now, taskID, StateDispatched)
+		if execErr != nil {
+			http.Error(w, fmt.Sprintf("ACK update failed: %v", execErr), http.StatusInternalServerError)
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			http.Error(w, fmt.Sprintf("task %s not in DISPATCHED state — cannot ACK", taskID), http.StatusConflict)
+			return
+		}
+	}
+
+	// Stamp acked_at timestamp.
+	db := getDBConn()
+	if db != nil {
+		now := time.Now().Format(time.RFC3339)
+		if _, stampErr := db.ExecContext(ctx, `UPDATE tasks SET acked_at = ? WHERE id = ?`, now, taskID); stampErr != nil {
+			log.Printf("WARN: failed to stamp acked_at for task %s: %v", taskID, stampErr)
+			// Non-fatal — state transition already committed.
+		}
+	}
+
+	// Return updated task.
+	task, _ = taskQueue.GetTask(ctx, taskID)
+
+	log.Printf("[ACK] task %s acknowledged by agent %s (DISPATCHED → RUNNING)", taskID, req.AgentID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "acked",
+		"task":     task,
+		"agent_id": req.AgentID,
 	})
 }
 

@@ -26,12 +26,37 @@ forge task create --domain codeswiftr-com --project my-proj \
   --title "Fix auth bug" --priority high --lane dev \
   --metadata key=value
 
+# System status
+forge status                             # daemon + fleet + queue health
+
+# Portfolio (product lifecycle)
+forge portfolio list
+forge portfolio show <key>
+forge portfolio advance <key> --dry-run
+forge portfolio advance <key> [--to <stage>] [--force]
+
+# Blueprints
+forge blueprint list
+forge blueprint validate <id>
+forge blueprint run <id> --task <task-id>
+
+# Pre-flight checks
+forge check [--quick|--full] [--fix]
+
 # Dispatch to fleet agents
 forge dispatch send forge:kimi "Read .forge/dispatches/task.md — EXECUTE now"
 
-# Workers / Agents
-forge worker up --id my-worker --capabilities code,test
+# Agents
 forge agent list
+
+# Approvals
+forge approval list --pending
+forge approval decide <id> --approve
+
+# Node management
+forge node list
+forge node up [--dry-run]
+forge node down [--keep-daemon]
 
 # Lanes
 forge lane list
@@ -46,7 +71,6 @@ forge queue prune --completed --older 7d
 # Other
 forge domain list
 forge project list --domain codeswiftr-com
-forge approval list --pending
 forge context list
 forge config get
 ```
@@ -63,9 +87,9 @@ forge task list --format quiet   # exit code only (0=ok)
 ## Configuration
 
 ```bash
-export FORGE_API_URL=http://node-1:8081        # default hub
+export FORGE_API_URL=http://prya:8081        # default hub
 export FORGE_WS_URL=ws://localhost:8082
-export FORGE_NODE_ID=node-1
+export FORGE_NODE_ID=prya
 export FORGED_BIN=/path/to/forged            # override daemon binary (FORGE_V3_BIN also accepted for backward compat)
 ```
 
@@ -75,21 +99,31 @@ The CLI also reads `~/.forge/config.toml` and project `.forge/config.toml` befor
 
 | Noun | Commands | Status |
 |------|----------|--------|
-| `task` | list, show, create, update | ✅ Done |
+| `task` | list, show, create, update, claim, complete | ✅ Done |
 | `agent` | list, show | ✅ Done |
-| `worker` | up (WebSocket, reconnect with backoff) | ✅ Done |
-| `lane` | list, show, promote | ✅ Done |
+| `portfolio` | list, show, advance, status | ✅ Done |
+| `blueprint` | list, validate, run, status | ✅ Done |
+| `status` | (root command — fleet health) | ✅ Done |
+| `check` | quick, full, fix | ✅ Done |
+| `node` | list, join, status, up, down | ✅ Done |
 | `dispatch` | send, list | ✅ Done |
 | `daemon` | start, stop, status, restart, install, logs | ✅ Done |
-| `queue` | list, depth, show, populate, prune, import-dispatches | ✅ Done |
+| `approval` | list, show, decide | ✅ Done |
+| `lane` | list, show, promote | ✅ Done |
+| `queue` | list, depth, show, populate, prune | ✅ Done |
 | `domain` | list, show | ✅ Done |
 | `project` | list, show | ✅ Done |
-| `approval` | list, decide | ✅ Done |
+| `handoff` | (root command — session state) | ✅ Done |
 | `context` | list, show | ✅ Done |
 | `patrol` | list, show | ✅ Done |
 | `pattern` | list, show | ✅ Done |
 | `config` | get, set | ✅ Done |
-| `fleet` | status | ✅ Done |
+| `fleet` | windows, status | ✅ Done |
+
+## Product Lifecycle
+
+See `docs/CANONICAL_FLOW.md` for the full idea-to-revenue lifecycle.
+Blueprints live in `config/blueprints/`. Portfolio state in `config/portfolio/portfolio-state.yaml`.
 
 ## Client Features
 
@@ -147,7 +181,7 @@ When the control plane is unreachable:
 
 ```
 Error: control plane unreachable
-  URL: http://node-1:8081/api
+  URL: http://prya:8081/api
 ```
 
 Exit codes (from `internal/errors`):

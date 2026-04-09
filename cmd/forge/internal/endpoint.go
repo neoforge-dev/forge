@@ -7,11 +7,43 @@ import (
 	"strings"
 )
 
+// DefaultAPIPort is the default port for the forged HTTP API.
+// Override with FORGE_API_PORT env var.
+const DefaultAPIPort = "8081"
+
+// DefaultWSPort is the default port for the forged WebSocket server.
+// Override with FORGE_WS_PORT env var.
+const DefaultWSPort = "8082"
+
+// ResolveAPIPort returns the API port, preferring FORGE_API_PORT env var.
+func ResolveAPIPort() string {
+	if p := strings.TrimSpace(os.Getenv("FORGE_API_PORT")); p != "" {
+		return p
+	}
+	return DefaultAPIPort
+}
+
+// ResolveWSPort returns the WebSocket port, preferring FORGE_WS_PORT env var.
+func ResolveWSPort() string {
+	if p := strings.TrimSpace(os.Getenv("FORGE_WS_PORT")); p != "" {
+		return p
+	}
+	return DefaultWSPort
+}
+
+// DefaultControlPlaneURL is the default control-plane URL.
+// The port component respects FORGE_API_PORT env var.
+// Use ResolveControlPlaneURL() for the full precedence chain.
 const DefaultControlPlaneURL = "http://localhost:8081"
+
+// ResolveDefaultControlPlaneURL returns the default URL incorporating FORGE_API_PORT.
+func ResolveDefaultControlPlaneURL() string {
+	return "http://localhost:" + ResolveAPIPort()
+}
 
 // ResolveControlPlaneURL returns the control-plane base URL without the /api suffix.
 // Precedence: FORGE_API_URL > ~/.forge/config.toml > project .forge/config.toml >
-// project .forge/forge.yaml > built-in default.
+// project .forge/forge.yaml > built-in default (respects FORGE_API_PORT).
 func ResolveControlPlaneURL() string {
 	if url := strings.TrimSpace(os.Getenv("FORGE_API_URL")); url != "" {
 		return normalizeControlPlaneURL(url)
@@ -23,7 +55,7 @@ func ResolveControlPlaneURL() string {
 		}
 	}
 
-	return DefaultControlPlaneURL
+	return ResolveDefaultControlPlaneURL()
 }
 
 // ResolveAPIBaseURL returns the configured control-plane URL with the /api suffix.
@@ -45,7 +77,7 @@ func normalizeControlPlaneURL(raw string) string {
 	url = strings.TrimRight(url, "/")
 	url = strings.TrimSuffix(url, "/api")
 	if url == "" {
-		return DefaultControlPlaneURL
+		return ResolveDefaultControlPlaneURL()
 	}
 	return url
 }

@@ -1,0 +1,18 @@
+id: coding/default
+name: Default Coding Workflow
+description: Standard task execution path
+steps:
+  - type: check
+    name: pre-flight-checks
+    command: "forge check --task ${TASK_ID}"
+  - type: dispatch
+    name: implement
+    agent: auto
+  - type: check
+    name: post-implementation-checks
+    command: "forge check --task ${TASK_ID} --post"
+  - type: complete
+    name: finalize
+    evidence:
+      - test_results
+      - coverage_report

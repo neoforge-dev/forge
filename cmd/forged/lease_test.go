@@ -43,7 +43,13 @@ func setupLeaseTestDB(t *testing.T) *sql.DB {
 		plan_id TEXT,
 		envelope_id TEXT,
 		created_at TEXT,
-		updated_at TEXT
+		updated_at TEXT,
+		origin TEXT,
+		requester TEXT,
+		source_channel TEXT,
+		failure_context TEXT,
+		dispatch_attempts INTEGER NOT NULL DEFAULT 0,
+		last_dispatch_at TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS task_state_transitions (

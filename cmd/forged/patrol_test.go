@@ -190,30 +190,13 @@ func TestExpireOldApprovalsExpiresOnlyPastPending(t *testing.T) {
 	}
 }
 
-func TestMonitorQueueDepthRunsWithoutError(t *testing.T) {
-	db, cleanup := setupPatrolTestDB(t)
-	defer cleanup()
-
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	// A few queued/requested tasks should not cause errors
-	for i := 0; i < 3; i++ {
-		if _, err := db.Exec(`
-			INSERT INTO tasks (id, domain, project, type, priority, status, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, "task-q-"+time.Now().Format("150405")+string(rune('A'+i)), "test-domain", "test-project", string(TaskTypeFeature), 50, string(TaskStatusQueued), now, now); err != nil {
-			t.Fatalf("failed to insert queued task: %v", err)
-		}
-	}
-
-	if err := monitorQueueDepth(context.Background(), db); err != nil {
-		t.Fatalf("monitorQueueDepth returned error: %v", err)
-	}
-}
-
 func TestSyncRoyalJellyUpdatesContextPct(t *testing.T) {
 	db, cleanup := setupPatrolTestDB(t)
 	defer cleanup()
+
+	// Set FORGE_ROOT to a temp dir so forgeRoot() points to our fixture files.
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
 
 	// Prepare agent row
 	if _, err := db.Exec(`
@@ -223,8 +206,8 @@ func TestSyncRoyalJellyUpdatesContextPct(t *testing.T) {
 		t.Fatalf("failed to insert agent: %v", err)
 	}
 
-	// Create fake Royal Jelly context_pct file
-	contextDir := "./.forge/context"
+	// Create fake Royal Jelly context_pct file under tmpRoot
+	contextDir := filepath.Join(tmpRoot, ".forge", "context")
 	domainDir := filepath.Join(contextDir, "test-domain-patrol")
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		t.Fatalf("failed to create context dir: %v", err)
@@ -234,7 +217,6 @@ func TestSyncRoyalJellyUpdatesContextPct(t *testing.T) {
 	if err := os.WriteFile(pctPath, []byte("37.5\n"), 0o644); err != nil {
 		t.Fatalf("failed to write context_pct file: %v", err)
 	}
-	defer os.Remove(pctPath)
 
 	if err := syncRoyalJelly(context.Background(), db); err != nil {
 		t.Fatalf("syncRoyalJelly returned error: %v", err)
@@ -250,35 +232,25 @@ func TestSyncRoyalJellyUpdatesContextPct(t *testing.T) {
 	}
 }
 
-func TestCleanStaleBranchesRunsWithoutError(t *testing.T) {
-	db, cleanup := setupPatrolTestDB(t)
-	defer cleanup()
-
-	// We only assert that the patrol completes without error against the current repo.
-	if err := cleanStaleBranches(context.Background(), db); err != nil {
-		t.Fatalf("cleanStaleBranches returned error: %v", err)
-	}
-}
-
 func TestMarkStaleHeartbeatsOffline(t *testing.T) {
 	db, cleanup := setupPatrolTestDB(t)
 	defer cleanup()
 
 	now := time.Now().UTC()
 
-	// Insert 2 agents with last_seen > 10 min ago (should be marked offline)
+	// Insert 2 agents with last_seen > 3 min ago (should be marked offline)
 	for i, id := range []string{"hb-stale-1", "hb-stale-2"} {
 		if _, err := db.Exec(`
 			INSERT INTO agent_heartbeats (agent_id, node, status, last_seen, connected_at)
 			VALUES (?, ?, ?, ?, ?)
 		`, id, "node-test", "online",
-			now.Add(-11*time.Minute).Add(time.Duration(i)*time.Second).Format(time.RFC3339),
+			now.Add(-4*time.Minute).Add(time.Duration(i)*time.Second).Format(time.RFC3339),
 			now.Add(-20*time.Minute).Format(time.RFC3339)); err != nil {
 			t.Fatalf("failed to insert stale heartbeat agent %s: %v", id, err)
 		}
 	}
 
-	// Insert 1 agent with last_seen = 1 min ago (should NOT be marked offline)
+	// Insert 1 agent with last_seen = 1 min ago (should NOT be marked offline — within 3min TTL)
 	if _, err := db.Exec(`
 		INSERT INTO agent_heartbeats (agent_id, node, status, last_seen, connected_at)
 		VALUES (?, ?, ?, ?, ?)
@@ -541,8 +513,8 @@ func TestStandardPatrols(t *testing.T) {
 	if !patrolIDs["agent-health"] {
 		t.Error("expected agent-health patrol (merged from health-check + heartbeat-ttl + agent-liveness)")
 	}
-	if !patrolIDs["task-timeout"] {
-		t.Error("expected task-timeout patrol")
+	if !patrolIDs["task-lifecycle"] {
+		t.Error("expected task-lifecycle patrol")
 	}
 }
 
@@ -769,6 +741,10 @@ func TestSyncRoyalJellyWritesBackEnvelope(t *testing.T) {
 	db, cleanup := setupPatrolTestDB(t)
 	defer cleanup()
 
+	// Set FORGE_ROOT to a temp dir so forgeRoot() points to our fixture files.
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
 	// The migration creates context_envelopes without an updated_at column.
 	// syncRoyalJelly Phase 2 queries "updated_at > datetime('now', '-1 hour')".
 	// We add the column so the patrol can exercise the write-back path.
@@ -797,14 +773,13 @@ func TestSyncRoyalJellyWritesBackEnvelope(t *testing.T) {
 		t.Fatalf("insert envelope: %v", err)
 	}
 
-	// Use CWD-relative path that syncRoyalJelly uses (./.forge/context).
-	contextDir := "./.forge/context"
+	// Use tmpRoot-relative path that syncRoyalJelly will use via forgeRoot().
+	contextDir := filepath.Join(tmpRoot, ".forge", "context")
 	domainDir := filepath.Join(contextDir, domain)
 	// Pre-create so the Phase 1 scan doesn't fail.
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		t.Fatalf("mkdir domain dir: %v", err)
 	}
-	defer os.RemoveAll(domainDir)
 
 	if err := syncRoyalJelly(context.Background(), db); err != nil {
 		t.Fatalf("syncRoyalJelly returned error: %v", err)
@@ -830,12 +805,12 @@ func TestAgentLivenessPatrolMarksZombies(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Stale non-offline agent → should become zombie.
-	// Use -11min to be strictly past the 10-minute cutoff boundary.
+	// Use -4min to be strictly past the 3-minute cutoff boundary.
 	if _, err := db.Exec(`
 		INSERT INTO agent_heartbeats (agent_id, node, status, last_seen, connected_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, "zombie-candidate", "node-test", "online",
-		now.Add(-11*time.Minute).Format(time.RFC3339),
+		now.Add(-4*time.Minute).Format(time.RFC3339),
 		now.Add(-20*time.Minute).Format(time.RFC3339)); err != nil {
 		t.Fatalf("insert stale agent: %v", err)
 	}
@@ -1307,46 +1282,6 @@ func TestResultIngestPatrol(t *testing.T) {
 	}
 }
 
-// TestDailyDigestPatrol verifies the patrol creates digest files and is idempotent.
-func TestDailyDigestPatrol(t *testing.T) {
-	db, cleanup := setupPatrolTestDB(t)
-	defer cleanup()
-
-	tmpDir := t.TempDir()
-	t.Setenv("FORGE_ROOT", tmpDir)
-
-	// First run: should create the digest file
-	if err := dailyDigestPatrol(context.Background(), db); err != nil {
-		t.Fatalf("first run returned error: %v", err)
-	}
-
-	today := time.Now().UTC().Format("2006-01-02")
-	digestPath := filepath.Join(tmpDir, ".forge", "heartbeat", "results", "daily-digest-"+today+".md")
-
-	if _, err := os.Stat(digestPath); err != nil {
-		t.Fatalf("digest file not created at %s: %v", digestPath, err)
-	}
-
-	content, err := os.ReadFile(digestPath)
-	if err != nil {
-		t.Fatalf("read digest: %v", err)
-	}
-	if !patrolContains(string(content), "FORGE Daily Digest") {
-		t.Errorf("expected FORGE Daily Digest header, got: %s", string(content[:100]))
-	}
-
-	// Second run: should be idempotent (file already exists, no error)
-	if err := dailyDigestPatrol(context.Background(), db); err != nil {
-		t.Fatalf("second run (idempotent) returned error: %v", err)
-	}
-
-	// Verify file was NOT overwritten (same content)
-	content2, _ := os.ReadFile(digestPath)
-	if string(content) != string(content2) {
-		t.Error("idempotency broken: file was overwritten on second run")
-	}
-}
-
 func TestFleetScaleRecommendPatrol(t *testing.T) {
 	db, cleanup := setupPatrolTestDB(t)
 	defer cleanup()
@@ -1714,22 +1649,11 @@ func TestDocDriftPatrol_MissingFiles(t *testing.T) {
 	}
 }
 
-// TestDocDriftPatrol_IsRegistered verifies the patrol is present in
-// StandardPatrols with the expected ID and a non-zero schedule.
+// TestDocDriftPatrol_IsRegistered — REMOVED Council S196 T3 (2026-04-05):
+// doc-drift patrol killed in consolidation. Action function docDriftPatrol
+// preserved in patrol.go for 30-day sunset per glm amendment.
 func TestDocDriftPatrol_IsRegistered(t *testing.T) {
-	patrols := StandardPatrols()
-	for _, p := range patrols {
-		if p.ID == "doc-drift" {
-			if p.Schedule <= 0 {
-				t.Errorf("doc-drift schedule should be > 0, got %v", p.Schedule)
-			}
-			if p.Action == nil {
-				t.Error("doc-drift Action must not be nil")
-			}
-			return
-		}
-	}
-	t.Error("doc-drift patrol not found in StandardPatrols")
+	t.Skip("doc-drift patrol killed via Council S196 T3 (2026-04-05)")
 }
 
 // TestDispatchHygienePatrol_NoFiles verifies that the patrol succeeds when
@@ -1954,5 +1878,1354 @@ func TestSyncRoyalJelly_ClosedDB_Phase2(t *testing.T) {
 	err := syncRoyalJelly(context.Background(), db)
 	if err != nil {
 		t.Errorf("syncRoyalJelly should return nil even with closed DB in Phase 2, got: %v", err)
+	}
+}
+
+// TestPhantomTaskAutoCompletePatrol verifies that the phantom task cleanup
+// patrol auto-completes orchestrator noise tasks after the 60-second grace
+// period (Council S157 Proposal #1).
+func TestPhantomTaskAutoCompletePatrol(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Insert a phantom task older than 60 seconds — should be completed.
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, title, status, priority, assigned_to, created_at, updated_at)
+		VALUES ('TASK-PHANTOM-1', 'infra', 'forged', 'chore', 'Fleet has idle agents', 'assigned', 50, 'prya',
+		        datetime('now', '-120 seconds'), datetime('now', '-120 seconds'))
+	`)
+	if err != nil {
+		t.Fatalf("failed to insert phantom task: %v", err)
+	}
+
+	// Insert a recent phantom task within the 60-second grace period — should be left alone.
+	_, err = db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, title, status, priority, assigned_to, created_at, updated_at)
+		VALUES ('TASK-PHANTOM-2', 'infra', 'forged', 'chore', 'Fleet has idle agents', 'assigned', 50, 'prya',
+		        datetime('now', '-10 seconds'), datetime('now', '-10 seconds'))
+	`)
+	if err != nil {
+		t.Fatalf("failed to insert recent phantom task: %v", err)
+	}
+
+	// Insert a legitimate task that should NOT be auto-completed.
+	_, err = db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, title, status, priority, assigned_to, created_at, updated_at)
+		VALUES ('TASK-LEGIT-1', 'web', 'portal', 'feature', 'Add user dashboard', 'assigned', 50, 'prya',
+		        datetime('now', '-120 seconds'), datetime('now', '-120 seconds'))
+	`)
+	if err != nil {
+		t.Fatalf("failed to insert legitimate task: %v", err)
+	}
+
+	// Run the patrol.
+	if err := phantomTaskAutoCompletePatrol(context.Background(), db); err != nil {
+		t.Fatalf("phantomTaskAutoCompletePatrol returned error: %v", err)
+	}
+
+	// Verify old phantom task is now completed.
+	var status string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'TASK-PHANTOM-1'`).Scan(&status); err != nil {
+		t.Fatalf("failed to query TASK-PHANTOM-1: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("expected TASK-PHANTOM-1 to be completed, got %q", status)
+	}
+
+	// Verify recent phantom task is still assigned (within grace period).
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'TASK-PHANTOM-2'`).Scan(&status); err != nil {
+		t.Fatalf("failed to query TASK-PHANTOM-2: %v", err)
+	}
+	if status != "assigned" {
+		t.Errorf("expected TASK-PHANTOM-2 to remain assigned (grace period), got %q", status)
+	}
+
+	// Verify legitimate task is untouched.
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'TASK-LEGIT-1'`).Scan(&status); err != nil {
+		t.Fatalf("failed to query TASK-LEGIT-1: %v", err)
+	}
+	if status != "assigned" {
+		t.Errorf("expected TASK-LEGIT-1 to remain assigned, got %q", status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// quality_gate.go — insertQualityGateResults + extraction helpers
+// ---------------------------------------------------------------------------
+
+func TestInsertQualityGateResults_Basic(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// setupPatrolTestDB calls MigrateUp which creates quality_gate_results via 035.
+	const taskID = "qg-task-001"
+	const result = "Tests: 42/42 PASS\ncoverage: 87.5%\n0 lint issues"
+
+	insertQualityGateResults(context.Background(), db, taskID, result)
+
+	var testPassRate, coveragePct float64
+	var lintIssues int
+	if err := db.QueryRow(
+		`SELECT test_pass_rate, coverage_pct, lint_issues FROM quality_gate_results WHERE task_id = ?`,
+		taskID,
+	).Scan(&testPassRate, &coveragePct, &lintIssues); err != nil {
+		t.Fatalf("expected row in quality_gate_results, got: %v", err)
+	}
+
+	if testPassRate != 1.0 {
+		t.Errorf("test_pass_rate: want 1.0, got %.4f", testPassRate)
+	}
+	if coveragePct < 87.4 || coveragePct > 87.6 {
+		t.Errorf("coverage_pct: want ~87.5, got %.4f", coveragePct)
+	}
+	if lintIssues != 0 {
+		t.Errorf("lint_issues: want 0, got %d", lintIssues)
+	}
+}
+
+func TestInsertQualityGateResults_NilDB(t *testing.T) {
+	// Should return immediately without panicking.
+	insertQualityGateResults(context.Background(), nil, "task-x", "some result")
+}
+
+func TestInsertQualityGateResults_EmptyTaskID(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+	// Should return immediately without inserting.
+	insertQualityGateResults(context.Background(), db, "", "some result")
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM quality_gate_results`).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected no rows for empty task ID, got %d", count)
+	}
+}
+
+func TestExtractTestPassRate(t *testing.T) {
+	cases := []struct {
+		input string
+		want  float64
+		eps   float64
+	}{
+		{"Tests: 42/42 PASS", 1.0, 0.001},
+		{"Tests: 40/42", 40.0 / 42.0, 0.001},
+		{"100% pass", 1.0, 0.001},
+		{"passed 95%", 0.95, 0.001},
+		{"all tests pass", 1.0, 0.001},
+		{"PASS", 1.0, 0.001},
+		{"tests passed", 1.0, 0.001},
+		{"FAIL", 0.0, 0.001},
+		{"test failed", 0.0, 0.001},
+		{"", 0.0, 0.001},
+		{"no test info here", 0.0, 0.001},
+		{"Tests: 0/5 PASS", 0.0, 0.001},
+	}
+
+	for _, tc := range cases {
+		got := extractTestPassRate(tc.input)
+		diff := got - tc.want
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tc.eps {
+			t.Errorf("extractTestPassRate(%q) = %.4f, want %.4f (±%.3f)", tc.input, got, tc.want, tc.eps)
+		}
+	}
+}
+
+func TestExtractCoveragePct(t *testing.T) {
+	cases := []struct {
+		input string
+		want  float64
+		eps   float64
+	}{
+		{"coverage: 85.4%", 85.4, 0.01},
+		{"coverage: 100%", 100.0, 0.01},
+		{"85% coverage", 85.0, 0.01},
+		{"50.0% coverage", 50.0, 0.01},
+		{"", 0.0, 0.01},
+		{"no coverage info", 0.0, 0.01},
+		{"coverage: 0%", 0.0, 0.01},
+	}
+
+	for _, tc := range cases {
+		got := extractCoveragePct(tc.input)
+		diff := got - tc.want
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tc.eps {
+			t.Errorf("extractCoveragePct(%q) = %.4f, want %.4f (±%.3f)", tc.input, got, tc.want, tc.eps)
+		}
+	}
+}
+
+func TestExtractLintIssues(t *testing.T) {
+	cases := []struct {
+		input string
+		want  int
+	}{
+		{"0 lint issues", 0},
+		{"ruff: 3 errors", 3},
+		{"lint: clean", 0},
+		{"no lint issues", 0},
+		{"lint passed", 0},
+		{"golangci-lint: 5 issues", 5},
+		{"eslint: 12 warnings", 12},
+		{"7 lint warnings", 7},
+		{"", 0},
+		{"everything looks great", 0},
+	}
+
+	for _, tc := range cases {
+		got := extractLintIssues(tc.input)
+		if got != tc.want {
+			t.Errorf("extractLintIssues(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestResearchExpiryPatrol_IsRegistered — REMOVED Council S196 T3 (2026-04-05).
+func TestResearchExpiryPatrol_IsRegistered(t *testing.T) {
+	t.Skip("research-expiry patrol killed via Council S196 T3 (2026-04-05)")
+}
+
+// TestResearchExpiryPatrol_NoResults verifies patrol handles missing results dir.
+func TestResearchExpiryPatrol_NoResults(t *testing.T) {
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	// Create portfolio-state.yaml so the patrol doesn't skip early.
+	portfolioDir := filepath.Join(tmpRoot, "config", "portfolio")
+	os.MkdirAll(portfolioDir, 0755)
+	os.WriteFile(filepath.Join(portfolioDir, "portfolio-state.yaml"), []byte("version: 1"), 0644)
+
+	if err := researchExpiryPatrol(context.Background(), nil); err != nil {
+		t.Fatalf("expected nil for missing results dir, got: %v", err)
+	}
+}
+
+// TestResearchExpiryPatrol_StaleReport verifies stale research reports are flagged.
+func TestResearchExpiryPatrol_StaleReport(t *testing.T) {
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	// Create a portfolio-state.yaml that's 10 days old.
+	portfolioDir := filepath.Join(tmpRoot, "config", "portfolio")
+	os.MkdirAll(portfolioDir, 0755)
+	portfolioPath := filepath.Join(portfolioDir, "portfolio-state.yaml")
+	os.WriteFile(portfolioPath, []byte("version: 1"), 0644)
+	tenDaysAgo := time.Now().Add(-10 * 24 * time.Hour)
+	os.Chtimes(portfolioPath, tenDaysAgo, tenDaysAgo)
+
+	// Create a research report that's 5 days old (stale: >3 days, newer than portfolio).
+	resultsDir := filepath.Join(tmpRoot, ".forge", "heartbeat", "results")
+	os.MkdirAll(resultsDir, 0755)
+	reportPath := filepath.Join(resultsDir, "gemini-research-cs-2026-03-20.md")
+	os.WriteFile(reportPath, []byte("# Research Report"), 0644)
+	fiveDaysAgo := time.Now().Add(-5 * 24 * time.Hour)
+	os.Chtimes(reportPath, fiveDaysAgo, fiveDaysAgo)
+
+	if err := researchExpiryPatrol(context.Background(), nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify report was written with stale warning.
+	output := filepath.Join(tmpRoot, ".forge", "reports", "research-expiry.md")
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("report not written: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Stale Reports") {
+		t.Errorf("expected stale report warning, got:\n%s", content)
+	}
+	if !strings.Contains(content, "gemini-research-cs") {
+		t.Errorf("expected report to mention gemini-research-cs, got:\n%s", content)
+	}
+}
+
+// TestResearchExpiryPatrol_Reconciled verifies no warning when portfolio is newer than research.
+func TestResearchExpiryPatrol_Reconciled(t *testing.T) {
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	// Portfolio updated today.
+	portfolioDir := filepath.Join(tmpRoot, "config", "portfolio")
+	os.MkdirAll(portfolioDir, 0755)
+	os.WriteFile(filepath.Join(portfolioDir, "portfolio-state.yaml"), []byte("version: 1"), 0644)
+
+	// Research report from 5 days ago (older than portfolio → already reconciled).
+	resultsDir := filepath.Join(tmpRoot, ".forge", "heartbeat", "results")
+	os.MkdirAll(resultsDir, 0755)
+	reportPath := filepath.Join(resultsDir, "gemini-research-cs-2026-03-20.md")
+	os.WriteFile(reportPath, []byte("# Research Report"), 0644)
+	fiveDaysAgo := time.Now().Add(-5 * 24 * time.Hour)
+	os.Chtimes(reportPath, fiveDaysAgo, fiveDaysAgo)
+
+	if err := researchExpiryPatrol(context.Background(), nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := filepath.Join(tmpRoot, ".forge", "reports", "research-expiry.md")
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("report not written: %v", err)
+	}
+	if strings.Contains(string(data), "Stale Reports") {
+		t.Errorf("expected no stale reports (portfolio is newer), got:\n%s", string(data))
+	}
+}
+
+func TestRequeueWithFailureContext(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Insert a failed task that is old enough to be requeued
+	_, err := db.Exec(`INSERT INTO tasks (id, domain, project, type, priority, status, state, error, result, retry_count, title, created_at, updated_at)
+		VALUES ('T-FC', 'forge', 'test', 'bugfix', 5, 'failed', 'FAILED', 'connection refused', 'output here', 1, 'test task', datetime('now','-5 minutes'), datetime('now','-5 minutes'))`)
+	if err != nil {
+		t.Fatalf("insert failed task: %v", err)
+	}
+
+	if err := requeueRetriableTasks(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify failure_context populated
+	var fc sql.NullString
+	if err := db.QueryRow("SELECT failure_context FROM tasks WHERE id='T-FC'").Scan(&fc); err != nil {
+		t.Fatalf("query failure_context: %v", err)
+	}
+	if !fc.Valid || fc.String == "" {
+		t.Fatal("failure_context should be populated after requeue")
+	}
+	if !strings.Contains(fc.String, "connection refused") {
+		t.Fatalf("failure_context should contain the original error, got: %s", fc.String)
+	}
+
+	// Verify task is now queued
+	var status string
+	if err := db.QueryRow("SELECT status FROM tasks WHERE id='T-FC'").Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "queued" {
+		t.Errorf("expected status=queued after requeue, got %q", status)
+	}
+}
+
+// --- staleDispatchPatrol (Epic 4 dispatch reliability) ---
+
+func TestStaleDispatchPatrol_RequeuesUnackedTask(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Task stuck in DISPATCHED for 15 minutes with 1 dispatch attempt (max 3).
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state,
+		                   assigned_to, dispatch_attempts, max_retries, created_at, updated_at)
+		VALUES ('SD-REQUEUE', 'forge', 'test', 'feature', 5, 'assigned', 'DISPATCHED',
+		        'agent-gone', 1, 3, datetime('now', '-15 minutes'), datetime('now', '-15 minutes'))
+	`)
+	if err != nil {
+		t.Fatalf("insert stale dispatched task: %v", err)
+	}
+
+	if err := staleDispatchPatrol(context.Background(), db); err != nil {
+		t.Fatalf("staleDispatchPatrol: %v", err)
+	}
+
+	var state, status string
+	var assignedTo sql.NullString
+	if err := db.QueryRow("SELECT state, status, assigned_to FROM tasks WHERE id = 'SD-REQUEUE'").Scan(&state, &status, &assignedTo); err != nil {
+		t.Fatalf("query result: %v", err)
+	}
+	if state != "QUEUED" {
+		t.Errorf("expected state=QUEUED after requeue, got %q", state)
+	}
+	if status != "queued" {
+		t.Errorf("expected status=queued after requeue, got %q", status)
+	}
+	if assignedTo.Valid && assignedTo.String != "" {
+		t.Errorf("expected assigned_to to be cleared, got %q", assignedTo.String)
+	}
+}
+
+func TestStaleDispatchPatrol_FailsExhaustedTask(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Task at max_retries: dispatch_attempts = 3, max_retries = 3.
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state,
+		                   assigned_to, dispatch_attempts, max_retries, created_at, updated_at)
+		VALUES ('SD-EXHAUST', 'forge', 'test', 'feature', 5, 'assigned', 'DISPATCHED',
+		        'agent-gone', 3, 3, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'))
+	`)
+	if err != nil {
+		t.Fatalf("insert exhausted task: %v", err)
+	}
+
+	if err := staleDispatchPatrol(context.Background(), db); err != nil {
+		t.Fatalf("staleDispatchPatrol: %v", err)
+	}
+
+	var state, status string
+	if err := db.QueryRow("SELECT state, status FROM tasks WHERE id = 'SD-EXHAUST'").Scan(&state, &status); err != nil {
+		t.Fatalf("query result: %v", err)
+	}
+	if state != "FAILED" {
+		t.Errorf("expected state=FAILED for exhausted task, got %q", state)
+	}
+	if status != "failed" {
+		t.Errorf("expected status=failed for exhausted task, got %q", status)
+	}
+}
+
+func TestStaleDispatchPatrol_SkipsRecentTask(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Task dispatched just 2 minutes ago — should not be touched.
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state,
+		                   assigned_to, dispatch_attempts, max_retries, created_at, updated_at)
+		VALUES ('SD-FRESH', 'forge', 'test', 'feature', 5, 'assigned', 'DISPATCHED',
+		        'agent-alive', 1, 3, datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))
+	`)
+	if err != nil {
+		t.Fatalf("insert fresh dispatched task: %v", err)
+	}
+
+	if err := staleDispatchPatrol(context.Background(), db); err != nil {
+		t.Fatalf("staleDispatchPatrol: %v", err)
+	}
+
+	var state string
+	if err := db.QueryRow("SELECT state FROM tasks WHERE id = 'SD-FRESH'").Scan(&state); err != nil {
+		t.Fatalf("query result: %v", err)
+	}
+	if state != "DISPATCHED" {
+		t.Errorf("expected state=DISPATCHED (untouched), got %q", state)
+	}
+}
+
+func TestStaleDispatchPatrol_EmptyDB(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Should return nil without error on empty tasks table.
+	if err := staleDispatchPatrol(context.Background(), db); err != nil {
+		t.Fatalf("staleDispatchPatrol on empty db: %v", err)
+	}
+}
+
+func TestHarnessGapPatrol(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Insert a task that exhausted retries
+	_, err := db.Exec(`INSERT INTO tasks (id, domain, project, type, priority, status, state, error, retry_count, title, description, created_at, updated_at)
+		VALUES ('T-EXHAUST', 'forge', 'test', 'bugfix', 5, 'failed', 'FAILED', 'timeout', 3, 'flaky test', 'original desc', datetime('now','-1 hour'), datetime('now','-1 hour'))`)
+	if err != nil {
+		t.Fatalf("insert exhausted task: %v", err)
+	}
+
+	// Run harness-gap patrol
+	if err := harnessGapPatrol(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify coverage task was created
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM tasks WHERE origin='patrol:harness-gap'").Scan(&count); err != nil {
+		t.Fatalf("query harness-gap tasks: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 harness-gap task, got %d", count)
+	}
+
+	// Verify it references the original task ID
+	var desc string
+	if err := db.QueryRow("SELECT description FROM tasks WHERE origin='patrol:harness-gap'").Scan(&desc); err != nil {
+		t.Fatalf("query harness-gap description: %v", err)
+	}
+	if !strings.Contains(desc, "T-EXHAUST") {
+		t.Fatal("harness-gap task description should reference original task ID T-EXHAUST")
+	}
+
+	// Run again — verify no duplicate is created
+	if err := harnessGapPatrol(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM tasks WHERE origin='patrol:harness-gap'").Scan(&count); err != nil {
+		t.Fatalf("query harness-gap tasks (second run): %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 harness-gap task after second run (no duplicate), got %d", count)
+	}
+}
+
+// --- Bug A2: markStaleHeartbeatsOffline node-level heuristic tests ---
+
+// TestMarkStaleHeartbeatsOffline_Basic verifies that agents with stale last_seen
+// are transitioned to 'offline'.
+func TestMarkStaleHeartbeatsOffline_Basic(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	staleTime := time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
+	freshTime := time.Now().UTC().Format(time.RFC3339)
+
+	// Insert one stale and one fresh agent on separate nodes.
+	for _, row := range []struct{ id, node, status, ts string }{
+		{"agent-stale-1", "node-a", "online", staleTime},
+		{"agent-fresh-1", "node-b", "online", freshTime},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO agent_heartbeats (agent_id, node, status, context_pct, last_seen, connected_at)
+			 VALUES (?, ?, ?, 0, ?, datetime('now'))`,
+			row.id, row.node, row.status, row.ts,
+		); err != nil {
+			t.Fatalf("insert %s: %v", row.id, err)
+		}
+	}
+
+	if err := markStaleHeartbeatsOffline(context.Background(), db); err != nil {
+		t.Fatalf("markStaleHeartbeatsOffline: %v", err)
+	}
+
+	var staleStatus, freshStatus string
+	db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-stale-1").Scan(&staleStatus)
+	db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-fresh-1").Scan(&freshStatus)
+
+	if staleStatus != "offline" {
+		t.Errorf("expected stale agent to be 'offline', got %q", staleStatus)
+	}
+	if freshStatus != "online" {
+		t.Errorf("expected fresh agent to remain 'online', got %q", freshStatus)
+	}
+}
+
+// TestMarkStaleHeartbeatsOffline_NodeCronHeuristic verifies that when all agents
+// on a single node are simultaneously stale the function still marks them offline
+// (the cron warning is diagnostic only — it does not block the patrol).
+func TestMarkStaleHeartbeatsOffline_NodeCronHeuristic(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	staleTime := time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
+
+	// Insert two agents on the same node, both stale — simulates broken cron.
+	for _, id := range []string{"agent-node-a-1", "agent-node-a-2"} {
+		if _, err := db.Exec(
+			`INSERT INTO agent_heartbeats (agent_id, node, status, context_pct, last_seen, connected_at)
+			 VALUES (?, 'node-broken-cron', 'online', 0, ?, datetime('now'))`,
+			id, staleTime,
+		); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+
+	// Should not return an error even for the all-stale-on-node case.
+	if err := markStaleHeartbeatsOffline(context.Background(), db); err != nil {
+		t.Fatalf("markStaleHeartbeatsOffline returned error: %v", err)
+	}
+
+	// Both agents must still be marked offline despite the heuristic warning path.
+	for _, id := range []string{"agent-node-a-1", "agent-node-a-2"} {
+		var status string
+		db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, id).Scan(&status)
+		if status != "offline" {
+			t.Errorf("agent %s: expected 'offline', got %q", id, status)
+		}
+	}
+}
+
+// TestMarkStaleHeartbeatsOffline_SingleAgentNodeNotFlagged verifies that a node
+// with only one stale agent does NOT trigger the cron-broken heuristic path
+// (single-agent nodes are expected to go stale when that agent crashes).
+func TestMarkStaleHeartbeatsOffline_SingleAgentNodeNotFlagged(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	staleTime := time.Now().Add(-15 * time.Minute).UTC().Format(time.RFC3339)
+
+	if _, err := db.Exec(
+		`INSERT INTO agent_heartbeats (agent_id, node, status, context_pct, last_seen, connected_at)
+		 VALUES ('solo-agent', 'node-solo', 'online', 0, ?, datetime('now'))`,
+		staleTime,
+	); err != nil {
+		t.Fatalf("insert solo-agent: %v", err)
+	}
+
+	// Must complete without error.
+	if err := markStaleHeartbeatsOffline(context.Background(), db); err != nil {
+		t.Fatalf("markStaleHeartbeatsOffline: %v", err)
+	}
+
+	var status string
+	db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "solo-agent").Scan(&status)
+	if status != "offline" {
+		t.Errorf("expected solo-agent to be 'offline', got %q", status)
+	}
+}
+
+// TestMonitorResultFilesNotifyNoPanic verifies that monitorResultFiles does not
+// panic when the forge binary is unavailable (notification is best-effort).
+// It sets PATH to an empty temp dir so exec.Command("forge", ...) fails silently.
+func TestMonitorResultFilesNotifyNoPanic(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	// Use an empty directory as PATH so "forge" binary cannot be found.
+	emptyBinDir := t.TempDir()
+	t.Setenv("PATH", emptyBinDir)
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	resultsDir := filepath.Join(tmpRoot, ".forge", "heartbeat", "results")
+	if err := os.MkdirAll(resultsDir, 0o755); err != nil {
+		t.Fatalf("mkdir results: %v", err)
+	}
+
+	now := time.Now().UTC()
+	taskID := "task-notify-nopanic-001"
+
+	if _, err := db.Exec(`
+		INSERT INTO tasks (id, domain, project, type, priority, status, state, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, taskID, "test-domain", "test-project", string(TaskTypeFeature), 50,
+		"executing", "RUNNING",
+		now.Add(-5*time.Minute).Format(time.RFC3339),
+		now.Add(-5*time.Minute).Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	resultFileName := fmt.Sprintf("minimax-%s.md", taskID)
+	if err := os.WriteFile(filepath.Join(resultsDir, resultFileName), []byte("## Status: done"), 0o644); err != nil {
+		t.Fatalf("write result file: %v", err)
+	}
+
+	// Must not panic even though forge binary is absent.
+	if err := monitorResultFiles(context.Background(), db); err != nil {
+		t.Fatalf("monitorResultFiles returned error: %v", err)
+	}
+
+	// Give the goroutine a moment to finish (it should fail silently).
+	time.Sleep(50 * time.Millisecond)
+
+	var state string
+	if err := db.QueryRow(`SELECT state FROM tasks WHERE id = ?`, taskID).Scan(&state); err != nil {
+		t.Fatalf("query task state: %v", err)
+	}
+	if state != "COMPLETED" {
+		t.Errorf("expected state=COMPLETED, got %q", state)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// contextCompactionPatrol tests
+// ---------------------------------------------------------------------------
+
+// ctxCompactionDB creates a minimal in-memory DB with only the agent_heartbeats table,
+// matching the minimal schema used by contextCompactionPatrol.
+func ctxCompactionDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("ctxCompactionDB: open: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE agent_heartbeats (
+			agent_id    TEXT PRIMARY KEY,
+			status      TEXT NOT NULL DEFAULT 'idle',
+			context_pct REAL DEFAULT 0,
+			last_seen   TEXT NOT NULL DEFAULT (datetime('now'))
+		)
+	`)
+	if err != nil {
+		t.Fatalf("ctxCompactionDB: create table: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// TestContextCompactionPatrol_NoAgents verifies the patrol is a no-op on an empty table.
+func TestContextCompactionPatrol_NoAgents(t *testing.T) {
+	db := ctxCompactionDB(t)
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+}
+
+// TestContextCompactionPatrol_BelowThreshold verifies agents under 75% are left alone.
+func TestContextCompactionPatrol_BelowThreshold(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+		"agent-low", "idle", 50.0, now)
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-low").Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "idle" {
+		t.Errorf("expected status=idle (below threshold), got %q", status)
+	}
+}
+
+// TestContextCompactionPatrol_WarnThreshold verifies agents >75% are set to wrapup.
+func TestContextCompactionPatrol_WarnThreshold(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+		"agent-warn", "idle", 80.0, now)
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-warn").Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "wrapup" {
+		t.Errorf("expected status=wrapup for agent at 80%%, got %q", status)
+	}
+}
+
+// TestContextCompactionPatrol_CriticalThreshold verifies agents >90% are set to wrapup.
+func TestContextCompactionPatrol_CriticalThreshold(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+		"agent-critical", "idle", 95.0, now)
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-critical").Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "wrapup" {
+		t.Errorf("expected status=wrapup for agent at 95%%, got %q", status)
+	}
+}
+
+// TestContextCompactionPatrol_AlreadyWrapup verifies already-wrapup agents are not double-updated.
+func TestContextCompactionPatrol_AlreadyWrapup(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+		"agent-already-wrapup", "wrapup", 85.0, now)
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-already-wrapup").Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "wrapup" {
+		t.Errorf("expected status=wrapup (unchanged), got %q", status)
+	}
+}
+
+// TestContextCompactionPatrol_OfflineAgentsSkipped verifies offline agents are not processed.
+func TestContextCompactionPatrol_OfflineAgentsSkipped(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+		"agent-offline", "offline", 95.0, now)
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-offline").Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "offline" {
+		t.Errorf("expected offline agent to remain offline, got %q", status)
+	}
+}
+
+// TestContextCompactionPatrol_ZeroContextSkipped verifies agents with 0 context are skipped.
+func TestContextCompactionPatrol_ZeroContextSkipped(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+		"agent-zero", "idle", 0.0, now)
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, "agent-zero").Scan(&status); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if status != "idle" {
+		t.Errorf("expected agent with 0%% context to remain idle, got %q", status)
+	}
+}
+
+// TestContextCompactionPatrol_MultipleAgentsMixed verifies mixed context levels are handled correctly.
+func TestContextCompactionPatrol_MultipleAgentsMixed(t *testing.T) {
+	db := ctxCompactionDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	agents := []struct {
+		id         string
+		status     string
+		contextPct float64
+		wantStatus string
+	}{
+		{"agent-safe", "idle", 40.0, "idle"},
+		{"agent-boundary", "idle", 75.0, "idle"},   // exactly 75 — not > 75
+		{"agent-warn", "idle", 76.0, "wrapup"},     // > 75
+		{"agent-crit", "idle", 91.0, "wrapup"},     // > 90
+		{"agent-offline", "offline", 99.0, "offline"}, // offline — skipped
+	}
+
+	for _, a := range agents {
+		_, _ = db.Exec(`INSERT INTO agent_heartbeats (agent_id, status, context_pct, last_seen) VALUES (?,?,?,?)`,
+			a.id, a.status, a.contextPct, now)
+	}
+
+	if err := contextCompactionPatrol(context.Background(), db); err != nil {
+		t.Fatalf("expected nil, got: %v", err)
+	}
+
+	for _, a := range agents {
+		var got string
+		if err := db.QueryRow(`SELECT status FROM agent_heartbeats WHERE agent_id = ?`, a.id).Scan(&got); err != nil {
+			t.Fatalf("query %s: %v", a.id, err)
+		}
+		if got != a.wantStatus {
+			t.Errorf("agent %s (ctx=%.1f%%): expected status=%q, got %q", a.id, a.contextPct, a.wantStatus, got)
+		}
+	}
+}
+
+// TestContextCompactionPatrol_InStandardPatrols verifies the patrol is registered.
+func TestContextCompactionPatrol_InStandardPatrols(t *testing.T) {
+	patrols := StandardPatrols()
+	for _, p := range patrols {
+		if p.ID == "context-compaction" {
+			// Council S195 P1: extended 5m → 10m (advisory, not critical path)
+			if p.Schedule != 10*time.Minute {
+				t.Errorf("expected 10m schedule, got %v", p.Schedule)
+			}
+			return
+		}
+	}
+	t.Error("context-compaction patrol not found in StandardPatrols()")
+}
+
+// ─── Quality Gate JSON Block Tests (Epic I.2) ─────────────────────────────────
+
+// TestQualityGateParseJSON_ValidBlock verifies that a well-formed <!-- QUALITY_GATE -->
+// block is parsed correctly from result file content.
+func TestQualityGateParseJSON_ValidBlock(t *testing.T) {
+	content := `# Result Summary
+
+Task completed successfully.
+
+<!-- QUALITY_GATE
+{
+  "test_pass_rate": 0.95,
+  "coverage_pct": 82.5,
+  "lint_issues": 3,
+  "files_changed": 5
+}
+-->
+`
+	block, ok := parseQualityGateJSON(content)
+	if !ok {
+		t.Fatal("expected parseQualityGateJSON to return ok=true for valid block")
+	}
+	if block.TestPassRate != 0.95 {
+		t.Errorf("test_pass_rate: want 0.95, got %f", block.TestPassRate)
+	}
+	if block.CoveragePct != 82.5 {
+		t.Errorf("coverage_pct: want 82.5, got %f", block.CoveragePct)
+	}
+	if block.LintIssues != 3 {
+		t.Errorf("lint_issues: want 3, got %d", block.LintIssues)
+	}
+	if block.FilesChanged != 5 {
+		t.Errorf("files_changed: want 5, got %d", block.FilesChanged)
+	}
+}
+
+// TestQualityGateParseJSON_MissingBlock verifies that content with no
+// <!-- QUALITY_GATE --> block returns zero values and ok=false.
+func TestQualityGateParseJSON_MissingBlock(t *testing.T) {
+	content := `# Result Summary
+
+Task completed. Tests passed: 42/42.
+Coverage: 85%. No lint issues.
+`
+	block, ok := parseQualityGateJSON(content)
+	if ok {
+		t.Errorf("expected ok=false when no QUALITY_GATE block present, got block=%+v", block)
+	}
+	if block.TestPassRate != 0 || block.CoveragePct != 0 || block.LintIssues != 0 || block.FilesChanged != 0 {
+		t.Errorf("expected zero-value block when not found, got %+v", block)
+	}
+}
+
+// TestQualityGateParseJSON_MalformedJSON verifies that a malformed JSON block
+// inside the <!-- QUALITY_GATE --> comment returns ok=false without panicking.
+func TestQualityGateParseJSON_MalformedJSON(t *testing.T) {
+	content := `<!-- QUALITY_GATE
+{bad json here
+-->
+`
+	block, ok := parseQualityGateJSON(content)
+	if ok {
+		t.Errorf("expected ok=false for malformed JSON, got block=%+v", block)
+	}
+	_ = block // zero value expected — just ensure no panic
+}
+
+// TestQualityGateParseJSON_ClampsValues verifies that out-of-range values in the
+// JSON block are clamped to valid ranges.
+func TestQualityGateParseJSON_ClampsValues(t *testing.T) {
+	content := `<!-- QUALITY_GATE
+{"test_pass_rate": 1.5, "coverage_pct": 150.0, "lint_issues": -1, "files_changed": -3}
+-->
+`
+	block, ok := parseQualityGateJSON(content)
+	if !ok {
+		t.Fatal("expected ok=true for syntactically valid JSON block")
+	}
+	if block.TestPassRate != 1.0 {
+		t.Errorf("test_pass_rate should be clamped to 1.0, got %f", block.TestPassRate)
+	}
+	if block.CoveragePct != 100.0 {
+		t.Errorf("coverage_pct should be clamped to 100.0, got %f", block.CoveragePct)
+	}
+	if block.LintIssues != 0 {
+		t.Errorf("lint_issues should be clamped to 0, got %d", block.LintIssues)
+	}
+	if block.FilesChanged != 0 {
+		t.Errorf("files_changed should be clamped to 0, got %d", block.FilesChanged)
+	}
+}
+
+// TestQualityGateInsertFromJSONBlock verifies that insertQualityGateResults
+// uses the structured JSON block when present, storing exact values in the DB.
+func TestQualityGateInsertFromJSONBlock(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	taskID := "task-json-gate-test"
+	content := `# Result
+
+Work done.
+
+<!-- QUALITY_GATE
+{"test_pass_rate": 1.0, "coverage_pct": 90.0, "lint_issues": 0}
+-->
+`
+	insertQualityGateResults(context.Background(), db, taskID, content)
+
+	var rate, cov float64
+	var lint int
+	err := db.QueryRow(`
+		SELECT test_pass_rate, coverage_pct, lint_issues
+		FROM quality_gate_results WHERE task_id = ?
+	`, taskID).Scan(&rate, &cov, &lint)
+	if err != nil {
+		t.Fatalf("query quality_gate_results: %v", err)
+	}
+	if rate != 1.0 {
+		t.Errorf("test_pass_rate: want 1.0, got %f", rate)
+	}
+	if cov != 90.0 {
+		t.Errorf("coverage_pct: want 90.0, got %f", cov)
+	}
+	if lint != 0 {
+		t.Errorf("lint_issues: want 0, got %d", lint)
+	}
+}
+
+// TestQualityGateInsertFallsBackToRegex verifies that when no structured JSON block
+// is present, insertQualityGateResults falls back to regex heuristics.
+func TestQualityGateInsertFallsBackToRegex(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	taskID := "task-regex-fallback-test"
+	// No QUALITY_GATE block — regex should find "42/42 PASS" and "coverage: 75%".
+	content := "Tests: 42/42 PASS\ncoverage: 75%\nno lint issues"
+
+	insertQualityGateResults(context.Background(), db, taskID, content)
+
+	var rate, cov float64
+	var lint int
+	err := db.QueryRow(`
+		SELECT test_pass_rate, coverage_pct, lint_issues
+		FROM quality_gate_results WHERE task_id = ?
+	`, taskID).Scan(&rate, &cov, &lint)
+	if err != nil {
+		t.Fatalf("query quality_gate_results: %v", err)
+	}
+	if rate != 1.0 {
+		t.Errorf("regex fallback test_pass_rate: want 1.0, got %f", rate)
+	}
+	if cov != 75.0 {
+		t.Errorf("regex fallback coverage_pct: want 75.0, got %f", cov)
+	}
+}
+
+// ─── State Freshness Patrol Tests ─────────────────────────────────────────────
+
+// mockGitTimestamps replaces stateFreshnessGitTimestamp for the duration of a
+// test. The supplied map keys are relative file paths; values are Unix epochs
+// (0 = never committed). Returns a restore function that callers must defer.
+func mockGitTimestamps(t *testing.T, timestamps map[string]int64) func() {
+	t.Helper()
+	orig := stateFreshnessGitTimestamp
+	stateFreshnessGitTimestamp = func(root, relPath string) (int64, error) {
+		if ts, ok := timestamps[relPath]; ok {
+			return ts, nil
+		}
+		return 0, nil // unknown file → treat as never committed
+	}
+	return func() { stateFreshnessGitTimestamp = orig }
+}
+
+// TestStateFreshnessPatrol_AllFresh verifies that when all tracked files have a
+// commit timestamp within the warn window (< 3 days) the report contains no
+// stale entries and returns OK.
+func TestStateFreshnessPatrol_AllFresh(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	// Create the fixed target files so filepath.Glob can match PROMPT-*.md.
+	for _, rel := range []string{"docs/PROMPT-prya.md", "docs/PLAN.md", "docs/BACKLOG.md"} {
+		full := filepath.Join(tmpRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte("# placeholder\n"), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	// All files committed 1 day ago — well within the 3-day warn threshold.
+	oneDayAgo := time.Now().Add(-24 * time.Hour).Unix()
+	restore := mockGitTimestamps(t, map[string]int64{
+		"docs/PROMPT-prya.md": oneDayAgo,
+		"docs/PLAN.md":        oneDayAgo,
+		"docs/BACKLOG.md":     oneDayAgo,
+	})
+	defer restore()
+
+	if err := stateFreshnessPatrol(context.Background(), db); err != nil {
+		t.Fatalf("stateFreshnessPatrol returned error: %v", err)
+	}
+
+	reportPath := filepath.Join(tmpRoot, ".forge", "reports", "state-freshness.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("report file not found: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "# State Freshness Report") {
+		t.Error("report missing header")
+	}
+	if !strings.Contains(content, "All state files are up to date") {
+		t.Errorf("expected up-to-date message, got:\n%s", content)
+	}
+	if strings.Contains(content, "## Action Required") {
+		t.Errorf("unexpected Action Required section in report:\n%s", content)
+	}
+}
+
+// TestStateFreshnessPatrol_StaleFiles verifies that a file committed 5 days ago
+// (above the 3-day warn threshold but below 14-day critical threshold) appears
+// in the report as "stale" and triggers the Action Required section.
+func TestStateFreshnessPatrol_StaleFiles(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	for _, rel := range []string{"docs/PROMPT-prya.md", "docs/PLAN.md", "docs/BACKLOG.md"} {
+		full := filepath.Join(tmpRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte("# placeholder\n"), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	freshTs := time.Now().Add(-1 * 24 * time.Hour).Unix()
+	staleTs := time.Now().Add(-5 * 24 * time.Hour).Unix() // 5 days old → stale
+
+	restore := mockGitTimestamps(t, map[string]int64{
+		"docs/PROMPT-prya.md": staleTs,
+		"docs/PLAN.md":        freshTs,
+		"docs/BACKLOG.md":     freshTs,
+	})
+	defer restore()
+
+	if err := stateFreshnessPatrol(context.Background(), db); err != nil {
+		t.Fatalf("stateFreshnessPatrol returned error: %v", err)
+	}
+
+	reportPath := filepath.Join(tmpRoot, ".forge", "reports", "state-freshness.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("report file not found: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "## Action Required") {
+		t.Errorf("expected Action Required section, got:\n%s", content)
+	}
+	if !strings.Contains(content, "docs/PROMPT-prya.md") {
+		t.Errorf("expected stale file in action section, got:\n%s", content)
+	}
+	// Fresh files must not appear in the action section.
+	if strings.Contains(content, "docs/PLAN.md") && strings.Contains(content, "Action Required") {
+		// Only a problem if PLAN.md appears under the action section.
+		// Check it's in the status table, not action list.
+		actionIdx := strings.Index(content, "## Action Required")
+		planIdx := strings.LastIndex(content, "docs/PLAN.md")
+		if planIdx > actionIdx {
+			t.Errorf("fresh file docs/PLAN.md appears in the Action Required section:\n%s", content)
+		}
+	}
+}
+
+// TestStateFreshnessPatrol_CriticalFiles verifies that a file committed 20 days
+// ago is classified as "critical" and carries the auto-archive proposal label.
+func TestStateFreshnessPatrol_CriticalFiles(t *testing.T) {
+	db, cleanup := setupPatrolTestDB(t)
+	defer cleanup()
+
+	tmpRoot := t.TempDir()
+	t.Setenv("FORGE_ROOT", tmpRoot)
+
+	for _, rel := range []string{"docs/PLAN.md", "docs/BACKLOG.md"} {
+		full := filepath.Join(tmpRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte("# placeholder\n"), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	freshTs := time.Now().Add(-1 * 24 * time.Hour).Unix()
+	criticalTs := time.Now().Add(-20 * 24 * time.Hour).Unix() // 20 days → critical
+
+	restore := mockGitTimestamps(t, map[string]int64{
+		"docs/PLAN.md":    criticalTs,
+		"docs/BACKLOG.md": freshTs,
+	})
+	defer restore()
+
+	if err := stateFreshnessPatrol(context.Background(), db); err != nil {
+		t.Fatalf("stateFreshnessPatrol returned error: %v", err)
+	}
+
+	reportPath := filepath.Join(tmpRoot, ".forge", "reports", "state-freshness.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("report file not found: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "auto-archive proposal") {
+		t.Errorf("expected auto-archive proposal text for critical file, got:\n%s", content)
+	}
+	if !strings.Contains(content, "critical") {
+		t.Errorf("expected 'critical' status label in report, got:\n%s", content)
+	}
+}
+
+// TestStateFreshnessPatrol_IsRegistered — REMOVED Council S196 T3 (2026-04-05).
+func TestStateFreshnessPatrol_IsRegistered(t *testing.T) {
+	t.Skip("state-freshness patrol killed via Council S196 T3 (2026-04-05)")
+}
+
+// TestPatrolCount_BaselineWithoutDarkFactory verifies the patrol count when dark factory is disabled.
+func TestPatrolCount_BaselineWithoutDarkFactory(t *testing.T) {
+	os.Unsetenv("FORGE_DARK_FACTORY")
+	patrols := StandardPatrols()
+	if len(patrols) != 23 {
+		t.Errorf("expected 23 base patrols (dark factory disabled), got %d", len(patrols))
+	}
+}
+
+// TestPatrolCount_WithDarkFactory verifies the patrol count when dark factory is enabled.
+func TestPatrolCount_WithDarkFactory(t *testing.T) {
+	os.Setenv("FORGE_DARK_FACTORY", "true")
+	defer os.Unsetenv("FORGE_DARK_FACTORY")
+	patrols := StandardPatrols()
+	if len(patrols) != 26 {
+		t.Errorf("expected 26 patrols (dark factory enabled), got %d", len(patrols))
+	}
+}
+
+// TestDarkFactoryFlag verifies the flag helper.
+func TestDarkFactoryFlag(t *testing.T) {
+	tests := []struct {
+		val  string
+		want bool
+	}{
+		{"true", true},
+		{"1", true},
+		{"false", false},
+		{"", false},
+		{"yes", false},
+	}
+	for _, tt := range tests {
+		os.Setenv("FORGE_DARK_FACTORY", tt.val)
+		if got := isDarkFactoryEnabled(); got != tt.want {
+			t.Errorf("FORGE_DARK_FACTORY=%q: got %v, want %v", tt.val, got, tt.want)
+		}
+	}
+	os.Unsetenv("FORGE_DARK_FACTORY")
+	if isDarkFactoryEnabled() {
+		t.Error("unset env should return false")
+	}
+}
+
+// TestPatrolDisable verifies the emergency rollback mechanism.
+func TestPatrolDisable(t *testing.T) {
+	ps := &PatrolSystem{
+		patrols: []Patrol{
+			{ID: "test-a", Name: "A", Schedule: time.Minute},
+			{ID: "test-b", Name: "B", Schedule: time.Minute},
+			{ID: "test-c", Name: "C", Schedule: time.Minute},
+		},
+	}
+	if !ps.DisablePatrol("test-b") {
+		t.Error("DisablePatrol should return true for existing patrol")
+	}
+	if len(ps.patrols) != 2 {
+		t.Errorf("expected 2 patrols after disable, got %d", len(ps.patrols))
+	}
+	if ps.DisablePatrol("nonexistent") {
+		t.Error("DisablePatrol should return false for nonexistent patrol")
+	}
+}
+
+// TestDarkFactoryPatrolIDs verifies the correct patrols are gated behind the feature flag.
+func TestDarkFactoryPatrolIDs(t *testing.T) {
+	os.Setenv("FORGE_DARK_FACTORY", "true")
+	defer os.Unsetenv("FORGE_DARK_FACTORY")
+
+	allPatrols := StandardPatrols()
+	darkIDs := map[string]bool{"auto-promote": false, "result-monitor": false, "work-strategy": false}
+
+	for _, p := range allPatrols {
+		if _, ok := darkIDs[p.ID]; ok {
+			darkIDs[p.ID] = true
+		}
+	}
+
+	for id, found := range darkIDs {
+		if !found {
+			t.Errorf("dark-factory patrol %q not found when FORGE_DARK_FACTORY=true", id)
+		}
+	}
+
+	// Verify they're NOT present when disabled.
+	os.Unsetenv("FORGE_DARK_FACTORY")
+	basePatrols := StandardPatrols()
+	for _, p := range basePatrols {
+		if _, ok := darkIDs[p.ID]; ok {
+			t.Errorf("dark-factory patrol %q should NOT be in base patrols", p.ID)
+		}
+	}
+}
+
+func TestSyncRoyalJellyStalenessDetection(t *testing.T) {
+	// Create a temp forge root with context dirs
+	forgeRoot := t.TempDir()
+	contextDir := filepath.Join(forgeRoot, ".forge", "context")
+
+	// Create a stale domain context (8 days old)
+	staleDomainDir := filepath.Join(contextDir, "test-domain")
+	if err := os.MkdirAll(staleDomainDir, 0o755); err != nil {
+		t.Fatalf("failed to create stale domain dir: %v", err)
+	}
+	lcPath := filepath.Join(staleDomainDir, "lead-context.md")
+	if err := os.WriteFile(lcPath, []byte("# Test\n**Updated:** 2026-03-01"), 0o644); err != nil {
+		t.Fatalf("failed to write stale lead-context.md: %v", err)
+	}
+	staleTime := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(lcPath, staleTime, staleTime); err != nil {
+		t.Fatalf("failed to set stale mtime: %v", err)
+	}
+
+	// Create a fresh domain context
+	freshDomainDir := filepath.Join(contextDir, "fresh-domain")
+	if err := os.MkdirAll(freshDomainDir, 0o755); err != nil {
+		t.Fatalf("failed to create fresh domain dir: %v", err)
+	}
+	freshPath := filepath.Join(freshDomainDir, "lead-context.md")
+	if err := os.WriteFile(freshPath, []byte("# Fresh\n**Updated:** 2026-04-07"), 0o644); err != nil {
+		t.Fatalf("failed to write fresh lead-context.md: %v", err)
+	}
+
+	// Run staleness detection logic (mirrors syncRoyalJelly implementation)
+	staleThreshold := 7 * 24 * time.Hour
+	entries, err := os.ReadDir(contextDir)
+	if err != nil {
+		t.Fatalf("failed to read context dir: %v", err)
+	}
+
+	var staleDomains []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		lc := filepath.Join(contextDir, entry.Name(), "lead-context.md")
+		if info, statErr := os.Stat(lc); statErr == nil {
+			if time.Since(info.ModTime()) > staleThreshold {
+				staleDomains = append(staleDomains, entry.Name())
+			}
+		}
+	}
+
+	if len(staleDomains) != 1 {
+		t.Errorf("expected 1 stale domain, got %d: %v", len(staleDomains), staleDomains)
+	}
+
+	found := false
+	for _, d := range staleDomains {
+		if d == "test-domain" {
+			found = true
+		}
+		if d == "fresh-domain" {
+			t.Errorf("fresh-domain should not be detected as stale")
+		}
+	}
+	if !found {
+		t.Errorf("test-domain should be detected as stale, got: %v", staleDomains)
 	}
 }

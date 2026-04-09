@@ -30,8 +30,9 @@ type Patrol struct {
 
 // patrolCmd represents the patrol noun
 var patrolCmd = &cobra.Command{
-	Use:   "patrol",
-	Short: "Background monitors and patrols",
+	Use:     "patrol",
+	Aliases: []string{"pt"},
+	Short:   "Background monitors and patrols",
 	Long: `Patrols are background monitoring processes that watch over FORGE operations.
 
 Types:
@@ -328,75 +329,11 @@ func loadPatrols() ([]Patrol, error) {
 		}
 	}
 
-	// 3. Demo data
-	return getDemoPatrols(), nil
+	// 3. No patrols available — return empty results.
+	fmt.Fprintf(os.Stderr, "Warning: daemon unreachable and no local patrols.json — no patrols to show\n  Recovery: forge daemon start\n")
+	return []Patrol{}, nil
 }
 
-// getDemoPatrols returns demo patrol data
-func getDemoPatrols() []Patrol {
-	now := time.Now()
-	return []Patrol{
-		{
-			ID:        "patrol-fleet",
-			Name:      "Fleet Health",
-			Type:      "health",
-			Status:    "running",
-			Interval:  60,
-			LastRun:   now.Add(-2 * time.Minute),
-			NextRun:   now.Add(58 * time.Second),
-			Message:   "All agents healthy",
-			Successes: 142,
-			Failures:  2,
-		},
-		{
-			ID:        "patrol-queue",
-			Name:      "Queue Monitor",
-			Type:      "queue",
-			Status:    "running",
-			Interval:  60,
-			LastRun:   now.Add(-1 * time.Minute),
-			NextRun:   now,
-			Message:   "12 tasks pending, 3 running",
-			Successes: 89,
-			Failures:  0,
-		},
-		{
-			ID:        "patrol-xnode",
-			Name:      "XNode Relay",
-			Type:      "heartbeat",
-			Status:    "warning",
-			Interval:  120,
-			LastRun:   now.Add(-5 * time.Minute),
-			NextRun:   now.Add(-3 * time.Minute),
-			Message:   "Node nova last seen 8m ago (expected <5m)",
-			Successes: 45,
-			Failures:  3,
-		},
-		{
-			ID:        "patrol-approval",
-			Name:      "Approval Timeout",
-			Type:      "quality",
-			Status:    "running",
-			Interval:  300,
-			LastRun:   now.Add(-4 * time.Minute),
-			NextRun:   now.Add(time.Minute),
-			Message:   "No expired approvals",
-			Successes: 28,
-			Failures:  0,
-		},
-		{
-			ID:        "patrol-deploy",
-			Name:      "Deploy Monitor",
-			Type:      "deploy",
-			Status:    "stopped",
-			Interval:  60,
-			LastRun:   now.Add(-2 * time.Hour),
-			Message:   "Disabled - no active deployments",
-			Successes: 12,
-			Failures:  0,
-		},
-	}
-}
 
 // generatePatrolLogs generates demo log entries for a patrol
 func generatePatrolLogs(patrol *Patrol, lines int) []PatrolLog {
@@ -506,7 +443,6 @@ Examples:
 }
 
 func init() {
-	// patrolCmd visible — orchestrators need patrol management
 	patrolCmd.AddCommand(patrolListCmd)
 	patrolCmd.AddCommand(patrolStatusCmd)
 	patrolCmd.AddCommand(patrolLogsCmd)

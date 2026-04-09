@@ -1,0 +1,23 @@
+id: coding/feature
+name: Feature Implementation
+description: Standard blueprint for implementing a feature with checks, dispatch, and review.
+steps:
+  - type: check
+    name: pre-check
+    command: "forge check"
+  - type: shell
+    name: build-verify
+    command: "cd cmd/forge && go build ./..."
+  - type: dispatch
+    name: implement
+    agent: auto
+  - type: check
+    name: post-check
+    command: "cd cmd/forged && go test . -timeout 120s -count=1"
+  - type: review
+    name: code-review
+  - type: complete
+    name: finalize
+    evidence:
+      - tests
+      - build

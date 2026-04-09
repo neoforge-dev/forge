@@ -196,9 +196,29 @@ func (m *WorktreeManager) RecordWorktree(ctx context.Context, taskID, path, bran
 	return err
 }
 
+// IsWorktreeDirty checks if the worktree has uncommitted changes (including untracked files).
+func (m *WorktreeManager) IsWorktreeDirty(ctx context.Context, taskID string) (bool, error) {
+	path := filepath.Join(m.worktreeDir, taskID)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false, nil
+	}
+
+	// git status --porcelain shows all changes (staged, unstaged, untracked)
+	args := []string{"-C", path, "status", "--porcelain"}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		// If it's not a git repo or other error, we can't reliably say it's clean.
+		return true, fmt.Errorf("git status failed: %w", err)
+	}
+
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
 // PruneStaleWorktrees removes worktrees for completed/failed tasks. It is
 // intended to be called periodically by patrols. If db is nil, it performs
 // a pure filesystem-based cleanup of orphaned directories.
+// It preserves "dirty" worktrees even if they are stale to prevent data loss.
 func (m *WorktreeManager) PruneStaleWorktrees(ctx context.Context) error {
 	entries, err := os.ReadDir(m.worktreeDir)
 	if err != nil {
@@ -243,6 +263,13 @@ func (m *WorktreeManager) PruneStaleWorktrees(ctx context.Context) error {
 		}
 
 		if shouldRemove {
+			// Verification: don't prune dirty worktrees (Proposal #3 in S157 retro).
+			dirty, err := m.IsWorktreeDirty(ctx, taskID)
+			if err == nil && dirty {
+				// Log or skip? Proposal says "Warn and preserve".
+				// For now, we just preserve by skipping.
+				continue
+			}
 			_ = m.RemoveWorktree(ctx, taskID)
 		}
 	}

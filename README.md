@@ -10,7 +10,7 @@ FORGE is not a coding assistant — it's the **operations layer** that runs unde
 
 | What FORGE does | What it doesn't do |
 |---|---|
-| Run 5+ agents across node-1/node-2/node-3/node-4/node-5 | Write code itself |
+| Run 5+ agents across prya/sati/nova/vega/gaea | Write code itself |
 | Route tasks by YAML capability config | Replace your IDE |
 | Gate risky tasks behind human approval | Require cloud accounts |
 | Track fleet metrics, budget, inventory | Lock you to any LLM |
@@ -21,13 +21,13 @@ FORGE is not a coding assistant — it's the **operations layer** that runs unde
 - **Multi-node**: agents run on separate hardware, coordinated via a single hub
 - **Approval-gated**: tier-based auto-approve for lightweight tasks, human gate for risky ones
 - **YAML routing**: `config/routing/*.yaml` defines agent capabilities, node constraints, workload policy — `forge dispatch auto` reads it
-- **Dark Factory**: 31+ background patrols that auto-fix, auto-approve, auto-scale
+- **Dark Factory**: background patrols that auto-fix, auto-approve, auto-scale (inventory: `forge patrol list`)
 - **Self-hosted**: runs on your hardware, no cloud required, no per-seat pricing
 - **Auditable**: SQLite event log, pattern library, Royal Jelly context persistence
 
 **Stack:** V4 CLI (`cmd/forge`) + daemon (`cmd/forged`). Configure with `FORGE_API_URL` or `~/.forge/config.toml`.
 
-**Start here:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), [AGENTS.md](AGENTS.md), [docs/ACTIVE_SURFACES.md](docs/ACTIVE_SURFACES.md)
+**Start here:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), [AGENTS.md](AGENTS.md), [docs/ACTIVE_SURFACES.md](docs/ACTIVE_SURFACES.md), [docs/STRATEGY.md](docs/STRATEGY.md)
 
 ---
 
@@ -68,7 +68,7 @@ forge daemon install --enable
 ```bash
 # Check system health
 forge status
-forge fleet status
+forge agent list
 forge portfolio status
 
 # List tasks
@@ -86,20 +86,21 @@ forge task show TASK-BRAVE-PULSE-132
 # Check the active product working set
 forge portfolio list
 
-# Dispatch work to an agent
-forge dispatch send forge:kimi "Read .forge/dispatches/kimi-task.md — EXECUTE now"
+# Dispatch work to a named agent override
+forge dispatch send kimi --file .forge/dispatches/kimi-task.md
 ```
 
 ### Fleet Operations
 
 ```bash
-# Multi-node fleet status
-forge fleet status
-forge fleet windows            # live tmux agent windows
-forge fleet inventory          # all nodes + agents in one view
-forge fleet metrics            # per-agent token/task metrics
-forge fleet budget             # token budget by agent/provider
-forge fleet recommendations    # scale-up/down suggestions
+# Multi-node fleet (several nouns are hidden — run `forge advanced` to list)
+forge status                 # hub + queue snapshot (preferred)
+forge node list              # mesh registration
+forge fleet list             # same daemon source as agent list (prints alias note)
+forge fleet windows          # live tmux agent windows
+forge fleet metrics          # per-agent token/task metrics
+forge fleet budget           # token budget by agent/provider
+forge fleet recommendations  # scale-up/down suggestions
 
 # Auto-route a task to the best agent (YAML-backed since S92)
 forge dispatch auto "Run coverage wave on cmd/forged" --task-type coverage
@@ -112,7 +113,7 @@ forge approval bulk-decide --action approve --domain forge
 curl -s -X POST http://localhost:8081/api/routing/resolve \
   -H "Content-Type: application/json" \
   -d '{"task_type":"coverage","weight":"heavy"}' | jq .
-# → {"agent":"kimi","node":"node-2","reason":"best_at match: go-test (node preference)"}
+# → {"agent":"kimi","node":"sati","reason":"best_at match: go-test (node preference)"}
 ```
 
 ### GitHub Integration (Autonomous Issue → PR → Merge)
@@ -144,13 +145,13 @@ The full loop: **GitHub issue → FORGE task → autonomous agent → PR → app
 
 ---
 
-### Connect a Worker
+### Join a Node
 
 ```bash
-# Start a worker (connects via WebSocket to :8082)
-forge worker up --id my-worker --capabilities code,test
+# Register this machine in the mesh
+forge node join
 
-# List connected workers/agents
+# List connected agents
 forge agent list
 ```
 
@@ -161,7 +162,7 @@ forge agent list
 ```
 ┌─────────────────────────────────────────────────────┐
 │              forge (V4 CLI)                          │
-│   task · agent · lane · worker · dispatch · daemon   │
+│   task · agent · dispatch · daemon · node · lead     │
 └────────────────────┬────────────────────────────────┘
                      │  HTTP :8081 / WS :8082
 ┌────────────────────▼────────────────────────────────┐
@@ -181,8 +182,7 @@ Current operating model: hub-first, local daemons optional. See [docs/adr/INDEX.
 | Noun | Purpose | Key Commands |
 |------|---------|-------------|
 | `task` | Unit of work | `list`, `show`, `create`, `update` |
-| `agent` | Worker process | `list`, `show` |
-| `worker` | WebSocket worker | `up` |
+| `agent` | Agent process inventory | `list`, `show` |
 | `lane` | Dark Factory stage | `list`, `show`, `promote` |
 | `dispatch` | Fleet messaging | `send`, `auto`, `list`, `status` |
 | `fleet` | Multi-node ops | `status`, `metrics`, `inventory`, `budget`, `recommendations`, `windows` |
@@ -196,6 +196,7 @@ Current operating model: hub-first, local daemons optional. See [docs/adr/INDEX.
 | `pattern` | Reusable templates | `list`, `show` |
 | `portfolio` | Project portfolio | `list`, `status` |
 | `node` | Fleet node | `list`, `status` |
+| `lead` | Cross-node lead messaging | `send`, `inbox`, `ack`, `preflight` |
 | `config` | Settings | `get`, `set` |
 
 ### Output Formats
@@ -309,7 +310,7 @@ FORGE/
 │   ├── main.go         # Cobra command registration
 │   ├── task.go         # task noun
 │   ├── agent.go        # agent noun
-│   ├── worker.go       # worker noun
+│   ├── lead.go         # cross-node lead messaging
 │   ├── daemon.go       # daemon lifecycle
 │   ├── dispatch*.go    # dispatch + workflow
 │   └── internal/
@@ -334,7 +335,7 @@ FORGE/
 ├── docs/               # Architecture decisions, plans, runbooks
 │   └── adr/            # ADRs 001–025
 ├── harness/            # Python harness for iOS orchestration (private repo only; not in v1 public release — see SCOPE.md)
-└── portfolio/          # 95 managed projects (11 domains)
+└── services/ apps/ ios/  # Products organized by type
 ```
 
 ---
@@ -361,9 +362,9 @@ forge daemon status
 
 Example deployment status:
 - control-plane: running
-- worker-node-a: connected
-- worker-node-b: connected
-- worker-node-c: optional
+- node-a: connected
+- node-b: connected
+- node-c: optional
 
 ---
 
@@ -381,9 +382,9 @@ forge daemon restart
 
 # Check health
 forge status
-forge fleet status
+forge agent list
 ```
 
 ---
 
-**Phase:** 1.0 (Production) | **CLI:** V4 | **Daemon:** forged | **Last Updated:** 2026-03-09 (S92)
+**Phase:** 1.0 (Production) | **CLI:** V4 | **Daemon:** forged | **Last Updated:** 2026-04-07

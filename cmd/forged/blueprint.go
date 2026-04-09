@@ -288,10 +288,64 @@ func (rt *BlueprintRuntime) executeStep(ctx context.Context, run *BlueprintRun, 
 	}
 }
 
+// productAliasFromKey derives a short alias from a hyphen-separated product key.
+// Each hyphen-separated segment contributes its first character.
+// Examples: "interview-simulator" → "is", "voice-coach" → "vc", "study-flow" → "sf".
+// If the key is empty the alias is also empty.
+func productAliasFromKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	parts := strings.Split(key, "-")
+	var b strings.Builder
+	for _, p := range parts {
+		if len(p) > 0 {
+			b.WriteByte(p[0])
+		}
+	}
+	return b.String()
+}
+
+// productContextFromTask queries the task's domain and project from the database
+// and returns a variable map ready for substitution into blueprint command strings.
+// The returned map always contains all keys; values are empty strings on error or
+// when the task is not found.
+func productContextFromTask(db *sql.DB, taskID string) map[string]string {
+	result := map[string]string{
+		"DOMAIN":        "",
+		"PRODUCT_KEY":   "",
+		"PRODUCT_ALIAS": "",
+	}
+	if db == nil || taskID == "" {
+		return result
+	}
+	var domain, project sql.NullString
+	err := db.QueryRow(
+		`SELECT domain, project FROM tasks WHERE id = ? LIMIT 1`, taskID,
+	).Scan(&domain, &project)
+	if err != nil {
+		return result
+	}
+	if domain.Valid {
+		result["DOMAIN"] = domain.String
+	}
+	if project.Valid {
+		result["PRODUCT_KEY"] = project.String
+		result["PRODUCT_ALIAS"] = productAliasFromKey(project.String)
+	}
+	return result
+}
+
 func (rt *BlueprintRuntime) executeCommandStep(ctx context.Context, run *BlueprintRun, step BlueprintSpec, stepIndex int) error {
 	cmdText := strings.ReplaceAll(step.Command, "${TASK_ID}", run.TaskID)
 	cmdText = strings.ReplaceAll(cmdText, "${RUN_ID}", run.ID)
 	cmdText = strings.ReplaceAll(cmdText, "${BLUEPRINT_ID}", run.BlueprintID)
+
+	// Enrich with product context variables.
+	productCtx := productContextFromTask(rt.db, run.TaskID)
+	cmdText = strings.ReplaceAll(cmdText, "${DOMAIN}", productCtx["DOMAIN"])
+	cmdText = strings.ReplaceAll(cmdText, "${PRODUCT_KEY}", productCtx["PRODUCT_KEY"])
+	cmdText = strings.ReplaceAll(cmdText, "${PRODUCT_ALIAS}", productCtx["PRODUCT_ALIAS"])
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdText)
 	cmd.Dir = rt.forgeRoot
@@ -299,6 +353,9 @@ func (rt *BlueprintRuntime) executeCommandStep(ctx context.Context, run *Bluepri
 		"TASK_ID="+run.TaskID,
 		"BLUEPRINT_RUN_ID="+run.ID,
 		"BLUEPRINT_ID="+run.BlueprintID,
+		"DOMAIN="+productCtx["DOMAIN"],
+		"PRODUCT_KEY="+productCtx["PRODUCT_KEY"],
+		"PRODUCT_ALIAS="+productCtx["PRODUCT_ALIAS"],
 	)
 	output, err := cmd.CombinedOutput()
 	evidence := map[string]interface{}{

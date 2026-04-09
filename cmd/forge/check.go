@@ -1,5 +1,5 @@
 // check.go — forge check: local validation before push
-// Ports harness/forge_harness/cli_v2/check.py to Go.
+// Local validation checks before push.
 //
 // Three modes:
 //
