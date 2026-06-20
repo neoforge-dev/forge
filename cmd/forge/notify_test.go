@@ -390,7 +390,8 @@ func TestNotifyAlertCmd_BuildsCorrectMessage(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "[nova]") {
+	hostname, _ := os.Hostname()
+	if !strings.Contains(output, "["+hostname+"]") {
 		t.Errorf("expected node marker in output, got:\n%s", output)
 	}
 	if !strings.Contains(output, "Deploy complete") {

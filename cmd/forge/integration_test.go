@@ -38,6 +38,9 @@ func NewTestRunner(t *testing.T) *TestRunner {
 	// This prevents tests from hanging when the remote daemon (prya) is
 	// unreachable or not listening on the expected port.
 	t.Setenv("FORGE_NO_RETRY", "1")
+	if current := os.Getenv("FORGE_API_URL"); current == "" || strings.Contains(current, "localhost:8081") || strings.Contains(current, "nova:8081") {
+		t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
+	}
 
 	// Clean up mutable local state so tests don't pollute each other.
 	// The approval state file is written by "approval decide" commands and
@@ -359,7 +362,7 @@ func TestConfigCommands(t *testing.T) {
 			name:     "get specific config key",
 			args:     []string{"config", "get", "api_url"},
 			wantErr:  false,
-			contains: "nova",
+			contains: "http://",
 		},
 		{
 			name:     "get all config (no key)",

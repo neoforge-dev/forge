@@ -400,10 +400,10 @@ func TestPatrolConfigWithValues(t *testing.T) {
 		Status:   "running",
 		Interval: 60,
 		Config: map[string]interface{}{
-			"threshold":  5,
-			"timeout":    "30s",
-			"enabled":    true,
-			"agents":     []string{"kimi", "gemini"},
+			"threshold": 5,
+			"timeout":   "30s",
+			"enabled":   true,
+			"agents":    []string{"kimi", "gemini"},
 		},
 		Successes: 10,
 		Failures:  0,
@@ -752,7 +752,7 @@ func TestPatrolCounters(t *testing.T) {
 	tests := []struct {
 		name      string
 		successes int
-		failures   int
+		failures  int
 	}{
 		{"zero-zero", 0, 0},
 		{"success-only", 100, 0},
@@ -1005,6 +1005,7 @@ func TestPatrolConcurrentAccess(t *testing.T) {
 
 // Additional patrol tests for coverage
 func TestPatrolListFormats(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	formats := []string{"table", "json", "csv", "quiet"}
@@ -1041,6 +1042,7 @@ func TestPatrolLogsFormats(t *testing.T) {
 }
 
 func TestPatrolListTypeFilter(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	_, err := runner.Execute("patrol", "list", "--type", "health")
