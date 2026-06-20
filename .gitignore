@@ -11,6 +11,7 @@ forge-test
 forge.test
 
 # Local binaries
+bin/forge
 cmd/forged/forged
 cmd/forged/agent-spawner
 cmd/forged/worker-client
