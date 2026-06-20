@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -609,6 +609,8 @@ func TestBranchLockAcquisition(t *testing.T) {
 	}
 
 	run("init", ".")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
 	// Create initial commit so branches can be created
 	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("test"), 0o644); err != nil {
 		t.Fatalf("failed to write README: %v", err)
@@ -675,6 +677,8 @@ func TestSingleWriterMutex_ConcurrentExecute(t *testing.T) {
 	}
 
 	run("init", ".")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("test"), 0o644); err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}
