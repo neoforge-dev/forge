@@ -1,0 +1,22 @@
+# FORGE local runtime state
+.forge/
+**/.forge/
+
+# Build and test outputs
+*.out
+*.test
+coverage*.out
+c.out
+forge-test
+forge.test
+
+# Local binaries
+bin/forge
+cmd/forged/forged
+cmd/forged/agent-spawner
+cmd/forged/worker-client
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/

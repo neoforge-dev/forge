@@ -103,12 +103,12 @@ var patternListCmd = &cobra.Command{
 			rows := make([][]string, len(patterns))
 			for i, p := range patterns {
 				rows[i] = []string{
-				p.ID,
-				p.Name,
-				p.Category,
-				helperTruncate(p.Description, 40),
-				strings.Join(p.Tags, ", "),
-			}
+					p.ID,
+					p.Name,
+					p.Category,
+					helperTruncate(p.Description, 40),
+					strings.Join(p.Tags, ", "),
+				}
 			}
 			return formatter.WriteCSV(headers, rows)
 		case "quiet":
@@ -117,13 +117,13 @@ var patternListCmd = &cobra.Command{
 			tw := formatter.NewTableWriter()
 			tw.WriteHeader("ID", "NAME", "CATEGORY", "DESCRIPTION", "TAGS")
 			for _, p := range patterns {
-			tw.WriteRow(
-				helperTruncate(p.ID, 15),
-				helperTruncate(p.Name, 20),
-				helperTruncate(p.Category, 12),
-				helperTruncate(p.Description, 30),
-				helperTruncate(strings.Join(p.Tags, ", "), 20),
-			)
+				tw.WriteRow(
+					helperTruncate(p.ID, 15),
+					helperTruncate(p.Name, 20),
+					helperTruncate(p.Category, 12),
+					helperTruncate(p.Description, 30),
+					helperTruncate(strings.Join(p.Tags, ", "), 20),
+				)
 			}
 			tw.Flush()
 			formatter.Printf("\nTotal: %d patterns\n", len(patterns))
@@ -195,8 +195,10 @@ func getPatternsDir() string {
 
 func loadPatterns() ([]Pattern, error) {
 	// 1. Try live v3 API (best effort — daemon may not be running).
-	apiClient := internal.NewClient()
-	v3Patterns, apiErr := apiClient.ListPatterns(context.Background())
+	apiClient := internal.NewClient(internal.WithTimeout(500 * time.Millisecond))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	v3Patterns, apiErr := apiClient.ListPatterns(ctx)
 	if apiErr == nil && len(v3Patterns) > 0 {
 		// Map v3 wire shape to the CLI Pattern type.
 		// Fields not exposed by the API (category, tags, variables, template) are
@@ -243,13 +245,13 @@ func findPattern(id string) (*Pattern, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for _, p := range patterns {
 		if strings.EqualFold(p.ID, id) || strings.EqualFold(p.Name, id) {
 			return &p, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("pattern not found: %s", id)
 }
 

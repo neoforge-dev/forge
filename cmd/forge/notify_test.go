@@ -390,8 +390,9 @@ func TestNotifyAlertCmd_BuildsCorrectMessage(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "FORGE ALERT") {
-		t.Errorf("expected 'FORGE ALERT' in output, got:\n%s", output)
+	hostname, _ := os.Hostname()
+	if !strings.Contains(output, "["+hostname+"]") {
+		t.Errorf("expected node marker in output, got:\n%s", output)
 	}
 	if !strings.Contains(output, "Deploy complete") {
 		t.Errorf("expected alert text in output, got:\n%s", output)

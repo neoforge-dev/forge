@@ -288,6 +288,7 @@ func TestPortfolioAdvance_DryRun(t *testing.T) {
 func TestPortfolioAdvance_WriteToFile(t *testing.T) {
 	tempFile := writeTestPortfolioState(t)
 	t.Setenv("FORGE_PORTFOLIO_FILE", tempFile)
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 
 	runner := NewTestRunner(t)
 	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--force")
@@ -318,6 +319,7 @@ func TestPortfolioAdvance_WriteToFile(t *testing.T) {
 func TestPortfolioAdvance_JumpToStage(t *testing.T) {
 	tempFile := writeTestPortfolioState(t)
 	t.Setenv("FORGE_PORTFOLIO_FILE", tempFile)
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 
 	runner := NewTestRunner(t)
 	output, err := runner.Execute("portfolio", "advance", "voice-coach", "--to", "monetize", "--force")

@@ -4,9 +4,15 @@ import (
 	"testing"
 )
 
+func NewOfflineQueueTestRunner(t *testing.T) *TestRunner {
+	t.Helper()
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
+	return NewTestRunner(t)
+}
+
 // TestQueueCommand validates the parent queue command exists and shows help.
 func TestQueueCommand(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue")
 	if err != nil {
@@ -18,7 +24,7 @@ func TestQueueCommand(t *testing.T) {
 // attempts to call the daemon. A connection error is acceptable in CI — what
 // matters is that the command is registered and wired correctly.
 func TestQueueStatusCommand(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "status")
 	if err != nil {
@@ -28,7 +34,7 @@ func TestQueueStatusCommand(t *testing.T) {
 
 // TestQueueStatusCommandJSON validates that --format json is accepted.
 func TestQueueStatusCommandJSON(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "status", "--format", "json")
 	if err != nil {
@@ -38,7 +44,7 @@ func TestQueueStatusCommandJSON(t *testing.T) {
 
 // TestQueueDepthCommand validates the queue depth subcommand is registered.
 func TestQueueDepthCommand(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "depth")
 	if err != nil {
@@ -48,7 +54,7 @@ func TestQueueDepthCommand(t *testing.T) {
 
 // TestQueueDepthCommandJSON validates that --format json is accepted on depth.
 func TestQueueDepthCommandJSON(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "depth", "--format", "json")
 	if err != nil {
@@ -58,7 +64,7 @@ func TestQueueDepthCommandJSON(t *testing.T) {
 
 // TestQueueListCommand validates the queue list subcommand is registered.
 func TestQueueListCommand(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "list")
 	if err != nil {
@@ -68,7 +74,7 @@ func TestQueueListCommand(t *testing.T) {
 
 // TestQueueListCommandWithLimit validates that --limit is accepted.
 func TestQueueListCommandWithLimit(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "list", "--limit", "5")
 	if err != nil {
@@ -78,7 +84,7 @@ func TestQueueListCommandWithLimit(t *testing.T) {
 
 // TestQueueCancelRequiresTaskID validates that cancel errors without a task ID.
 func TestQueueCancelRequiresTaskID(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "cancel")
 	if err == nil {
@@ -89,7 +95,7 @@ func TestQueueCancelRequiresTaskID(t *testing.T) {
 // TestQueueCancelWithTaskID validates that cancel accepts a task ID argument and
 // attempts the API call. A connection error is acceptable in CI.
 func TestQueueCancelWithTaskID(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "cancel", "01JQM123ABC")
 	if err != nil {
@@ -99,7 +105,7 @@ func TestQueueCancelWithTaskID(t *testing.T) {
 
 // TestQueuePriorityRequiresTaskID validates that priority errors without a task ID.
 func TestQueuePriorityRequiresTaskID(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "priority")
 	if err == nil {
@@ -110,7 +116,7 @@ func TestQueuePriorityRequiresTaskID(t *testing.T) {
 // TestQueuePriorityRequiresPriorityFlag validates that priority errors without
 // the --priority flag.
 func TestQueuePriorityRequiresPriorityFlag(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "priority", "01JQM123ABC")
 	if err == nil {
@@ -120,7 +126,7 @@ func TestQueuePriorityRequiresPriorityFlag(t *testing.T) {
 
 // TestQueuePriorityWithFlags validates that priority accepts both required args.
 func TestQueuePriorityWithFlags(t *testing.T) {
-	runner := NewTestRunner(t)
+	runner := NewOfflineQueueTestRunner(t)
 
 	_, err := runner.Execute("queue", "priority", "01JQM123ABC", "--priority", "5")
 	if err != nil {

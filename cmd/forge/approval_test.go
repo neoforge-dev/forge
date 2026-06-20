@@ -11,6 +11,25 @@ import (
 	"github.com/neoforge-dev/forge/internal"
 )
 
+func useLocalApprovalStore(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp approval store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
+	t.Setenv("FORGE_NO_RETRY", "1")
+}
+
 // writeTestApprovals creates a .forge/approvals/approvals.json with the given
 // approvals in the current working directory (which tests chdir to a temp dir).
 func writeTestApprovals(t *testing.T, approvals []internal.Approval) {
@@ -61,10 +80,7 @@ var testApprovals = []internal.Approval{
 }
 
 func TestApprovalList(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	useLocalApprovalStore(t)
 
 	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
@@ -95,10 +111,7 @@ func TestApprovalList(t *testing.T) {
 }
 
 func TestApprovalListPending(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	useLocalApprovalStore(t)
 
 	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
@@ -111,6 +124,7 @@ func TestApprovalListPending(t *testing.T) {
 }
 
 func TestApprovalShow(t *testing.T) {
+	useLocalApprovalStore(t)
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 
@@ -121,10 +135,7 @@ func TestApprovalShow(t *testing.T) {
 }
 
 func TestApprovalShowNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	useLocalApprovalStore(t)
 
 	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
@@ -137,6 +148,7 @@ func TestApprovalShowNotFound(t *testing.T) {
 }
 
 func TestApprovalDecideApprove(t *testing.T) {
+	useLocalApprovalStore(t)
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 
@@ -147,6 +159,7 @@ func TestApprovalDecideApprove(t *testing.T) {
 }
 
 func TestApprovalDecideReject(t *testing.T) {
+	useLocalApprovalStore(t)
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 
@@ -157,6 +170,7 @@ func TestApprovalDecideReject(t *testing.T) {
 }
 
 func TestApprovalDecideMissingApproval(t *testing.T) {
+	useLocalApprovalStore(t)
 	runner := NewTestRunner(t)
 
 	// Test decide without approval ID
@@ -167,10 +181,7 @@ func TestApprovalDecideMissingApproval(t *testing.T) {
 }
 
 func TestApprovalDecideMissingDecision(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	useLocalApprovalStore(t)
 
 	writeTestApprovals(t, testApprovals)
 	runner := NewTestRunner(t)
@@ -186,6 +197,7 @@ func TestApprovalDecideMissingDecision(t *testing.T) {
 }
 
 func TestApprovalDecideJsonFormat(t *testing.T) {
+	useLocalApprovalStore(t)
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 
@@ -196,6 +208,8 @@ func TestApprovalDecideJsonFormat(t *testing.T) {
 }
 
 func TestApprovalShowJsonFormat(t *testing.T) {
+	useLocalApprovalStore(t)
+
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 
@@ -206,6 +220,8 @@ func TestApprovalShowJsonFormat(t *testing.T) {
 }
 
 func TestApprovalShowQuietFormat(t *testing.T) {
+	useLocalApprovalStore(t)
+
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 
@@ -216,10 +232,7 @@ func TestApprovalShowQuietFormat(t *testing.T) {
 }
 
 func TestApprovalListEmpty(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	useLocalApprovalStore(t)
 
 	// No approvals file — expect empty results (no error)
 	runner := NewTestRunner(t)
@@ -230,10 +243,7 @@ func TestApprovalListEmpty(t *testing.T) {
 }
 
 func TestApprovalLoadFromDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	useLocalApprovalStore(t)
 
 	// Create empty approvals directory (no approvals.json)
 	os.MkdirAll(".forge/approvals", 0755)
@@ -246,6 +256,7 @@ func TestApprovalLoadFromDirectory(t *testing.T) {
 }
 
 func TestApprovalSaveEmpty(t *testing.T) {
+	useLocalApprovalStore(t)
 	runner := NewTestRunner(t)
 	writeTestApprovals(t, testApprovals)
 

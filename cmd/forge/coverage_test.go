@@ -62,6 +62,7 @@ func TestConfigFormats(t *testing.T) {
 }
 
 func TestPatternListFormats(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	t.Run("table", func(t *testing.T) {
@@ -114,6 +115,7 @@ func TestPatternListFormats(t *testing.T) {
 }
 
 func TestPatternShowErrors(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	_, err := runner.Execute("pattern", "show", "nonexistent-id-xyz")
@@ -123,6 +125,7 @@ func TestPatternShowErrors(t *testing.T) {
 }
 
 func TestPatternShowFormats(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	t.Run("table", func(t *testing.T) {
@@ -181,6 +184,7 @@ func TestPatternLoadFromDir(t *testing.T) {
 }
 
 func TestFindPatternNotFound(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	_, err := findPattern("does-not-exist-xyz")
 	if err == nil {
 		t.Error("findPattern nonexistent should error")
@@ -634,12 +638,12 @@ func TestLoadWorkflowFile_NotFound(t *testing.T) {
 func TestSaveSessionSummary(t *testing.T) {
 	tmpDir := t.TempDir()
 	doc := &HandoffDoc{
-		ID:          "test001",
-		FromAgent:   "claude:gaea",
-		Task:        "Write tests",
-		Status:      "complete",
-		Priority:    "high",
-		CreatedAt:   "2026-03-19T12:00:00Z",
+		ID:        "test001",
+		FromAgent: "claude:gaea",
+		Task:      "Write tests",
+		Status:    "complete",
+		Priority:  "high",
+		CreatedAt: "2026-03-19T12:00:00Z",
 	}
 	path, err := saveSessionSummary(tmpDir, doc,
 		[]string{"abc1234 feat: add tests"},

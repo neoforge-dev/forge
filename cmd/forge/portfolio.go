@@ -292,7 +292,10 @@ func queryRoutingForStage(stage string) string {
 	apiKey := os.Getenv("FORGE_API_KEY")
 
 	body, _ := json.Marshal(map[string]string{"portfolio_stage": stage})
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		apiURL+"/api/routing/resolve", strings.NewReader(string(body)))
 	if err != nil {
 		return ""

@@ -403,6 +403,10 @@ func TestGetTaskForLease(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// Keep package tests hermetic when the developer machine has global Git
+	// hooks configured. Several tests create temporary repos and commit there.
+	_ = os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+
 	// Run tests
 	code := m.Run()
 

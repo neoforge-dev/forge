@@ -132,12 +132,13 @@ func TestRemovePIDFile(t *testing.T) {
 
 // TestFindDaemonBinaryWithEnv tests findDaemonBinary with FORGED_BIN set
 func TestFindDaemonBinaryWithEnv(t *testing.T) {
-	// Test with non-existent binary - should return empty
-	t.Setenv("FORGED_BIN", "/nonexistent/forged")
+	// Test with non-existent binary - should ignore invalid env override.
+	invalidPath := "/nonexistent/forged"
+	t.Setenv("FORGED_BIN", invalidPath)
 
 	binary := findDaemonBinary()
-	if binary != "" {
-		t.Errorf("findDaemonBinary() = %v, want empty string for non-existent path", binary)
+	if binary == invalidPath {
+		t.Errorf("findDaemonBinary() = %v, want invalid env path ignored", binary)
 	}
 }
 

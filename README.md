@@ -2,7 +2,7 @@
 
 **Self-hosted AI Ops Platform for Teams Running Autonomous Agents**
 
-[![CI](https://github.com/neoforge-dev/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/neoforge-dev/forge/actions/workflows/ci.yml)
+[![Go CI](https://github.com/neoforge-dev/forge/actions/workflows/go.yml/badge.svg)](https://github.com/neoforge-dev/forge/actions/workflows/go.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.23+-blue.svg)](https://golang.org)
 
@@ -28,6 +28,19 @@ FORGE is not a coding assistant — it's the **operations layer** that runs unde
 **Stack:** V4 CLI (`cmd/forge`) + daemon (`cmd/forged`). Configure with `FORGE_API_URL` or `~/.forge/config.toml`.
 
 **Start here:** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), [AGENTS.md](AGENTS.md), [docs/ACTIVE_SURFACES.md](docs/ACTIVE_SURFACES.md), [docs/STRATEGY.md](docs/STRATEGY.md)
+
+## Current Public Boundary
+
+This repository is the public FORGE orchestration distribution: CLI, daemon,
+task queue, approvals, patrols, routing, and operator documentation. Private
+portfolio products, revenue-sensitive state, local pod runtime data, and
+research artifacts are intentionally outside the public boundary.
+
+The most current internal operating truth currently lives in `forge-mono`.
+Public docs here should be treated as the public distribution surface unless a
+command has been verified against this repository. Local `.forge/` state,
+coverage files, test binaries, and daemon databases are generated artifacts and
+must not be committed.
 
 ---
 

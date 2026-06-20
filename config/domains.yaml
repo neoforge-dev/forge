@@ -1,0 +1,28 @@
+fleet:
+  no_auto_assign_agents:
+    - nova
+
+domains:
+  codeswiftr-com:
+    display_name: CodeSwiftr
+    owner: neoforge
+    active: true
+    frontend_tier: revenue
+
+  leanvibe-ai:
+    display_name: LeanVibe
+    owner: neoforge
+    active: true
+    frontend_tier: product
+
+  brandfocus-ai:
+    display_name: BrandFocus AI
+    owner: neoforge
+    active: true
+    frontend_tier: product
+
+  forge:
+    display_name: FORGE
+    owner: neoforge
+    active: true
+    frontend_tier: ops

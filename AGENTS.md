@@ -4,17 +4,37 @@ This file is the active onboarding surface for new agents.
 
 If a command or workflow is not referenced here, in [README.md](README.md), or in [CANONICAL_WORKFLOW.md](docs/runbooks/CANONICAL_WORKFLOW.md), treat it as historical until verified.
 
+## 0. Control-Plane Sanity
+
+Before trusting fleet, task, or agent state, confirm which daemon the CLI is
+targeting:
+
+```bash
+forge config list
+forge daemon status
+forge operator repair --sync-tmux --session forge
+forge operator status --use-tmux-agents --session forge
+forge operator status
+forge attention
+forge portfolio status
+```
+
+Use `FORGE_API_URL=http://localhost:8081` when the configured hub is stale or
+unreachable but the local daemon is the intended working reality. Do not
+dispatch work until `forge operator status` is `READY`, or until you explicitly
+accept a `DEGRADED` state and route only to dispatch-ready agents.
+
 ## 1. Active Surfaces
 
 Read these in order:
 
 1. [README.md](README.md)
-2. [AGENT_QUICK_START.md](docs/AGENT_QUICK_START.md) — 5 min onboarding
-3. [INFRASTRUCTURE_MAP.md](docs/INFRASTRUCTURE_MAP.md) — progressive disclosure (Tier 1-3)
-4. [STRATEGY.md](docs/STRATEGY.md) — strategy index and gradual disclosure entrypoint
-5. [STRATEGY_REVENUE_SPRINT.md](docs/STRATEGY_REVENUE_SPRINT.md) — current business goals
-6. [CANONICAL_WORKFLOW.md](docs/runbooks/CANONICAL_WORKFLOW.md)
-7. [portfolio-state.yaml](config/portfolio/portfolio-state.yaml) (copy from `examples/portfolio/sample-portfolio-state.yaml` if missing)
+2. [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
+3. [docs/ACTIVE_SURFACES.md](docs/ACTIVE_SURFACES.md)
+4. [docs/INFRASTRUCTURE_MAP.md](docs/INFRASTRUCTURE_MAP.md) — progressive disclosure (Tier 1-3)
+5. [docs/STRATEGY.md](docs/STRATEGY.md) — strategy index and gradual disclosure entrypoint
+6. [docs/runbooks/CANONICAL_WORKFLOW.md](docs/runbooks/CANONICAL_WORKFLOW.md)
+7. [config/portfolio/portfolio-state.yaml](config/portfolio/portfolio-state.yaml) (copy from `examples/portfolio/sample-portfolio-state.yaml` if missing)
 
 ## 2. Core Rules
 
@@ -46,8 +66,13 @@ Override when needed:
 These are the commands every onboarded agent should know:
 
 ```bash
+forge config list
+forge daemon status
+forge operator repair --sync-tmux --session forge
+forge operator status --use-tmux-agents --session forge
 forge status
 forge agent list
+forge attention
 forge portfolio status
 forge task list
 forge dispatch send kimi --file .forge/dispatches/task.md
