@@ -359,7 +359,7 @@ func TestConfigCommands(t *testing.T) {
 			name:     "get specific config key",
 			args:     []string{"config", "get", "api_url"},
 			wantErr:  false,
-			contains: "prya",
+			contains: "nova",
 		},
 		{
 			name:     "get all config (no key)",
@@ -401,6 +401,7 @@ func TestConfigJSONOutput(t *testing.T) {
 // ==================== Pattern Tests ====================
 
 func TestPatternCommands(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	tests := []struct {
@@ -464,6 +465,7 @@ func TestPatternCommands(t *testing.T) {
 }
 
 func TestPatternJSONOutput(t *testing.T) {
+	t.Setenv("FORGE_API_URL", "http://127.0.0.1:1")
 	runner := NewTestRunner(t)
 
 	var patterns []Pattern
